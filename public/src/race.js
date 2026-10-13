@@ -21,11 +21,23 @@ export class Race {
     this.gateGeo = new THREE.CylinderGeometry(CP_RADIUS, CP_RADIUS, 40, 32, 1, true).translate(0, 20, 0);
     this.ringGeo = new THREE.TorusGeometry(CP_RADIUS, 0.5, 8, 48).rotateX(Math.PI / 2);
     // Стрелка над машиной, указывает на следующий чекпоинт.
-    // Небольшая, полупрозрачная и приплюснутая — не закрывает дорогу впереди.
-    this.arrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.35, 1.1, 12).rotateX(Math.PI / 2).scale(1, 0.45, 1),
-      new THREE.MeshBasicMaterial({ color: '#ffd23f', transparent: true, opacity: 0.5, depthWrite: false }),
-    );
+    // Объёмная стрелка: силуэт (древко + наконечник), вытянутый в толщину со скруглёнными
+    // краями, с бликом и тенью; лежит горизонтально, остриём к цели (+z).
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.17, -0.55);
+    shape.lineTo(0.17, -0.55);
+    shape.lineTo(0.17, 0.05);
+    shape.lineTo(0.48, 0.05);
+    shape.lineTo(0, 0.7);
+    shape.lineTo(-0.48, 0.05);
+    shape.lineTo(-0.17, 0.05);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.16, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelSegments: 3 });
+    geo.translate(0, -0.07, -0.08).rotateX(Math.PI / 2); // +y силуэта → +z; толщина по вертикали
+    this.arrow = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+      color: '#ffc928', emissive: '#4a3000', specular: '#fff4c2', shininess: 70, transparent: true, opacity: 0.88,
+    }));
+    this.arrow.castShadow = true;
     this.arrow.visible = false;
     scene.add(this.arrow);
   }
@@ -142,8 +154,11 @@ export class Race {
     const target = this.checkpoints[this.next];
     this.arrow.visible = (this.state === 'running' || this.state === 'countdown') && !!target;
     if (this.arrow.visible) {
-      this.arrow.position.set(car.pos.x, car.y + 2.6, car.pos.y);
-      this.arrow.lookAt(target.x, car.y + 2.6, target.z);
+      // Лёгкое покачивание вверх-вниз.
+      const y = car.y + 2.5 + Math.sin(performance.now() / 300) * 0.08;
+      this.arrow.position.set(car.pos.x, y, car.pos.y);
+      this.arrow.lookAt(target.x, y, target.z);
+      this.arrow.rotateX(0.5); // носом вниз: из камеры за машиной видна плоскость, а не ребро
     }
   }
 
