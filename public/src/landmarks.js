@@ -406,9 +406,9 @@ function sign(text, w, h, x, y, z, f) {
 }
 
 // Резиденция Главы Удмуртской Республики (Лихвинцева, 25): длинный корпус по контуру OSM —
-// розовый рустованный цоколь, охристые верхние этажи с белыми лопатками и карнизом; на западном
-// конце фасада — большой портик из четырёх колонн с фронтоном, на восточном — аркада с фронтоном
-// и ротонда с зелёным куполом и шпилем. ux, uz — ось корпуса, nx, nz — наружу к улице.
+// розовый рустованный цоколь, охристые верхние этажи с белыми лопатками и карнизом; в центре
+// фасада — аркада, колонны и фронтон, над ними ротонда с зелёным куполом и шпилем; на обоих
+// торцах — портики из четырёх колонн. ux, uz — ось корпуса, nx, nz — наружу к улице.
 function residence(p, { ux, uz, nx, nz }) {
   const g = new THREE.Group();
   const H0 = 4.6, H1 = 15;
@@ -454,41 +454,46 @@ function residence(p, { ux, uz, nx, nz }) {
   const t0 = Math.min(...xs), t1 = Math.max(...xs);
   const cx = p.reduce((a, q) => a + q[0], 0) / p.length, cz = p.reduce((a, q) => a + q[1], 0) / p.length;
   const c0 = cx * ux + cz * uz;
-  const facade = (t) => {
+  // Точка на контуре: от точки оси t по направлению (dx, dz) до последнего пересечения с контуром.
+  const hit = (t, dx0, dz0) => {
     const ax = cx + ux * (t - c0), az = cz + uz * (t - c0);
     let best = 0;
     for (let i = 0; i < p.length; i++) {
       const [x1, z1] = p[i], [x2, z2] = p[(i + 1) % p.length];
-      // Пересечение луча (ax,az)+s·n с ребром.
-      const dx = x2 - x1, dz = z2 - z1, den = nx * dz - nz * dx;
+      const dx = x2 - x1, dz = z2 - z1, den = dx0 * dz - dz0 * dx;
       if (Math.abs(den) < 1e-9) continue;
-      const s = ((x1 - ax) * dz - (z1 - az) * dx) / den, u = ((x1 - ax) * nz - (z1 - az) * nx) / den;
+      const s = ((x1 - ax) * dz - (z1 - az) * dx) / den, u = ((x1 - ax) * dz0 - (z1 - az) * dx0) / den;
       if (u >= 0 && u <= 1 && s > best) best = s;
     }
-    return [ax + nx * best, az + nz * best];
+    return [ax + dx0 * best, az + dz0 * best];
   };
+  const facade = (t) => hit(t, nx, nz);
   const rotF = Math.atan2(nx, nz);
   const local = (grp, [x, z]) => { grp.position.set(x, 0, z); grp.rotation.y = rotF; g.add(grp); };
-  // Западный портик: 4 колонны во всю высоту верхних этажей, антаблемент, фронтон.
-  {
-    const q = new THREE.Group(), w = 16;
+  // Торцевые портики: на обоих концах корпуса по 4 колонны во всю высоту верхних этажей, фронтон.
+  for (const sgn of [-1, 1]) {
+    const q = new THREE.Group(), w = 13;
     q.add(box(w + 1, H0 + 3, 3.4, M.white, 0, -3, 1.7));
     for (let i = 0; i < 4; i++) q.add(cyl(0.75, H1 - H0, M.white, -w / 2 + 1.5 + (i * (w - 3)) / 3, H0, 2.6, 14));
     q.add(box(w + 1, 1.4, 3.6, M.white, 0, H1, 1.8));
     q.add(pediment(w + 1, 4, 3.6, 0, H1 + 1.4, 1.8));
-    local(q, facade(t0 + 12));
+    const [x, z] = hit(c0, ux * sgn, uz * sgn);
+    q.position.set(x, 0, z);
+    q.rotation.y = Math.atan2(ux * sgn, uz * sgn);
+    g.add(q);
   }
-  // Восточная аркада: пять арок на цоколе, колонны, фронтон.
+  // Центр фасада: аркада в цоколе, колонны, фронтон; над ней — ротонда с куполом.
+  const tm = (t0 + t1) / 2;
   {
-    const q = new THREE.Group(), w = 14;
+    const q = new THREE.Group(), w = 16;
     q.add(box(w + 1, H0 + 3, 3, M.rose, 0, -3, 1.5));
-    for (let i = 0; i < 5; i++) q.add(box(1.8, 3, 0.4, M.dark, -w / 2 + 1.5 + (i * (w - 3)) / 4, 0, 3.05));
-    for (let i = 0; i < 6; i++) q.add(cyl(0.55, H1 - H0, M.white, -w / 2 + 0.4 + (i * (w - 0.8)) / 5, H0, 2.3, 12));
+    for (let i = 0; i < 5; i++) q.add(box(2, 3.2, 0.4, M.dark, -w / 2 + 2 + (i * (w - 4)) / 4, 0, 3.05));
+    for (let i = 0; i < 6; i++) q.add(cyl(0.6, H1 - H0, M.white, -w / 2 + 0.5 + (i * (w - 1)) / 5, H0, 2.3, 12));
     q.add(box(w + 1, 1.3, 3.2, M.white, 0, H1, 1.6));
-    q.add(pediment(w + 1, 3.6, 3.2, 0, H1 + 1.3, 1.6));
-    local(q, facade(t1 - 14));
+    q.add(pediment(w + 1, 3.8, 3.2, 0, H1 + 1.3, 1.6));
+    local(q, facade(tm));
+    const [fx, fz] = facade(tm);
     // Ротонда с куполом позади аркады, над корпусом.
-    const [fx, fz] = facade(t1 - 14);
     const rx = fx - nx * 9, rz = fz - nz * 9, r = 6;
     g.add(cyl(r, 5, M.ochre, rx, H1 + 1.5, rz, 28));
     for (let i = 0; i < 16; i++) {
