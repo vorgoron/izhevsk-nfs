@@ -17,6 +17,9 @@ const M = {
   dark: lambert('#2b2b2b'),
   blue: new THREE.MeshPhongMaterial({ color: '#3f78b5', specular: '#cfe3ff', shininess: 60 }),
   terra: lambert('#a9564a'),
+  rose: lambert('#b98585'),
+  ochre: lambert('#efc98a'),
+  domeGreen: lambert('#4f8f73'),
   yellow: lambert('#efe3b0'),
   roofGreen: lambert('#2f8a50'),
   glass: lambert('#33424f'),
@@ -402,6 +405,106 @@ function sign(text, w, h, x, y, z, f) {
   return m;
 }
 
+// Резиденция Главы Удмуртской Республики (Лихвинцева, 25): длинный корпус по контуру OSM —
+// розовый рустованный цоколь, охристые верхние этажи с белыми лопатками и карнизом; на западном
+// конце фасада — большой портик из четырёх колонн с фронтоном, на восточном — аркада с фронтоном
+// и ротонда с зелёным куполом и шпилем. ux, uz — ось корпуса, nx, nz — наружу к улице.
+function residence(p, { ux, uz, nx, nz }) {
+  const g = new THREE.Group();
+  const H0 = 4.6, H1 = 15;
+  const shape = (y0, h, mat, grow = 0) => {
+    const sh = new THREE.Shape(p.map(([x, z]) => new THREE.Vector2(x, -z)));
+    const geo = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: grow > 0, bevelThickness: 0.01, bevelSize: grow, bevelSegments: 1 });
+    geo.rotateX(-Math.PI / 2).translate(0, y0, 0);
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = m.receiveShadow = true;
+    return m;
+  };
+  g.add(shape(-3, H0 + 3, M.rose));
+  g.add(shape(H0, H1 - H0, M.ochre));
+  g.add(shape(H0 - 0.25, 0.4, M.white, 0.2));   // тяга
+  g.add(shape(H1, 0.9, M.white, 0.45));          // карниз
+  g.add(shape(H1 + 0.9, 1.4, M.domeGreen));      // кровля
+  // Окна и лопатки по всем рёбрам контура: наружная нормаль — по обходу.
+  let area = 0;
+  for (let i = 0; i < p.length; i++) area += p[i][0] * p[(i + 1) % p.length][1] - p[(i + 1) % p.length][0] * p[i][1];
+  const out = area > 0 ? 1 : -1;
+  for (let i = 0; i < p.length; i++) {
+    const [x1, z1] = p[i], [x2, z2] = p[(i + 1) % p.length];
+    const L = Math.hypot(x2 - x1, z2 - z1);
+    if (L < 3) continue;
+    const ex = (x2 - x1) / L, ez = (z2 - z1) / L, ox = out * ez, oz = -out * ex; // наружу
+    const rot = Math.atan2(ox, oz);
+    const n = Math.floor(L / 3.6);
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) * (L / n), x = x1 + ex * t + ox * 0.08, z = z1 + ez * t + oz * 0.08;
+      for (const [y, h] of [[1.2, 2.2], [6, 2.4], [10.2, 2.4]]) {
+        const fr = box(1.5, h + 0.35, 0.12, M.white, 0, y - 0.18, 0), gl = box(1.1, h, 0.16, M.glass, 0, y, 0);
+        for (const o of [fr, gl]) { o.position.x += x; o.position.z += z; o.rotation.y = rot; g.add(o); }
+      }
+      if (k % 3 === 0) {
+        const pl = box(1, H1 - H0, 0.25, M.white, x - ex * 1.8, H0, z - ez * 1.8);
+        pl.rotation.y = rot;
+        g.add(pl);
+      }
+    }
+  }
+  // Точка на фасаде: от оси корпуса в сторону улицы до контура.
+  const xs = p.map(([x, z]) => x * ux + z * uz);
+  const t0 = Math.min(...xs), t1 = Math.max(...xs);
+  const cx = p.reduce((a, q) => a + q[0], 0) / p.length, cz = p.reduce((a, q) => a + q[1], 0) / p.length;
+  const c0 = cx * ux + cz * uz;
+  const facade = (t) => {
+    const ax = cx + ux * (t - c0), az = cz + uz * (t - c0);
+    let best = 0;
+    for (let i = 0; i < p.length; i++) {
+      const [x1, z1] = p[i], [x2, z2] = p[(i + 1) % p.length];
+      // Пересечение луча (ax,az)+s·n с ребром.
+      const dx = x2 - x1, dz = z2 - z1, den = nx * dz - nz * dx;
+      if (Math.abs(den) < 1e-9) continue;
+      const s = ((x1 - ax) * dz - (z1 - az) * dx) / den, u = ((x1 - ax) * nz - (z1 - az) * nx) / den;
+      if (u >= 0 && u <= 1 && s > best) best = s;
+    }
+    return [ax + nx * best, az + nz * best];
+  };
+  const rotF = Math.atan2(nx, nz);
+  const local = (grp, [x, z]) => { grp.position.set(x, 0, z); grp.rotation.y = rotF; g.add(grp); };
+  // Западный портик: 4 колонны во всю высоту верхних этажей, антаблемент, фронтон.
+  {
+    const q = new THREE.Group(), w = 16;
+    q.add(box(w + 1, H0 + 3, 3.4, M.white, 0, -3, 1.7));
+    for (let i = 0; i < 4; i++) q.add(cyl(0.75, H1 - H0, M.white, -w / 2 + 1.5 + (i * (w - 3)) / 3, H0, 2.6, 14));
+    q.add(box(w + 1, 1.4, 3.6, M.white, 0, H1, 1.8));
+    q.add(pediment(w + 1, 4, 3.6, 0, H1 + 1.4, 1.8));
+    local(q, facade(t0 + 12));
+  }
+  // Восточная аркада: пять арок на цоколе, колонны, фронтон.
+  {
+    const q = new THREE.Group(), w = 14;
+    q.add(box(w + 1, H0 + 3, 3, M.rose, 0, -3, 1.5));
+    for (let i = 0; i < 5; i++) q.add(box(1.8, 3, 0.4, M.dark, -w / 2 + 1.5 + (i * (w - 3)) / 4, 0, 3.05));
+    for (let i = 0; i < 6; i++) q.add(cyl(0.55, H1 - H0, M.white, -w / 2 + 0.4 + (i * (w - 0.8)) / 5, H0, 2.3, 12));
+    q.add(box(w + 1, 1.3, 3.2, M.white, 0, H1, 1.6));
+    q.add(pediment(w + 1, 3.6, 3.2, 0, H1 + 1.3, 1.6));
+    local(q, facade(t1 - 14));
+    // Ротонда с куполом позади аркады, над корпусом.
+    const [fx, fz] = facade(t1 - 14);
+    const rx = fx - nx * 9, rz = fz - nz * 9, r = 6;
+    g.add(cyl(r, 5, M.ochre, rx, H1 + 1.5, rz, 28));
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const wnd = box(0.8, 1.6, 0.3, M.glass, rx + Math.cos(a) * (r + 0.05), H1 + 2.8, rz + Math.sin(a) * (r + 0.05));
+      wnd.rotation.y = -a + Math.PI / 2;
+      g.add(wnd);
+    }
+    g.add(cyl(r + 0.5, 0.6, M.white, rx, H1 + 6.5, rz, 28));
+    g.add(dome(r + 0.2, M.domeGreen, rx, H1 + 7.1, rz, 0.6));
+    g.add(cyl(0.7, 1.4, M.white, rx, H1 + 7.1 + (r + 0.2) * 0.6 - 0.2, rz, 10));
+    g.add(cone(0.18, 5, M.gold, rx, H1 + 8.3 + (r + 0.2) * 0.6, rz, 6));
+  }
+  return g;
+}
+
 // «Навеки с Россией»: две параллельные белые стелы на гранитном стилобате.
 function friendship({ L, W }, h = 46) {
   const g = new THREE.Group();
@@ -668,6 +771,22 @@ export function buildLandmarks(world) {
         const f = fit(p, 0); // храмы ориентированы алтарём на восток
         const model = { nevsky, mikhailovsky, troitsky }[lm.key];
         obj = place(model(f), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'residence': {
+        const u = longestEdgeAngle(p), ux = Math.cos(u), uz = Math.sin(u);
+        const cx = p.reduce((a, q) => a + q[0], 0) / p.length, cz = p.reduce((a, q) => a + q[1], 0) / p.length;
+        // Фасад — к улице Лихвинцева (нормаль к оси в её сторону); запад — меньший t по оси на запад.
+        let best = null;
+        for (const sg of world.segmentsNear(cx, cz, 250)) {
+          if (!/Лихвинцева/.test(sg.road.name)) continue;
+          const c = World.closest(sg, cx, cz);
+          if (!best || c.d < best.d) best = c;
+        }
+        let nx = -uz, nz = ux;
+        if (best && (best.px - cx) * nx + (best.pz - cz) * nz < 0) { nx = -nx; nz = -nz; }
+        const ax = ux < 0 ? -1 : 1; // ось с запада на восток
+        obj = place(residence(p, { ux: ux * ax, uz: uz * ax, nx, nz }), 0, baseY(world, p), 0, 0);
         break;
       }
       case 'ddn': {
