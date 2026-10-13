@@ -212,9 +212,12 @@ export function buildRoadChunk(world, runs, mats) {
 // ---------------------------------------------------------------- здания
 
 // 0 панель, 1 кирпич, 2 штукатурка, 3 пром, 4 храм
-const WALL = ['#c8c5bb', '#a2603f', '#d8b97f', '#8e8f8c', '#f1eee6', '#d4d1ca'];
-const ROOF = ['#5d5d5d', '#4f4a47', '#6b5d4e', '#686a68', '#b89b4a', '#8d9096'];
+const WALL = ['#c8c5bb', '#a2603f', '#d8b97f', '#8e8f8c', '#f1eee6', '#d4d1ca', '#b98a5a'];
+const ROOF = ['#5d5d5d', '#4f4a47', '#6b5d4e', '#686a68', '#b89b4a', '#8d9096', '#8a3b2c'];
 const SEATS = '#2f63a8'; // трибуны: сторона к полю — ряды сидений
+// Частный сектор (стиль 6): стены — дерево, крашеные, белый кирпич; крыши — ржавое железо, зелёные, шифер.
+const HOUSE_WALLS = ['#9c7350', '#b98a5a', '#7fa3b8', '#8fae8a', '#d9d4c5', '#c8b27a', '#a5664a', '#c9c3b4'];
+const HOUSE_ROOFS = ['#8a3b2c', '#4d6b4f', '#7d8287', '#5a4636', '#9b5a36', '#6f7478'];
 
 function windowTexture(renderer) {
   const c = document.createElement('canvas');
@@ -256,6 +259,49 @@ export function buildingMaterials(renderer) {
     drum: new THREE.MeshLambertMaterial({ color: '#f2eee4' }),
     gold: new THREE.MeshPhongMaterial({ color: '#d2a53a', specular: '#fff1b8', shininess: 90, emissive: '#2a1d00' }),
   };
+}
+
+// Двускатная крыша частного дома: по прямоугольнику наименьшей площади вокруг контура,
+// конёк вдоль длинной стороны, свес, фронтоны на торцах (цвета стен).
+function gableRoof(pts, top, wallCol, roofCol, rp, rc) {
+  let best = null;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % pts.length];
+    const L = Math.hypot(x2 - x1, z2 - z1);
+    if (L < 0.5) continue;
+    const ux = (x2 - x1) / L, uz = (z2 - z1) / L;
+    let s0 = Infinity, s1 = -Infinity, t0 = Infinity, t1 = -Infinity;
+    for (const [x, z] of pts) {
+      const s = x * ux + z * uz, t = -x * uz + z * ux;
+      s0 = Math.min(s0, s); s1 = Math.max(s1, s); t0 = Math.min(t0, t); t1 = Math.max(t1, t);
+    }
+    const area = (s1 - s0) * (t1 - t0);
+    if (!best || area < best.area) best = { ux, uz, s0, s1, t0, t1, area };
+  }
+  if (!best) return;
+  let { ux, uz, s0, s1, t0, t1 } = best;
+  if (t1 - t0 > s1 - s0) { // конёк вдоль длинной стороны: поворачиваем оси на 90°
+    [ux, uz] = [-uz, ux];
+    [s0, s1, t0, t1] = [t0, t1, -s1, -s0];
+  }
+  const half = (t1 - t0) / 2, tm = (t0 + t1) / 2, H = Math.min(half * 0.8, 3.2), ov = 0.35;
+  const P = (s, t, y) => [s * ux - t * uz, y, s * uz + t * ux];
+  const cx = ((s0 + s1) / 2) * ux - tm * uz, cz = ((s0 + s1) / 2) * uz + tm * ux;
+  const tri = (a, b, c, col) => {
+    // Нормаль — наружу и вверх: иначе переставляем вершины.
+    const n = [(b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]), (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]),
+      (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])];
+    const mx = (a[0] + b[0] + c[0]) / 3 - cx, my = 1, mz = (a[2] + b[2] + c[2]) / 3 - cz;
+    if (n[0] * mx + n[1] * my + n[2] * mz < 0) [b, c] = [c, b];
+    for (const v of [a, b, c]) { rp.push(...v); rc.push(col.r, col.g, col.b); }
+  };
+  const yr = top + H, ye = top - ov * (H / half); // свес чуть ниже карниза
+  for (const t of [t0 - ov, t1 + ov]) {
+    const a = P(s0 - ov, t, ye), b = P(s1 + ov, t, ye), c = P(s1 + ov, tm, yr), d = P(s0 - ov, tm, yr);
+    tri(a, b, c, roofCol);
+    tri(a, c, d, roofCol);
+  }
+  for (const s of [s0, s1]) tri(P(s, t0, top), P(s, t1, top), P(s, tm, yr), wallCol);
 }
 
 function domeMeshes(domes, mats) {
@@ -318,8 +364,9 @@ export function buildBuildingChunk(world, list, mats) {
     // Переход/арка: низ над дорогой (дорога лежит на рельефе, отсчитываем от низшей точки).
     const base = b.mh ? gmin + b.mh : gmin - 1.5, top = gmax + b.h;
 
-    // Лёгкий разброс оттенка, чтобы кварталы не были одинаковыми.
-    col.set(RECOLOR[b.lm]?.[0] ?? WALL[b.s]);
+    // Лёгкий разброс оттенка, чтобы кварталы не были одинаковыми; частные дома — каждый в свой цвет.
+    const hash = Math.abs(Math.round(pts[0][0] * 7.3 + pts[0][1] * 3.1));
+    col.set(RECOLOR[b.lm]?.[0] ?? (b.r ? HOUSE_WALLS[hash % HOUSE_WALLS.length] : WALL[b.s]));
     const k = 0.9 + ((pts.length * 7919 + Math.round(b.h * 13)) % 20) / 100;
     col.multiplyScalar(k);
 
@@ -365,6 +412,11 @@ export function buildBuildingChunk(world, list, mats) {
       let ax = 0, az = 0;
       for (const [x, z] of pts) { ax += x; az += z; }
       domes.push([ax / pts.length, az / pts.length, top, Math.min(3.5, Math.max(1.2, Math.sqrt(Math.abs(area) / 2) * 0.14))]);
+    }
+
+    if (b.r) {
+      gableRoof(pts, top, col, new THREE.Color(HOUSE_ROOFS[(hash >> 3) % HOUSE_ROOFS.length]).multiplyScalar(k), rp, rc);
+      continue;
     }
 
     const contour = pts.map(([x, z]) => new THREE.Vector2(x, z));

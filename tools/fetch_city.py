@@ -298,7 +298,8 @@ def is_raised(tags):
 
 
 def building_style(tags, wid):
-    """0 — панель, 1 — кирпич, 2 — штукатурка (охра), 3 — бетон/пром, 4 — храм, 5 — глухой бетон (трибуны, навесы)."""
+    """0 — панель, 1 — кирпич, 2 — штукатурка (охра), 3 — бетон/пром, 4 — храм, 5 — глухой бетон (трибуны, навесы),
+    6 — частный дом (ставит mark_village_houses)."""
     b = tags.get("building")
     if b in ("stadium", "grandstand"):
         return 5
@@ -379,6 +380,9 @@ def building_entry(pts, tags, eid, lm, holes=()):
            and tags.get("religion", "christian") == "christian" else {}),
         "_raised": is_raised(tags),
         "_auto_h": not (tags.get("height") or tags.get("building:levels")),  # высота выдумана, не из тегов
+        "_btag": tags.get("building"),
+        "_levels": parse_num(tags.get("building:levels")),
+        "_area": poly_area(pts),
     }
 
 
@@ -542,6 +546,69 @@ def cut_passages(buildings, roads, road_nodes):
     return out
 
 
+# ---------------------------------------------------------------- частный сектор
+
+HOUSE_TAGS = {"house", "detached", "semidetached_house", "bungalow", "cabin", "farm", "terrace"}
+SMALL = 220        # м²: «маленький дом»
+NEIGHBORS = 8      # столько маленьких домов в радиусе — это посёлок/частный сектор
+NEIGHBOR_R = 80
+
+
+def obb_size(pts):
+    """Ширина и длина прямоугольника наименьшей площади вокруг контура."""
+    best = None
+    for i in range(len(pts)):
+        (x1, z1), (x2, z2) = pts[i - 1], pts[i]
+        L = math.hypot(x2 - x1, z2 - z1)
+        if L < 0.3:
+            continue
+        ux, uz = (x2 - x1) / L, (z2 - z1) / L
+        ss = [x * ux + z * uz for x, z in pts]
+        ts = [-x * uz + z * ux for x, z in pts]
+        a, b = max(ss) - min(ss), max(ts) - min(ts)
+        if best is None or a * b < best[0] * best[1]:
+            best = (a, b)
+    if not best:
+        return 0.0, 0.0
+    return min(best), max(best)
+
+
+def mark_village_houses(buildings):
+    """Частный дом — один этаж и двускатная крыша (r=1). Либо помечен как house/detached,
+    либо небольшой дом без этажности среди множества таких же (посёлки, частный сектор)."""
+    small = [b for b in buildings if b["_area"] < SMALL and not b.get("lm")]
+    cell = NEIGHBOR_R
+    grid = {}
+    for b in small:
+        b["_c"] = (sum(p[0] for p in b["p"]) / len(b["p"]), sum(p[1] for p in b["p"]) / len(b["p"]))
+        grid.setdefault((int(b["_c"][0] // cell), int(b["_c"][1] // cell)), []).append(b)
+    n = 0
+    for b in small:
+        if b.get("_fuel") or b["_btag"] in ("garage", "garages", "shed", "roof", "kiosk", "service", "industrial", "retail", "commercial"):
+            continue
+        explicit = b["_btag"] in HOUSE_TAGS
+        # Форма дома: не гаражный бокс (крошечный) и не ряд гаражей/сараев (длинный и узкий).
+        w, L = obb_size(b["p"])
+        if not explicit and (b["_area"] < 35 or w < 5 or L > 2.6 * w):
+            continue
+        if not explicit:
+            if not b["_auto_h"] or b["_btag"] not in ("yes", "residential", None):
+                continue
+            cx, cz = b["_c"]
+            near = 0
+            for i in range(int(cx // cell) - 1, int(cx // cell) + 2):
+                for j in range(int(cz // cell) - 1, int(cz // cell) + 2):
+                    near += sum(1 for q in grid.get((i, j), ()) if math.dist(q["_c"], b["_c"]) < NEIGHBOR_R)
+            if near - 1 < NEIGHBORS:
+                continue
+        lv = b["_levels"] or 1
+        b["h"] = round(lv * 2.9 + 0.3, 1)  # высота стен до карниза; крышу добавит браузер
+        b["r"] = 1
+        b["s"] = 6
+        n += 1
+    print(f"village houses: {n}")
+
+
 def build_city():
     xmin, zmax = project(SOUTH, WEST)
     xmax, zmin = project(NORTH, EAST)
@@ -659,6 +726,7 @@ def build_city():
             b["_raised"] = True
             if b["_auto_h"]:
                 b["h"] = 4.1
+    mark_village_houses(buildings)
     buildings = cut_passages(buildings, roads, road_nodes)
     # Навесы над колонками: здания-крыши (mh — высота низа) внутри территории АЗС.
     for st in fuel:
