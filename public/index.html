@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ижевск: уличные гонки</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color: #fff; }
+    canvas { display: block; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #15181b; font-size: 20px; z-index: 10; }
+    .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
+    #speedo { right: 28px; bottom: 24px; text-align: right; }
+    #speed { font-size: 72px; font-weight: 800; font-style: italic; line-height: 1; font-variant-numeric: tabular-nums; }
+    #speedo .unit { font-size: 16px; opacity: .8; }
+    #nitro { width: 180px; height: 8px; margin-top: 8px; margin-left: auto; background: rgba(255,255,255,.2); border-radius: 4px; overflow: hidden; }
+    #nitro-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #2fa8ff, #9ef0ff); }
+    #race { left: 24px; top: 20px; font-size: 18px; line-height: 1.5; }
+    #race b { font-size: 34px; font-variant-numeric: tabular-nums; }
+    #race .lbl { opacity: .7; font-size: 14px; margin-right: 6px; }
+    #street { left: 50%; top: 18px; transform: translateX(-50%); font-size: 20px; font-weight: 600; background: rgba(0,0,0,.35); padding: 4px 14px; border-radius: 6px; }
+    #street:empty { display: none; }
+    #landmark { left: 50%; top: 58px; transform: translateX(-50%); font-size: 15px; color: #ffe08a; background: rgba(0,0,0,.35); padding: 3px 12px; border-radius: 6px; }
+    #landmark:empty { display: none; }
+    #landmark::before { content: '★ '; }
+    #banner { left: 50%; top: 32%; transform: translate(-50%, -50%); font-size: 64px; font-weight: 900; font-style: italic; opacity: 0; transition: opacity .2s; text-align: center; color: #ffd23f; }
+    #banner.show { opacity: 1; }
+    #banner small { display: block; font-size: 20px; font-weight: 600; color: #fff; font-style: normal; margin-top: 6px; }
+    #minimap { position: fixed; left: 24px; bottom: 24px; width: 220px; height: 220px; border-radius: 50%; border: 3px solid rgba(255,255,255,.7); box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+    #minimap.big { width: 420px; height: 420px; }
+    #help { right: 24px; top: 20px; font-size: 13px; opacity: .85; text-align: right; line-height: 1.6; }
+    #help kbd { background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 5px; font-family: inherit; }
+    #attr { position: fixed; right: 8px; bottom: 4px; font-size: 11px; opacity: .7; }
+    #attr a { color: inherit; }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="loading"><span id="loading-text">Загрузка…</span></div>
+  <div id="street" class="hud"></div>
+  <div id="landmark" class="hud"></div>
+  <div id="race" class="hud">
+    <div><span class="lbl">ВРЕМЯ</span><b id="time">0:00.00</b></div>
+    <div><span class="lbl">ЧЕКПОИНТ</span><span id="cp">–</span> · <span id="dist"></span></div>
+  </div>
+  <div id="help" class="hud">
+    <kbd>W A S D</kbd> / стрелки — ехать<br>
+    <kbd>Пробел</kbd> ручник/занос · <kbd>Shift</kbd> нитро<br>
+    <kbd>R</kbd> на дорогу · <kbd>N</kbd> новая гонка<br>
+    <kbd>C</kbd> камера · <kbd>M</kbd> карта · <kbd>V</kbd> звук · <kbd>T</kbd> трафик
+  </div>
+  <div id="banner" class="hud"></div>
+  <canvas id="minimap" width="440" height="440"></canvas>
+  <div id="speedo" class="hud"><span id="speed">0</span> <span class="unit">км/ч</span><div id="nitro"><div id="nitro-fill"></div></div></div>
+  <div id="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">участники OpenStreetMap</a> · рельеф Copernicus DEM / Open-Meteo</div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
