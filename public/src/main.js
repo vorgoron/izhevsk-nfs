@@ -175,16 +175,59 @@ async function main() {
   let lag = 0; // отставание камеры при разгоне, м
   const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
   let camInit = false;
+  // ---------------------------------------------------------------- вращение камеры
+
+  // Мышью (тянуть с зажатой кнопкой) и пальцем по свободному месту экрана (руль и педали —
+  // свои элементы поверх, их касания сюда не попадают). Отпустил — через 1.5 с на ходу камера
+  // плавно возвращается за машину.
+  let camYaw = 0, camPitch = 0, dragId = null, dragX = 0, dragY = 0, sinceDrag = 99;
+  const cv = renderer.domElement;
+  cv.style.cursor = 'grab';
+  cv.style.touchAction = 'none';
+  cv.addEventListener('pointerdown', (e) => {
+    if (dragId !== null || garage.isOpen) return;
+    dragId = e.pointerId;
+    dragX = e.clientX;
+    dragY = e.clientY;
+    cv.setPointerCapture(e.pointerId);
+    cv.style.cursor = 'grabbing';
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== dragId) return;
+    const k = e.pointerType === 'touch' ? 1.4 : 1; // палец — короче ход
+    camYaw -= (e.clientX - dragX) * 0.006 * k;
+    camPitch = Math.max(-0.25, Math.min(1.1, camPitch + (e.clientY - dragY) * 0.004 * k));
+    dragX = e.clientX;
+    dragY = e.clientY;
+    sinceDrag = 0;
+  });
+  const endDrag = (e) => {
+    if (e.pointerId !== dragId) return;
+    dragId = null;
+    cv.style.cursor = 'grab';
+  };
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) cv.addEventListener(ev, endDrag);
+
   function updateCamera(dt) {
-    const f = car.forward;
     const speed = Math.abs(car.speed);
+    sinceDrag += dt;
+    if (dragId === null && sinceDrag > 1.5 && speed > 2) {
+      const k = Math.min(1, dt * 2.5);
+      camYaw = Math.atan2(Math.sin(camYaw), Math.cos(camYaw)) * (1 - k);
+      camPitch *= 1 - k;
+    }
+    // Курс камеры = курс машины + поворот мышью/пальцем.
+    const f0 = car.forward, cy = Math.cos(camYaw), sy = Math.sin(camYaw);
+    const f = { x: f0.x * cy - f0.y * sy, y: f0.x * sy + f0.y * cy };
     // 0 — за машиной, 1 — из салона, 2 — высоко сверху (видно город и пруд).
     // Разгон — камера отстаёт (тянется назад пропорционально ускорению), торможение — подъезжает;
     // нитро — ещё дальше, шире угол и лёгкая тряска.
     lag += (Math.max(-6, Math.min(16, car.accel_ ?? 0)) * 0.09 + (car.nitroOn ? 1.2 : 0) - lag) * Math.min(1, dt * 3);
     const back = [8 + speed * 0.02 + lag, 0.2, 70][camMode];
     const up = [3.3, 1.25, 55][camMode];
-    const want = new THREE.Vector3(car.pos.x - f.x * back, car.y + up, car.pos.y - f.y * back);
+    // Наклон: поднимаем камеру по дуге вокруг машины.
+    const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
+    const want = new THREE.Vector3(car.pos.x - f.x * back * cp, car.y + up + back * sp, car.pos.y - f.y * back * cp);
     want.y = Math.max(want.y, world.ground(want.x, want.z) + 1.2);
     const look = new THREE.Vector3(car.pos.x + f.x * 6, car.y + 1.3, car.pos.y + f.y * 6);
     const k = camMode === 1 ? 1 : 1 - Math.exp(-dt * 7);
