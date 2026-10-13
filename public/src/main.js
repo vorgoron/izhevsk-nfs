@@ -278,6 +278,22 @@ async function main() {
       });
     }
     mg.restore();
+    // Север: карта повёрнута курсом вверх, значок «С» ездит по краю. Север мира — это −z,
+    // на канвасе после поворота на (курс + π) он под углом −π/2 + курс + π.
+    const na = car.heading + Math.PI / 2, nr = size / 2 - 22;
+    const nx = size / 2 + Math.cos(na) * nr, ny = size / 2 + Math.sin(na) * nr;
+    mg.beginPath();
+    mg.arc(nx, ny, 17, 0, 7);
+    mg.fillStyle = '#c62d2d';
+    mg.fill();
+    mg.lineWidth = 3;
+    mg.strokeStyle = 'rgba(255,255,255,0.85)';
+    mg.stroke();
+    mg.fillStyle = '#fff';
+    mg.font = 'bold 20px sans-serif';
+    mg.textAlign = 'center';
+    mg.textBaseline = 'middle';
+    mg.fillText('С', nx, ny + 1);
     mg.fillStyle = '#ff3b30';
     mg.beginPath();
     mg.moveTo(size / 2, size / 2 - 8);
