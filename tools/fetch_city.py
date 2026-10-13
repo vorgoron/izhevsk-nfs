@@ -135,6 +135,11 @@ FOOTBRIDGE_STYLE = {
 FOOTBRIDGE_W = {"footway": 3.0, "path": 2.5, "steps": 2.5, "cycleway": 3.0, "track": 3.5, "pedestrian": 6.0}
 
 
+def osm_name(tags):
+    """Название: name, а если его нет — name:ru (так размечена, например, часть Советской)."""
+    return tags.get("name") or tags.get("name:ru") or ""
+
+
 def road_width(tags):
     hw = tags["highway"]
     w = ROAD_WIDTH.get(hw, 6)
@@ -351,7 +356,7 @@ def building_entry(pts, tags, eid, lm):
     return {
         "p": pts, "h": h, "s": building_style(tags, eid),
         **({"mh": mh} if mh else {}),
-        **({"name": tags["name"]} if "name" in tags else {}),
+        **({"name": osm_name(tags)} if osm_name(tags) else {}),
         **({"lm": lm} if lm else {}),
         "_raised": is_raised(tags),
     }
@@ -566,7 +571,7 @@ def build_city():
                 "n": [rn(n) for n in nds],
                 "w": road_width(tags),
                 "k": hw,
-                "name": tags.get("name", ""),
+                "name": osm_name(tags),
                 "br": 1 if tags.get("bridge") not in (None, "no") else 0,
                 "tu": 1 if is_tunnel(tags, pts) else 0,
                 "ow": 1 if tags.get("oneway") == "yes" else 0,
