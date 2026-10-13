@@ -294,7 +294,17 @@ export class World {
   // Ближайшая дорога (для названия улицы на HUD и респауна).
   nearestRoad(x, z, maxD = 30) {
     let best = null;
-    for (const s of this.nearbyRoadSegments(x, z)) {
+    // Рядом — одна клетка индекса; дальше (респаун из леса) — расширяющийся поиск.
+    if (maxD > 30) {
+      for (let r = 50; r <= maxD && !best; r *= 2) best = this.#nearestIn(this.segmentsNear(x, z, Math.min(r, maxD)), x, z, maxD);
+      return best;
+    }
+    return this.#nearestIn(this.nearbyRoadSegments(x, z), x, z, maxD);
+  }
+
+  #nearestIn(segs, x, z, maxD) {
+    let best = null;
+    for (const s of segs) {
       const c = World.closest(s, x, z);
       const d = c.d - s.w / 2;
       if (d < maxD && (!best || d < best.d)) best = { ...c, d, seg: s };
