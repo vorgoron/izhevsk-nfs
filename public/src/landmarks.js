@@ -1,6 +1,7 @@
 // Достопримечательности: процедурные модели «по мотивам», вписанные в контуры из OSM.
 // Пропорции приблизительные — узнаваемый силуэт, а не обмер.
 import * as THREE from 'three';
+import { World } from './world.js';
 
 const lambert = (color, extra = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
 const M = {
@@ -670,14 +671,23 @@ export function buildLandmarks(world) {
         break;
       }
       case 'ddn': {
-        // Фасад — к ближайшей улице: какая из длинных сторон ближе к дороге.
-        const f = fit(p, longestEdgeAngle(p));
-        const side = (d) => {
-          const x = f.cx - d * Math.sin(f.angle), z = f.cz + d * Math.cos(f.angle);
-          return world.nearestRoad(x, z, 80)?.d ?? 99;
-        };
-        const front = side(f.W / 2 + 6) <= side(-(f.W / 2 + 6)) ? 1 : -1;
-        obj = place(ddn(f, front), f.cx, baseY(world, p), f.cz, f.angle);
+        // Фасад — на улицу Орджоникидзе: направление на ближайшую точку улицы, ось модели —
+        // ближайшая к нему из осей контура (через 90°), локальная +z смотрит на улицу.
+        let best = null;
+        for (const s of world.segmentsNear(lm.x, lm.z, 200)) {
+          if (!/Орджоникидзе/.test(s.road.name)) continue;
+          const c = World.closest(s, lm.x, lm.z);
+          if (!best || c.d < best.d) best = c;
+        }
+        const want = best ? Math.atan2(-(best.px - lm.x), best.pz - lm.z) : longestEdgeAngle(p);
+        const base = longestEdgeAngle(p);
+        let a = base;
+        for (let k = 0; k < 4; k++) {
+          const c = base + (k * Math.PI) / 2;
+          if (Math.cos(c - want) > Math.cos(a - want)) a = c;
+        }
+        const f = fit(p, a);
+        obj = place(ddn(f, 1), f.cx, baseY(world, p), f.cz, a);
         break;
       }
       case 'friendship': {
