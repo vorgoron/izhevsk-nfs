@@ -155,6 +155,35 @@ export class Car {
     this.#syncModel(dt, vf);
   }
 
+  // Контакт с машиной трафика или очереди: n — нормаль от неё к нам, depth — перекрытие,
+  // vn — относительная скорость по нормали. Лёгкое касание только расталкивает, удар — отскок,
+  // потеря скорости и тряска. Возвращает true при ударе.
+  touchVehicle(nx, nz, depth, vn) {
+    this.contact = true;
+    this.pos.x += nx * depth;
+    this.pos.y += nz * depth;
+    if (vn >= 0) return false;
+    const hard = vn < -3;
+    this.vel.x -= (hard ? 1.3 : 1) * vn * nx;
+    this.vel.y -= (hard ? 1.3 : 1) * vn * nz;
+    if (hard) {
+      this.vel.multiplyScalar(0.85);
+      this.impact = Math.max(this.impact, Math.min(1, -vn / 20));
+    }
+    return hard;
+  }
+
+  // Раз в кадр, после столкновений с машинами: зажат и стоишь, хотя жмёшь газ/назад, больше
+  // секунды — на 2 с соседние машины не мешают (ghostVehicles), чтобы выехать.
+  checkStuck(dt, input) {
+    this.ghostVehicles = Math.max(0, (this.ghostVehicles ?? 0) - dt);
+    const trying = input.up || input.down;
+    if (this.contact && trying && Math.abs(this.speed) < 1.5) this.stuckT = (this.stuckT ?? 0) + dt;
+    else this.stuckT = Math.max(0, (this.stuckT ?? 0) - dt * 2);
+    if (this.stuckT > 1) { this.ghostVehicles = 2; this.stuckT = 0; }
+    this.contact = false;
+  }
+
   #collide() {
     const f = this.forward;
     for (const s of [AXLE, -AXLE]) {

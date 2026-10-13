@@ -140,6 +140,7 @@ export class Queues {
   }
 
   #collidePlayer(car) {
+    if (car.ghostVehicles > 0) return; // выезжаем из зажатия
     const f = car.forward;
     for (const q of this.active) {
       if (Math.hypot(q.path[1][0] - car.pos.x, q.path[1][1] - car.pos.y) > q.len + 30) continue;
@@ -154,15 +155,7 @@ export class Queues {
             const d = Math.hypot(cx - ox, cz - oz), min = PLAYER_R + 1.1;
             if (d >= min || d < 1e-6) continue;
             const nx = (cx - ox) / d, nz = (cz - oz) / d;
-            car.pos.x += nx * (min - d);
-            car.pos.y += nz * (min - d);
-            const vn = car.vel.x * nx + car.vel.y * nz;
-            if (vn < 0) {
-              car.vel.x -= 1.3 * vn * nx;
-              car.vel.y -= 1.3 * vn * nz;
-              car.vel.multiplyScalar(0.85);
-              car.impact = Math.max(car.impact, Math.min(1, -vn / 20));
-            }
+            car.touchVehicle(nx, nz, min - d, car.vel.x * nx + car.vel.y * nz);
           }
         }
       });

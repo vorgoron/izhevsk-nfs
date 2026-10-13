@@ -412,6 +412,7 @@ async function main() {
     signals.update(dt);
     fuel.update(dt, car);
     queues.update(dt, car);
+    car.checkStuck(dt, inp);
     traffic.update(dt, car);
     nitroFx.update(dt, car);
     dustFx.update(dt, car);

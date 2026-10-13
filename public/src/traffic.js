@@ -266,6 +266,7 @@ export class Traffic {
   }
 
   #collidePlayer(car) {
+    if (car.ghostVehicles > 0) return; // выезжаем из зажатия
     const f = car.forward;
     for (const v of this.vehicles) {
       if (!v.active || Math.hypot(v.x - car.pos.x, v.z - car.pos.y) > 16) continue;
@@ -276,15 +277,10 @@ export class Traffic {
           const d = Math.hypot(cx - ox, cz - oz), min = PLAYER_R + v.r;
           if (d >= min || d < 1e-6) continue;
           const nx = (cx - ox) / d, nz = (cz - oz) / d;
-          car.pos.x += nx * (min - d);
-          car.pos.y += nz * (min - d);
           // Относительная скорость вдоль нормали: трафик тяжёлый, отскакивает в основном игрок.
+          // Встаёт машина трафика только от удара (не от того, что о неё трутся — иначе стоит вечно).
           const vn = (car.vel.x - v.dx * v.speed) * nx + (car.vel.y - v.dz * v.speed) * nz;
-          if (vn < 0) {
-            car.vel.x -= 1.3 * vn * nx;
-            car.vel.y -= 1.3 * vn * nz;
-            car.vel.multiplyScalar(0.85);
-            car.impact = Math.max(car.impact, Math.min(1, -vn / 20));
+          if (car.touchVehicle(nx, nz, min - d, vn)) {
             v.speed *= 0.3;
             v.hit = 2.5;
           }
