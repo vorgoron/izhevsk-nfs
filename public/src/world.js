@@ -228,7 +228,10 @@ export class World {
     this.bCell = 20;
     this.bGrid = new Map();
     for (const b of this.city.buildings) {
-      if ((b.mh ?? 0) < 2.5) this.addCollider(b.p, b.x); // под переходом и аркой проезжаем
+      if ((b.mh ?? 0) < 2.5) { // под переходом и аркой проезжаем
+        this.addCollider(b.p, b.x);
+        for (const h of b.holes || []) this.addCollider(h); // двор/поле внутри — тоже стены
+      }
     }
   }
 

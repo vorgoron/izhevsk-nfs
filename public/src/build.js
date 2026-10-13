@@ -5,6 +5,7 @@ import { RECOLOR } from './landmarks.js';
 
 const AREA_COLORS = {
   water: '#3d6f8e', park: '#4f6b3a', grass: '#6c8448', sand: '#cdbb8a', industrial: '#7a7670', paved: '#9a968e',
+  track: '#a8503d',
 };
 const BASE_GROUND = '#77795f';
 
@@ -171,8 +172,9 @@ export function buildRoads(world, renderer) {
 // ---------------------------------------------------------------- здания
 
 // 0 панель, 1 кирпич, 2 штукатурка, 3 пром, 4 храм
-const WALL = ['#c8c5bb', '#a2603f', '#d8b97f', '#8e8f8c', '#f1eee6'];
-const ROOF = ['#5d5d5d', '#4f4a47', '#6b5d4e', '#686a68', '#b89b4a'];
+const WALL = ['#c8c5bb', '#a2603f', '#d8b97f', '#8e8f8c', '#f1eee6', '#d4d1ca'];
+const ROOF = ['#5d5d5d', '#4f4a47', '#6b5d4e', '#686a68', '#b89b4a', '#8d9096'];
+const SEATS = '#2f63a8'; // трибуны: сторона к полю — ряды сидений
 
 function windowTexture(renderer) {
   const c = document.createElement('canvas');
@@ -248,11 +250,23 @@ export function buildBuildings(world, renderer) {
     const k = 0.9 + ((pts.length * 7919 + Math.round(b.h * 13)) % 20) / 100;
     col.multiplyScalar(k);
 
+    // Дворы (дыры, например поле стадиона внутри трибун): обход по часовой — стены смотрят во двор.
+    const holes = (b.holes || []).filter((h) => h.length > 2).map((h) => {
+      let a = 0;
+      for (let i = 0; i < h.length; i++) a += h[i][0] * h[(i + 1) % h.length][1] - h[(i + 1) % h.length][0] * h[i][1];
+      return a > 0 ? [...h].reverse() : h;
+    });
+
+    // Трибуны (стиль 5): снаружи глухой бетон без окон, со стороны поля — сиденья.
+    const stand = b.s === 5;
+    const seats = new THREE.Color(SEATS);
+    for (const ring of [pts, ...holes]) {
+    const rc_ = stand && ring !== pts ? seats : col;
     let u = 0;
-    for (let i = 0; i < pts.length; i++) {
-      const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % pts.length];
+    for (let i = 0; i < ring.length; i++) {
+      const [x1, z1] = ring[i], [x2, z2] = ring[(i + 1) % ring.length];
       const len = Math.hypot(x2 - x1, z2 - z1);
-      if (len < 0.01 || skip.has(i)) continue;
+      if (len < 0.01 || (ring === pts && skip.has(i))) continue;
       const nx = (z2 - z1) / len, nz = -(x2 - x1) / len;
       const u1 = u, u2 = u + len / 3.2 / 4;
       const vb = (base - gmax) / 3.1 / 4, vt = b.h / 3.1 / 4;
@@ -264,14 +278,18 @@ export function buildBuildings(world, renderer) {
       for (const [x, y, z, uu, vv] of quad) {
         wp.push(x, y, z);
         wn.push(nx, 0, nz);
-        wc.push(col.r, col.g, col.b);
-        wuv.push(uu, vv);
+        wc.push(rc_.r, rc_.g, rc_.b);
+        // Без окон: все вершины в чистое место текстуры (простенок).
+        if (stand) wuv.push(0.02, 0.1);
+        else wuv.push(uu, vv);
       }
       u = u2;
     }
+    }
 
     const contour = pts.map(([x, z]) => new THREE.Vector2(x, z));
-    const tris = THREE.ShapeUtils.triangulateShape(contour, []);
+    const tris = THREE.ShapeUtils.triangulateShape(contour, holes.map((h) => h.map(([x, z]) => new THREE.Vector2(x, z))));
+    pts = [...pts, ...holes.flat()]; // индексы треугольников — по контуру и дырам подряд
     const rcol = new THREE.Color(RECOLOR[b.lm]?.[1] ?? ROOF[b.s]).multiplyScalar(k);
     for (let [a, c, d] of tris) {
       // Нормаль крыши должна смотреть вверх.
@@ -392,9 +410,12 @@ export function buildMinimapCanvas(world) {
   g.fillStyle = '#34373a';
   for (const b of world.city.buildings) {
     g.beginPath();
-    g.moveTo(tx(b.p[0][0]), tz(b.p[0][1]));
-    for (const [x, z] of b.p) g.lineTo(tx(x), tz(z));
-    g.fill();
+    for (const ring of [b.p, ...(b.holes || [])]) {
+      g.moveTo(tx(ring[0][0]), tz(ring[0][1]));
+      for (const [x, z] of ring) g.lineTo(tx(x), tz(z));
+      g.closePath();
+    }
+    g.fill('evenodd');
   }
   g.lineCap = g.lineJoin = 'round';
   for (const r of world.roads) {

@@ -174,7 +174,10 @@ def area_kind(tags):
     if tags.get("leisure") in ("park", "garden") or tags.get("landuse") in ("forest", "recreation_ground", "village_green", "cemetery") \
             or tags.get("natural") in ("wood", "scrub"):
         return "park"
-    if tags.get("landuse") in ("grass", "meadow") or tags.get("natural") in ("grassland", "heath") or tags.get("leisure") in ("pitch",):
+    if tags.get("leisure") == "track" and tags.get("sport", "running") in ("running", "athletics"):
+        return "track"  # беговая дорожка — красная
+    if tags.get("landuse") in ("grass", "meadow") or tags.get("natural") in ("grassland", "heath") \
+            or tags.get("leisure") in ("pitch", "stadium"):
         return "grass"
     if tags.get("natural") in ("sand", "beach"):
         return "sand"
@@ -190,6 +193,7 @@ DEFAULT_LEVELS = {
     "apartments": 9, "residential": 5, "house": 1.5, "detached": 1.5, "dormitory": 5,
     "commercial": 3, "retail": 2, "office": 5, "industrial": 3, "warehouse": 2,
     "garage": 1, "garages": 1, "shed": 1, "roof": 1, "kiosk": 1, "service": 1,
+    "stadium": 4, "grandstand": 3, "sports_hall": 3,
     "church": 4, "cathedral": 8, "school": 3, "kindergarten": 2, "university": 5,
     "hospital": 5, "public": 4, "civic": 4, "hotel": 8, "train_station": 3,
 }
@@ -288,8 +292,10 @@ def is_raised(tags):
 
 
 def building_style(tags, wid):
-    """0 — панель, 1 — кирпич, 2 — штукатурка (охра), 3 — бетон/пром, 4 — храм."""
+    """0 — панель, 1 — кирпич, 2 — штукатурка (охра), 3 — бетон/пром, 4 — храм, 5 — трибуны."""
     b = tags.get("building")
+    if b in ("stadium", "grandstand"):
+        return 5
     mat = tags.get("building:material", "")
     if b in ("church", "cathedral", "chapel") or tags.get("amenity") == "place_of_worship":
         return 4
@@ -350,11 +356,13 @@ def poly_area(pts):
     return abs(a) / 2
 
 
-def building_entry(pts, tags, eid, lm):
-    h = round(building_height(tags, eid, poly_area(pts)), 1)
+def building_entry(pts, tags, eid, lm, holes=()):
+    area = poly_area(pts) - sum(poly_area(h) for h in holes)
+    h = round(building_height(tags, eid, area), 1)
     mh = building_base(tags, h)
     return {
         "p": pts, "h": h, "s": building_style(tags, eid),
+        **({"holes": [[(round(x, 2), round(z, 2)) for x, z in hole] for hole in holes]} if holes else {}),
         **({"mh": mh} if mh else {}),
         **({"name": osm_name(tags)} if osm_name(tags) else {}),
         **({"lm": lm} if lm else {}),
@@ -617,7 +625,9 @@ def build_city():
                 lm = LANDMARK_BY_ELEMENT.get(("relation", rid))
                 if lm and LANDMARKS[lm][3] == "replace":
                     continue
-                buildings.append(building_entry(pts, tags, rid, lm))
+                # Дворы и поле стадиона внутри здания-кольца (трибуны) — дыры, а не сплошная коробка.
+                own = [h for h in holes if len(h) >= 3 and point_in(*h[0], pts)]
+                buildings.append(building_entry(pts, tags, rid, lm, own))
             else:
                 areas.append({"k": kind, "p": pts, **({"holes": holes} if holes else {})})
 
