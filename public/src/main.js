@@ -14,7 +14,7 @@ import { Signals } from './signals.js';
 import { Sky, HORIZON } from './sky.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
-import { NitroFX } from './effects.js';
+import { NitroFX, DustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
@@ -75,6 +75,7 @@ async function main() {
     car.update(0, {}); // поставить новую модель на место старой
   };
   const nitroFx = new NitroFX(scene);
+  const dustFx = new DustFX(scene);
   nitroFx.attach(car.model);
   const race = new Race(world, scene);
 
@@ -195,7 +196,7 @@ async function main() {
     camera.position.copy(camPos).add(carP);
     camera.position.y = Math.max(camera.position.y, world.ground(camera.position.x, camera.position.z) + 1);
     const lookAt = camLook.clone().add(carP);
-    const shake = car.impact * 0.6 + (car.nitroOn ? 0.07 : 0);
+    const shake = car.impact * 0.6 + (car.nitroOn ? 0.07 : 0) + (car.offroad ?? 0) * Math.min(1, speed / 20) * 0.07;
     if (shake > 0) {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
@@ -373,6 +374,7 @@ async function main() {
     queues.update(dt, car);
     traffic.update(dt, car);
     nitroFx.update(dt, car);
+    dustFx.update(dt, car);
     sound.update(dt, car, inp, race);
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);

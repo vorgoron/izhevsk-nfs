@@ -1,5 +1,5 @@
 // Нитро: пламя из выхлопной трубы, искры (летят назад, падают, гаснут) и «линии скорости»
-// по краям экрана.
+// по краям экрана. Пыль из-под колёс вне дороги.
 import * as THREE from 'three';
 
 const SPARKS = 400, SPARK_LIFE = 0.45, SPARK_RATE = 260; // шт, с, шт/с
@@ -145,4 +145,58 @@ function glowDot() {
   g.fillStyle = r;
   g.fillRect(0, 0, 32, 32);
   return new THREE.CanvasTexture(c);
+}
+
+// Пыль из-под задних колёс на грунте: клубы поднимаются, расплываются и тают.
+const DUST = 240, DUST_LIFE = 1.1;
+
+export class DustFX {
+  constructor(scene) {
+    this.pos = new Float32Array(DUST * 3);
+    this.col = new Float32Array(DUST * 4);
+    this.vel = new Float32Array(DUST * 3);
+    this.life = new Float32Array(DUST);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
+    this.points = new THREE.Points(geo, new THREE.PointsMaterial({
+      size: 1.6, map: glowDot(), vertexColors: true, transparent: true, depthWrite: false,
+    }));
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+    this.next = 0;
+    this.carry = 0;
+  }
+
+  update(dt, car) {
+    const speed = Math.abs(car.speed);
+    const rate = (car.offroad ?? 0) > 0.5 && speed > 3 && car.sink === 0 ? 25 + speed * 2.5 : 0;
+    this.carry += rate * dt;
+    const m = car.model.matrixWorld, p = new THREE.Vector3();
+    while (this.carry >= 1) {
+      this.carry--;
+      const i = this.next;
+      this.next = (this.next + 1) % DUST;
+      // У одного из задних колёс.
+      p.set(Math.random() < 0.5 ? -0.75 : 0.75, 0.2, -1.3).applyMatrix4(m);
+      this.pos.set([p.x, p.y, p.z], i * 3);
+      this.vel.set([car.vel.x * 0.25 + (Math.random() - 0.5) * 1.5, 0.6 + Math.random() * 1.2, car.vel.y * 0.25 + (Math.random() - 0.5) * 1.5], i * 3);
+      this.life[i] = DUST_LIFE * (0.7 + Math.random() * 0.6);
+    }
+    for (let i = 0; i < DUST; i++) {
+      const j = i * 3, c = i * 4;
+      if (this.life[i] <= 0) { this.col[c + 3] = 0; continue; }
+      this.life[i] -= dt;
+      const drag = Math.exp(-1.8 * dt);
+      this.vel[j] *= drag;
+      this.vel[j + 2] *= drag;
+      this.pos[j] += this.vel[j] * dt;
+      this.pos[j + 1] += this.vel[j + 1] * dt;
+      this.pos[j + 2] += this.vel[j + 2] * dt;
+      const t = Math.max(0, this.life[i] / DUST_LIFE);
+      this.col.set([0.62, 0.55, 0.42, 0.45 * t * (1 - t) * 4 * 0.6], c);
+    }
+    this.points.geometry.attributes.position.needsUpdate = true;
+    this.points.geometry.attributes.color.needsUpdate = true;
+  }
 }

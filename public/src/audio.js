@@ -63,6 +63,7 @@ export class Sound {
     this.skid = this.#noiseVoice('bandpass', 1300, 3);
     this.wind = this.#noiseVoice('lowpass', 500, 0.7);
     this.nitroV = this.#noiseVoice('highpass', 2500, 0.7);
+    this.gravel = this.#noiseVoice('lowpass', 380, 1.2); // гул грунта под колёсами
   }
 
   #noiseVoice(type, freq, q) {
@@ -160,6 +161,9 @@ export class Sound {
     const skid = Math.min(1, Math.max(0, (slip - 2.5) / 8) + (braking ? 0.35 : 0)) * Math.min(1, kmh / 20);
     set(this.skid.g.gain, skid * 0.35, 0.04);
     set(this.skid.f.frequency, 1100 + slip * 25);
+
+    // ---- грунт: глухой шорох, громче на скорости
+    set(this.gravel.g.gain, (car.offroad ?? 0) * Math.min(1, kmh / 60) * 0.32, 0.1);
 
     // ---- ветер и нитро
     set(this.wind.g.gain, Math.min(0.25, (kmh / 200) ** 2 * 0.25), 0.2);

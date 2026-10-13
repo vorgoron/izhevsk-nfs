@@ -4,6 +4,8 @@ import * as THREE from 'three';
 // Скорость, разгон и сцепление — от модели (vehicles.js), здесь базовые величины.
 const NITRO_K = 1.3;      // нитро: верхняя скорость ×1.3
 const NITRO_UNLOCK = 0.25; // после опустошения нитро снова доступно с этого запаса
+// Вне дороги (трава, лес, пустырь): доля от максимальной скорости, разгона, сцепления; торможение грунтом.
+const OFF_SPEED = 0.45, OFF_ACCEL = 0.5, OFF_GRIP = 0.6, OFF_DRAG = 0.08;
 const ACCEL = 13;
 const BRAKE = 28;
 const REVERSE_MAX = 12;
@@ -69,6 +71,11 @@ export class Car {
     } else {
       this.dry.set(this.pos.x, this.pos.y);
     }
+    // Покрытие под машиной — 20 раз в секунду; offroad плавно 0..1 (дорога → грунт).
+    this.surfT = (this.surfT ?? 0) - dt;
+    if (this.surfT <= 0) { this.surface = this.world.surfaceAt(this.pos.x, this.pos.y); this.surfT = 0.05; }
+    this.offroad = (this.offroad ?? 0) + ((this.surface === 'ground' ? 1 : 0) - (this.offroad ?? 0)) * Math.min(1, dt * 5);
+    const off = this.offroad;
     const f = this.forward, r = this.right;
     let vf = this.vel.dot(f), vr = this.vel.dot(r);
 
@@ -85,17 +92,20 @@ export class Car {
       this.fuel = Math.max(0, this.fuel - (Math.abs(vf) * dt + 0.3 * dt) / TANK_M * this.eco * (nitroOn ? 3 : 1));
     }
     this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -0.35 : 0.08) * dt));
-    const top = nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed;
+    const top = (nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed) * (1 - (1 - OFF_SPEED) * off);
+    const accel = this.accel * (1 - (1 - OFF_ACCEL) * off);
 
     if (input.up) {
-      vf += (nitroOn ? this.accel * 1.8 : this.accel) * Math.max(0, 1 - vf / top) * dt;
+      vf += (nitroOn ? accel * 1.8 : accel) * Math.max(0, 1 - vf / top) * dt;
     } else if (input.down) {
       if (vf > 0.5) vf -= BRAKE * dt;
-      else vf -= this.accel * 0.7 * Math.max(0, 1 + vf / REVERSE_MAX) * dt;
+      else vf -= accel * 0.7 * Math.max(0, 1 + vf / REVERSE_MAX) * dt;
     } else {
       vf -= Math.sign(vf) * Math.min(Math.abs(vf), 2.5 * dt); // накат
     }
     vf -= vf * Math.abs(vf) * 0.0004 * dt; // сопротивление воздуха
+    vf -= vf * OFF_DRAG * off * dt;        // грунт тормозит
+    if (vf > top + 1) vf -= Math.min(vf - top, 14 * dt); // съехал с дороги на скорости — сбрасываем до предела грунта
     if (input.brake) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 9 * dt);
 
     // Руль: плавно к цели, на скорости — меньше угол.
@@ -105,7 +115,7 @@ export class Car {
     const driftBoost = input.brake ? 1.5 : 1;
     this.heading -= this.steer * STEER_RATE * speedFactor * driftBoost * Math.sign(vf || 1) * dt;
 
-    vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip) * dt);
+    vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip * (1 - (1 - OFF_GRIP) * off)) * dt);
     const f2 = this.forward, r2 = this.right;
     this.vel.set(f2.x * vf + r2.x * vr, f2.y * vf + r2.y * vr);
     // Сглаженное продольное ускорение — для камеры (отстаёт при разгоне).
@@ -128,6 +138,12 @@ export class Car {
     // Крен от рельефа плюс немного от поворота — для ощущения скорости.
     const lean = this.steer * Math.min(1, Math.abs(vf) / 30) * 0.05;
     this.roll += (Math.atan2(hl - hr, 1.8) - lean - this.roll) * k;
+    // Кочки на грунте: мелкая тряска кузова, сильнее на скорости.
+    if (off > 0.05) {
+      const b = off * Math.min(1, Math.abs(vf) / 12) * 0.025;
+      this.pitch += (Math.random() - 0.5) * b;
+      this.roll += (Math.random() - 0.5) * b;
+    }
 
     if (this.sink > 0) {
       // Уходит под воду носом вниз.

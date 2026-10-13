@@ -12,6 +12,14 @@ export const roadLift = (k) => LIFT[k.replace('_link', '')] ?? 0.28;
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
 export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
 
+function pointInRing(x, z, p) {
+  let ins = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    if ((p[i][1] > z) !== (p[j][1] > z) && x < ((p[j][0] - p[i][0]) * (z - p[i][1])) / (p[j][1] - p[i][1]) + p[i][0]) ins = !ins;
+  }
+  return ins;
+}
+
 export class World {
   constructor(city) {
     this.city = city;
@@ -265,6 +273,21 @@ export class World {
 
   nearbyRoadSegments(x, z) {
     return this.roadGrid.get(Math.floor(x / this.roadCell) * 100003 + Math.floor(z / this.roadCell)) || [];
+  }
+
+  // Покрытие под точкой: 'road' — полотно дороги, 'paved' — площадь, парковка, промзона,
+  // беговая дорожка; иначе 'ground' (трава, парк, лес, пустырь) — там едется тяжело.
+  surfaceAt(x, z) {
+    for (const s of this.nearbyRoadSegments(x, z)) {
+      if (World.closest(s, x, z).d < s.w / 2 + 0.4) return 'road';
+    }
+    const [ci, cj] = this.chunkAt(x, z);
+    const d = this.chunkData.get(ci * 10000 + cj);
+    if (!d) return 'ground';
+    // Участки отсортированы от больших к мелким: верхний (последний подходящий) — видимый.
+    let kind = null;
+    for (const a of d.areas) if (pointInRing(x, z, a.p) && !(a.holes || []).some((h) => pointInRing(x, z, h))) kind = a.k;
+    return kind === 'paved' || kind === 'industrial' || kind === 'track' ? 'paved' : 'ground';
   }
 
   // Отрезки дорог в радиусе r (по сетке индекса, без перебора всего города).
