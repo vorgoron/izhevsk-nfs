@@ -21,9 +21,10 @@ export class Race {
     this.gateGeo = new THREE.CylinderGeometry(CP_RADIUS, CP_RADIUS, 40, 32, 1, true).translate(0, 20, 0);
     this.ringGeo = new THREE.TorusGeometry(CP_RADIUS, 0.5, 8, 48).rotateX(Math.PI / 2);
     // Стрелка над машиной, указывает на следующий чекпоинт.
+    // Небольшая, полупрозрачная и приплюснутая — не закрывает дорогу впереди.
     this.arrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.6, 1.8, 12).rotateX(Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: '#ffd23f' }),
+      new THREE.ConeGeometry(0.35, 1.1, 12).rotateX(Math.PI / 2).scale(1, 0.45, 1),
+      new THREE.MeshBasicMaterial({ color: '#ffd23f', transparent: true, opacity: 0.5, depthWrite: false }),
     );
     this.arrow.visible = false;
     scene.add(this.arrow);
@@ -141,8 +142,8 @@ export class Race {
     const target = this.checkpoints[this.next];
     this.arrow.visible = (this.state === 'running' || this.state === 'countdown') && !!target;
     if (this.arrow.visible) {
-      this.arrow.position.set(car.pos.x, car.y + 3.4, car.pos.y);
-      this.arrow.lookAt(target.x, car.y + 3.4, target.z);
+      this.arrow.position.set(car.pos.x, car.y + 2.6, car.pos.y);
+      this.arrow.lookAt(target.x, car.y + 2.6, target.z);
     }
   }
 
