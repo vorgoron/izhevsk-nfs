@@ -12,6 +12,7 @@ const STEER_RATE = 2.3;   // рад/с на средней скорости
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
 const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
+const TANK_M = 9000;      // м на полном баке при обычном газе; нитро — втрое больше расхода
 
 export class Car {
   constructor(world, model, stats) {
@@ -30,6 +31,8 @@ export class Car {
     this.sink = 0;          // сколько секунд в воде
     this.drowned = false;
     this.dry = new THREE.Vector2(); // последняя точка на суше
+    this.fuel = 1;          // бак, 0..1
+    this.refueling = false; // выставляет Fuel
   }
 
   // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы).
@@ -38,6 +41,7 @@ export class Car {
     this.maxSpeed = stats.kmh / 3.6;
     this.accel = ACCEL * stats.accel;
     this.grip = GRIP * stats.grip;
+    this.eco = stats.eco ?? 1;
   }
 
   place(x, z, heading) {
@@ -67,7 +71,12 @@ export class Car {
     const f = this.forward, r = this.right;
     let vf = this.vel.dot(f), vr = this.vel.dot(r);
 
+    // Пустой бак: мотор заглох — ни газа, ни заднего хода, ни нитро; тормоз работает.
+    if (this.fuel <= 0) input = { ...input, up: false, nitro: false, down: input.down && vf > 0.5 };
     const nitroOn = input.nitro && this.nitro > 0 && vf > 5;
+    if (input.up || (input.down && vf <= 0.5)) {
+      this.fuel = Math.max(0, this.fuel - (Math.abs(vf) * dt + 0.3 * dt) / TANK_M * this.eco * (nitroOn ? 3 : 1));
+    }
     this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -0.35 : 0.08) * dt));
     const top = nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed;
 

@@ -184,7 +184,7 @@ def area_kind(tags):
     if tags.get("landuse") in ("industrial", "railway", "garages", "construction"):
         return "industrial"
     if tags.get("place") == "square" or (tags.get("highway") == "pedestrian" and tags.get("area") == "yes") \
-            or tags.get("amenity") == "parking":
+            or tags.get("amenity") in ("parking", "fuel"):
         return "paved"
     return None
 
@@ -292,7 +292,7 @@ def is_raised(tags):
 
 
 def building_style(tags, wid):
-    """0 — панель, 1 — кирпич, 2 — штукатурка (охра), 3 — бетон/пром, 4 — храм, 5 — трибуны."""
+    """0 — панель, 1 — кирпич, 2 — штукатурка (охра), 3 — бетон/пром, 4 — храм, 5 — глухой бетон (трибуны, навесы)."""
     b = tags.get("building")
     if b in ("stadium", "grandstand"):
         return 5
@@ -367,6 +367,7 @@ def building_entry(pts, tags, eid, lm, holes=()):
         **({"name": osm_name(tags)} if osm_name(tags) else {}),
         **({"lm": lm} if lm else {}),
         "_raised": is_raised(tags),
+        "_auto_h": not (tags.get("height") or tags.get("building:levels")),  # высота выдумана, не из тегов
     }
 
 
@@ -496,7 +497,7 @@ def cut_passages(buildings, roads, road_nodes):
         if crosses and not b.get("mh"):
             if b["_raised"]:
                 b["mh"] = PASSAGE_H
-                b["h"] = max(b["h"], PASSAGE_H + 3.0)
+                b["h"] = max(b["h"], PASSAGE_H + (0.8 if b.get("_fuel") else 3.0))
                 n_raised += 1
             else:
                 pieces = [(b["p"], 0.0)]
@@ -548,7 +549,7 @@ def build_city():
             road_nodes.append(project(*nodes[nid]))
         return road_node_index[nid]
 
-    roads, paths, rails, buildings, areas, trees, footbridges = [], [], [], [], [], [], []
+    roads, paths, rails, buildings, areas, trees, footbridges, fuel = [], [], [], [], [], [], [], []
 
     for wid, (nds, tags) in ways.items():
         nds = [n for n in nds if n in nodes]
@@ -606,6 +607,8 @@ def build_city():
             pts = ring_xy(nds)
             if len(pts) >= 3 and inside(pts):
                 areas.append({"k": kind, "p": pts})
+                if tags.get("amenity") == "fuel":
+                    fuel.append({"name": tags.get("brand") or osm_name(tags) or "АЗС", "p": pts})
 
     for rid, (members, tags) in relations.items():
         if tags.get("type") != "multipolygon":
@@ -637,7 +640,21 @@ def build_city():
             if xmin < x < xmax and zmin < z < zmax:
                 trees.append([x, z])
 
+    # Здания на АЗС без этажности — магазин и навес в один этаж, а не выдуманные 6 этажей.
+    # Навес над проездом поднимается целиком (тонкой плитой), а не режется аркой.
+    for b in buildings:
+        if any(point_in(*b["p"][0], st["p"]) for st in fuel):
+            b["_fuel"] = True
+            b["_raised"] = True
+            if b["_auto_h"]:
+                b["h"] = 4.1
     buildings = cut_passages(buildings, roads, road_nodes)
+    # Навесы над колонками: здания-крыши (mh — высота низа) внутри территории АЗС.
+    for st in fuel:
+        roofs = [b for b in buildings if b.get("mh") and point_in(*b["p"][0], st["p"])]
+        for b in roofs:
+            b["s"] = 5  # навес — глухой бетон, без окон
+        st["roofs"] = [b["p"] for b in roofs]
     # Дорожка по мосту-площади — часть этой площади, отдельным настилом не нужна (было бы мерцание).
     decks = [fb["p"] for fb in footbridges if fb["a"]]
     footbridges = [fb for fb in footbridges if fb["a"] or not any(
@@ -655,6 +672,7 @@ def build_city():
         "areas": areas,
         "trees": trees,
         "footbridges": footbridges,
+        "fuel": fuel,
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()

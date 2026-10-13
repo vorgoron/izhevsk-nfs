@@ -166,6 +166,15 @@ export class Sound {
     const nitroOn = input.nitro && car.nitro > 0 && car.speed > 5;
     set(this.nitroV.g.gain, nitroOn ? 0.18 : 0, nitroOn ? 0.05 : 0.15);
 
+    // ---- заправка: бульканье, полный бак — звонок
+    if (car.refueling && Math.random() < dt * 7) this.#tone(110 + Math.random() * 90, t, 0.07, 'sine', 0.14);
+    if (car.fuel >= 1 && this.prev.fuel < 1 && this.prev.refueling) {
+      this.#tone(1046, t, 0.15, 'triangle', 0.22);
+      this.#tone(1568, t + 0.12, 0.3, 'triangle', 0.22);
+    }
+    this.prev.fuel = car.fuel;
+    this.prev.refueling = car.refueling;
+
     // ---- вода: плюх при въезде, потом бульканье
     if (car.sink > 0 && !this.prev.sink) this.#splash();
     if (car.sink > 0.3 && Math.random() < dt * 9) this.#tone(180 + Math.random() * 260, t, 0.08, 'sine', 0.12);

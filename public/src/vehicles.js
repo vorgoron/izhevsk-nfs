@@ -1,5 +1,5 @@
 // Машины ижевского автопрома: процедурные модели по профилю сбоку (вытянутому на ширину)
-// и характеристики для физики. Размеры — по паспортным, силуэты упрощены.
+// и характеристики для физики (eco — расход бензина относительно «Оды»). Размеры — по паспортным, силуэты упрощены.
 import * as THREE from 'three';
 
 // Профили: [z, y] — z вперёд (перед машины при +len/2), y вверх, от земли.
@@ -15,7 +15,7 @@ export const MODELS = {
     wheels: { r: 0.29, front: 1.26, rear: -1.21, track: 0.7 },
     bumper: '#3a3c40', grille: '#202225', lights: 'rect',
     colors: ['#7c1622', '#e9e9e6', '#1f5e6b', '#2c5aa0', '#8c9196', '#2f6b3a', '#d8641e', '#1e1f22'],
-    stats: { kmh: 165, accel: 0.86, grip: 1.0 },
+    stats: { kmh: 165, accel: 0.86, grip: 1.0, eco: 1.0 },
   },
   m412: {
     name: 'Москвич-412 (ИЖ-412)', years: '1967–1998',
@@ -27,7 +27,7 @@ export const MODELS = {
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
     bumper: '#c8ccd0', grille: '#c8ccd0', lights: 'rect',
     colors: ['#9fc2d6', '#e8e2c8', '#6b1420', '#3b6e4f', '#f0f0ec', '#c9a227', '#2b3a66', '#5a5f66'],
-    stats: { kmh: 155, accel: 0.8, grip: 0.95 },
+    stats: { kmh: 155, accel: 0.8, grip: 0.95, eco: 1.15 },
   },
   kombi: {
     name: 'ИЖ-2125 «Комби»', years: '1973–1997',
@@ -39,7 +39,7 @@ export const MODELS = {
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
     bumper: '#c8ccd0', grille: '#c8ccd0', lights: 'rect',
     colors: ['#c64a1e', '#e8e2c8', '#2e8b8b', '#f2c230', '#6b1420', '#4a6b2f', '#e9e9e6', '#3d4a5c'],
-    stats: { kmh: 150, accel: 0.8, grip: 0.95 },
+    stats: { kmh: 150, accel: 0.8, grip: 0.95, eco: 1.15 },
   },
   kabluk: {
     name: 'ИЖ-2715 «Каблучок»', years: '1972–2001',
@@ -52,7 +52,7 @@ export const MODELS = {
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
     bumper: '#c8ccd0', grille: '#c8ccd0', lights: 'rect',
     colors: ['#3b6e4f', '#e9e9e6', '#2c5aa0', '#c9a227', '#7a2f2f', '#5a6e8c', '#8c9196', '#d8641e'],
-    stats: { kmh: 135, accel: 0.7, grip: 0.9 },
+    stats: { kmh: 135, accel: 0.7, grip: 0.9, eco: 1.25 },
   },
   odavan: {
     name: 'ИЖ-27175 (фургон «Ода»)', years: '1997–2012',
@@ -65,7 +65,7 @@ export const MODELS = {
     wheels: { r: 0.29, front: 1.26, rear: -1.21, track: 0.7 },
     bumper: '#3a3c40', grille: '#202225', lights: 'rect',
     colors: ['#e9e9e6', '#7c1622', '#2c5aa0', '#2f6b3a', '#8c9196', '#1e1f22', '#c9a227', '#1f5e6b'],
-    stats: { kmh: 140, accel: 0.72, grip: 0.9 },
+    stats: { kmh: 140, accel: 0.72, grip: 0.9, eco: 1.2 },
   },
   vesta: {
     name: 'LADA Vesta', years: 'с 2015',
@@ -77,7 +77,7 @@ export const MODELS = {
     wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76 },
     bumper: '#2a2c30', grille: '#1b1c1f', lights: 'xface',
     colors: ['#e9e9e6', '#c63a2a', '#1e1f22', '#8c9196', '#2c5aa0', '#e07a1f', '#5a3a6b', '#3b5f4a'],
-    stats: { kmh: 190, accel: 1.0, grip: 1.06 },
+    stats: { kmh: 190, accel: 1.0, grip: 1.06, eco: 0.85 },
   },
 };
 export const DEFAULT_MODEL = 'oda';

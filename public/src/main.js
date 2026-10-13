@@ -11,6 +11,7 @@ import { Sound } from './audio.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
 import { Sky, HORIZON } from './sky.js';
+import { Fuel } from './fuel.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
@@ -87,6 +88,7 @@ async function main() {
   respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0);
   race.start(car.pos.x, car.pos.y);
   const skyDome = new Sky(scene, world.baseTerrain(0, 0));
+  const fuel = new Fuel(world, scene);
   const traffic = new Traffic(world, scene);
   const signals = new Signals(world, traffic, scene);
   traffic.reset(car.pos.x, car.pos.y);
@@ -98,7 +100,7 @@ async function main() {
     },
   });
   if (!choice.saved) garage.open();
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -111,7 +113,16 @@ async function main() {
   const actions = {
     sound: () => sound.toggleMute(),
     traffic: () => { traffic.setEnabled(!traffic.enabled); return traffic.enabled; },
-    respawn: () => respawnAt(car.pos.x, car.pos.y),
+    // Пустой бак — эвакуатор на ближайшую АЗС (прямо к колонкам), иначе — на ближайшую дорогу.
+    respawn: () => {
+      const n = car.fuel <= 0 && fuel.nearest(car.pos.x, car.pos.y);
+      if (n) {
+        const [x, z] = fuel.spot(n.station);
+        const [sx, sz] = n.station.sign || [n.station.cx, n.station.cz]; // носом к стеле — она у выезда на дорогу
+        car.place(x, z, Math.atan2(sx - x, sz - z));
+      }
+      else respawnAt(car.pos.x, car.pos.y);
+    },
     race: () => race.start(car.pos.x, car.pos.y),
     camera: () => { camMode = (camMode + 1) % 3; },
     garage: () => garage.toggle(),
@@ -219,6 +230,13 @@ async function main() {
       mg.fillStyle = '#e0b84a';
       mg.fill();
     }
+    for (const st of fuel.stations) {
+      const r = 7 / zoom, x = (st.cx - xmin) * scale, z = (st.cz - zmin) * scale;
+      mg.fillStyle = car.fuel < 0.25 ? '#ff8a2a' : '#e07a1f';
+      mg.fillRect(x - r, z - r, 2 * r, 2 * r);
+      mg.fillStyle = '#fff';
+      mg.fillRect(x - r * 0.45, z - r * 0.55, r * 0.9, r * 1.1);
+    }
     if (traffic.enabled) {
       mg.fillStyle = '#cfd3d8';
       for (const v of traffic.vehicles) {
@@ -270,6 +288,12 @@ async function main() {
     const banner = $('banner');
     if (garage.isOpen) {
       banner.classList.remove('show');
+    } else if (car.refueling) {
+      banner.innerHTML = `⛽ ${Math.round(car.fuel * 100)}%<small>заправка</small>`;
+      banner.classList.add('show');
+    } else if (car.fuel <= 0 && Math.abs(car.speed) < 2 && race.state !== 'countdown') {
+      banner.innerHTML = `БЕНЗИН КОНЧИЛСЯ<small>${isTouch ? '↺' : 'R'} — эвакуатор до заправки</small>`;
+      banner.classList.add('show');
     } else if (car.sink > 0.4) {
       banner.innerHTML = 'УТОНУЛ!<small>всё сначала</small>';
       banner.classList.add('show');
@@ -285,6 +309,11 @@ async function main() {
     } else {
       banner.classList.remove('show');
     }
+    // Бак: шкала под нитро; мало бензина — мигает и подсказывает ближайшую заправку.
+    $('fuel-fill').style.width = `${car.fuel * 100}%`;
+    $('fuel').classList.toggle('low', car.fuel < 0.2);
+    const nf = car.fuel < 0.25 && !car.refueling ? fuel.nearest(car.pos.x, car.pos.y) : null;
+    $('fuelhint').textContent = nf ? `⛽ ${nf.station.name} — ${nf.d < 1000 ? `${Math.round(nf.d / 10) * 10} м` : `${(nf.d / 1000).toFixed(1)} км`}` : '';
     $('time').textContent = formatTime(race.time);
     $('cp').textContent = race.checkpoints.length ? `${Math.min(race.next, race.checkpoints.length)}/${race.checkpoints.length}` : '–';
     $('dist').textContent = `${(race.length / 1000).toFixed(1)} км`;
@@ -308,12 +337,14 @@ async function main() {
     if (car.drowned) {
       // Утонул — всё сначала: та же гонка с отсчётом, полное нитро, трафик заново.
       car.nitro = 1;
+      car.fuel = 1;
       if (race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
       else respawnAt(car.dry.x, car.dry.y);
       traffic.reset(car.pos.x, car.pos.y);
     }
     if (!garage.isOpen) race.update(dt, car); // в гараже гонка на паузе
     signals.update(dt);
+    fuel.update(dt, car);
     traffic.update(dt, car);
     sound.update(dt, car, inp, race);
     landmarks.group.userData.update(performance.now() / 1000);
