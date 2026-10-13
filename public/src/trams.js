@@ -3,7 +3,7 @@
 // же номера. Номер маршрута — на табло спереди и сзади. Стоит перед игроком и звенит.
 import * as THREE from 'three';
 
-const SPACING = 1400;     // м между трамваями одного направления
+const SPACING = 4200;     // м между трамваями одного направления
 const MAX_V = 11;         // м/с ≈ 40 км/ч
 const ACC = 1.0, DEC = 1.4;
 const DWELL = 12;         // с на остановке
@@ -134,6 +134,13 @@ export class Trams {
         let target = r.len - tr.s;
         for (const st of r.stops) if (st > tr.s + 0.5) { target = Math.min(target, st - tr.s); break; }
         let limit = Math.min(MAX_V, Math.sqrt(2 * DEC * Math.max(0, target)));
+        // Трамвай впереди на тех же путях (маршруты делят пути) — держим дистанцию.
+        for (const o of this.trams) {
+          if (o === tr || Math.abs(o.x - tr.x) > 45 || Math.abs(o.z - tr.z) > 45) continue;
+          const rx = o.x - tr.x, rz = o.z - tr.z, ahead = rx * tr.dx + rz * tr.dz;
+          if (ahead <= 0 || ahead > 45 || Math.abs(rx * tr.dz - rz * tr.dx) > 2 || o.dx * tr.dx + o.dz * tr.dz < 0.5) continue;
+          limit = Math.min(limit, Math.max(0, (ahead - LEN - 6) * 0.5));
+        }
         // Игрок на рельсах впереди — стоим и звеним.
         const near = Math.hypot(tr.x - px, tr.z - pz) < 60;
         if (near) {

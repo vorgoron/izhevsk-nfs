@@ -2,7 +2,7 @@
 // приближения (не больше нескольких квадратов за кадр) и выгружаются, когда игрок уехал.
 import * as THREE from 'three';
 import {
-  buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, drawMinimapTile,
+  buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, drawMinimapTile,
   roadMaterials, buildingMaterials, treeMaterials,
 } from './build.js';
 
@@ -43,6 +43,8 @@ export class ChunkManager {
     group.add(buildTerrainChunk(w, info, this.texSize, this.renderer));
     if (info.data.runs.length) group.add(buildRoadChunk(w, info.data.runs, this.mats.roads));
     if (info.data.buildings.length) group.add(buildBuildingChunk(w, info.data.buildings, this.mats.buildings));
+    const rails = info.data.rails.length ? buildRailChunk(w, info, this.mats.roads.rail) : null;
+    if (rails) group.add(rails);
     const trees = buildTreeChunk(w, info, this.mats.trees);
     if (trees.length) group.add(...trees);
     this.scene.add(group);

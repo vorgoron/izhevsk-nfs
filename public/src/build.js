@@ -165,6 +165,7 @@ export function roadMaterials(renderer) {
     owns: (m) => [...cache.values()].includes(m),
     // Мосты: плита, парапеты, опоры.
     concrete: new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }),
+    rail: new THREE.MeshPhongMaterial({ color: '#8f9399', specular: '#e8edf2', shininess: 80, side: THREE.DoubleSide }),
     pillarGeo: new THREE.BoxGeometry(1.3, 1, 1.3).translate(0, 0.5, 0),
   };
 }
@@ -294,6 +295,50 @@ export function buildRoadChunk(world, runs, mats) {
 
 function quad(arr, a, b, c, d) {
   arr.push(...a, ...b, ...c, ...a, ...c, ...d);
+}
+
+// ---------------------------------------------------------------- рельсы
+
+const GAUGE = 1.524; // м, русская колея
+
+// Рельсы квадрата: две стальные полосы на каждом пути (трамвай и железная дорога), над землёй
+// или полотном дороги. Отрезки, середина которых в квадрате.
+export function buildRailChunk(world, info, mat) {
+  const { x0, z0, x1, z1, data } = info;
+  const pos = [];
+  for (const r of data.rails) {
+    const p = r.p;
+    for (let i = 1; i < p.length; i++) {
+      const [ax, az] = p[i - 1], [bx, bz] = p[i];
+      const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+      if (mx < x0 || mx >= x1 || mz < z0 || mz >= z1) continue;
+      const L = Math.hypot(bx - ax, bz - az);
+      if (L < 0.05) continue;
+      const n = Math.ceil(L / 4), dx = (bx - ax) / L, dz = (bz - az) / L;
+      for (const side of [-1, 1]) {
+        const ox = -dz * (GAUGE / 2) * side, oz = dx * (GAUGE / 2) * side;
+        for (let k = 0; k < n; k++) {
+          const t0 = (k / n) * L, t1 = ((k + 1) / n) * L;
+          const sx = ax + dx * t0 + ox, sz = az + dz * t0 + oz, ex = ax + dx * t1 + ox, ez = az + dz * t1 + oz;
+          const sy = world.ground(sx, sz) + 0.06, ey = world.ground(ex, ez) + 0.06;
+          const wx = -dz * 0.045, wz = dx * 0.045;
+          // Верх рельса и две боковины (низкий брусок).
+          pos.push(sx - wx, sy, sz - wz, ex - wx, ey, ez - wz, ex + wx, ey, ez + wz, sx - wx, sy, sz - wz, ex + wx, ey, ez + wz, sx + wx, sy, sz + wz);
+          for (const w of [-1, 1]) {
+            const px = w * wx, pz = w * wz;
+            pos.push(sx + px, sy, sz + pz, ex + px, ey, ez + pz, ex + px, ey - 0.12, ez + pz, sx + px, sy, sz + pz, ex + px, ey - 0.12, ez + pz, sx + px, sy - 0.12, sz + pz);
+          }
+        }
+      }
+    }
+  }
+  if (!pos.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, mat);
+  m.receiveShadow = true;
+  return m;
 }
 
 // ---------------------------------------------------------------- здания
