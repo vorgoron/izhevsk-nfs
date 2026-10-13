@@ -15,6 +15,10 @@ const M = {
   concrete: lambert('#e4e1da'),
   dark: lambert('#2b2b2b'),
   blue: new THREE.MeshPhongMaterial({ color: '#3f78b5', specular: '#cfe3ff', shininess: 60 }),
+  terra: lambert('#a9564a'),
+  yellow: lambert('#efe3b0'),
+  roofGreen: lambert('#2f8a50'),
+  glass: lambert('#33424f'),
   gold: new THREE.MeshPhongMaterial({ color: '#d2a53a', specular: '#fff1b8', shininess: 90, emissive: '#2a1d00' }),
 };
 
@@ -305,6 +309,98 @@ function troitsky({ L, W }) {
   return g;
 }
 
+// Дом дружбы народов (улица Орджоникидзе): неоклассика — терракотовый нижний этаж, жёлтые верхние с
+// белыми лопатками, центральный портик из парных колонн с балюстрадой, надписью и фронтоном,
+// угловые колонны на торцах, зелёная вальмовая крыша с полукруглыми слуховыми окнами.
+// front = ±1 — сторона фасада (к улице) по локальной оси z.
+function ddn({ L, W }, front) {
+  const g = new THREE.Group();
+  const f = front, H0 = 4.6, H1 = 13.2; // верх нижнего этажа, карниз
+  g.add(box(L, H0 + 3, W, M.terra, 0, -3, 0));
+  g.add(box(L, H1 - H0, W, M.yellow, 0, H0, 0));
+  g.add(box(L + 0.3, 0.45, W + 0.3, M.white, 0, H0 - 0.2, 0)); // тяга между этажами
+  g.add(box(L + 0.9, 0.9, W + 0.9, M.white, 0, H1, 0));        // карниз
+  // Окна: два верхних этажа и нижний, на все четыре стороны.
+  const win = (x, y, z, alongX, h = 2.3) => {
+    g.add(alongX ? box(1.6, h + 0.4, 0.2, M.white, x, y - 0.2, z) : box(0.2, h + 0.4, 1.6, M.white, x, y - 0.2, z));
+    g.add(alongX ? box(1.2, h, 0.25, M.glass, x, y, z) : box(0.25, h, 1.2, M.glass, x, y, z));
+  };
+  const P = Math.min(L * 0.38, 26); // ширина портика
+  for (const y of [5.6, 9.3, 0.8]) {
+    for (let x = -L / 2 + 3; x <= L / 2 - 3; x += 4.2) {
+      for (const side of [-1, 1]) win(x, y, side * (W / 2 + 0.05), true, y < H0 ? 2.4 : 2.3);
+    }
+    for (let z = -W / 2 + 3; z <= W / 2 - 3; z += 4.2) for (const side of [-1, 1]) win(side * (L / 2 + 0.05), y, z, false);
+  }
+  // Белые лопатки на верхних этажах.
+  for (let x = -L / 2; x <= L / 2 + 0.01; x += L / 8) for (const side of [-1, 1]) g.add(box(0.9, H1 - H0, 0.3, M.white, x, H0, side * (W / 2 + 0.1)));
+  // Центральный портик: подиум (терракота), балюстрада, парные колонны, антаблемент с надписью, фронтон.
+  const zp = f * (W / 2 + 2.4);
+  g.add(box(P + 1.2, H0 + 3, 4.8, M.terra, 0, -3, zp));
+  g.add(box(P + 1.2, 0.25, 4.9, M.white, 0, H0, zp));
+  for (let i = 0; i < 9; i++) g.add(box(0.25, 0.9, 0.25, M.white, -P / 2 + (P * i) / 8, H0 + 0.25, zp + f * 2.2)); // балясины
+  g.add(box(P, 0.2, 0.3, M.white, 0, H0 + 1.15, zp + f * 2.2));
+  for (const x of [-P / 2, -P / 6, P / 6, P / 2]) for (const dx of [-0.65, 0.65]) g.add(cyl(0.42, H1 - H0, M.white, x + dx, H0, zp + f * 1.6, 12));
+  g.add(box(P + 1.4, 1.5, 5.2, M.white, 0, H1, zp));
+  g.add(sign('ДОМ ДРУЖБЫ НАРОДОВ', P * 0.8, 1.1, 0, H1 + 0.2, zp + f * 2.65, f));
+  g.add(pediment(P + 1.4, 3.6, 5.2, 0, H1 + 1.5, zp));
+  // Угловые колонны на торцах (по две на фасаде и на боковой стороне).
+  for (const sx of [-1, 1]) {
+    for (const d of [1.2, 4]) {
+      g.add(cyl(0.38, H1 - H0, M.white, sx * (L / 2 - d), H0, f * (W / 2 + 0.9), 10)); // на фасаде
+      g.add(cyl(0.38, H1 - H0, M.white, sx * (L / 2 + 0.9), H0, f * (W / 2 - d), 10)); // на торце
+    }
+  }
+  // Вальмовая крыша: прямоугольник по карнизу, конёк вдоль длины.
+  g.add(hipRoof(L + 0.6, W + 0.6, 5, H1 + 0.9, M.roofGreen));
+  // Полукруглые слуховые окна на скатах фасада и задней стороны.
+  for (const side of [-1, 1]) {
+    for (const x of [-L * 0.3, 0, L * 0.3]) {
+      if (side === f && Math.abs(x) < P / 2) continue; // за фронтоном не видно
+      const d = mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.6, 16, 1, false, -Math.PI / 2, Math.PI).rotateX(Math.PI / 2), M.white, x, H1 + 1.7, side * (W / 2 - 1.6));
+      g.add(d);
+    }
+  }
+  return g;
+}
+
+function hipRoof(L, W, h, y0, mat) {
+  const r = Math.max(0, (L - W) / 2), hw = L / 2, hd = W / 2;
+  const v = [[-hw, 0, -hd], [hw, 0, -hd], [hw, 0, hd], [-hw, 0, hd], [-r, h, 0], [r, h, 0]];
+  const tris = [[0, 4, 5], [0, 5, 1], [3, 2, 5], [3, 5, 4], [0, 3, 4], [1, 5, 2]];
+  const pos = [];
+  for (const t of tris) for (const i of t) pos.push(...v[i]);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, mat.clone());
+  m.material.side = THREE.DoubleSide;
+  m.position.y = y0;
+  m.castShadow = true;
+  return m;
+}
+
+// Надпись золотыми буквами на табличке; смотрит в сторону f по z.
+function sign(text, w, h, x, y, z, f) {
+  const c = document.createElement('canvas');
+  c.width = 1024;
+  c.height = 96;
+  const g = c.getContext('2d');
+  g.fillStyle = '#f2eee4';
+  g.fillRect(0, 0, 1024, 96);
+  g.fillStyle = '#b8892a';
+  g.font = 'bold 64px serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 512, 52);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: t }));
+  m.position.set(x, y + h / 2, z);
+  if (f < 0) m.rotation.y = Math.PI;
+  return m;
+}
+
 // «Навеки с Россией»: две параллельные белые стелы на гранитном стилобате.
 function friendship({ L, W }, h = 46) {
   const g = new THREE.Group();
@@ -571,6 +667,17 @@ export function buildLandmarks(world) {
         const f = fit(p, 0); // храмы ориентированы алтарём на восток
         const model = { nevsky, mikhailovsky, troitsky }[lm.key];
         obj = place(model(f), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'ddn': {
+        // Фасад — к ближайшей улице: какая из длинных сторон ближе к дороге.
+        const f = fit(p, longestEdgeAngle(p));
+        const side = (d) => {
+          const x = f.cx - d * Math.sin(f.angle), z = f.cz + d * Math.cos(f.angle);
+          return world.nearestRoad(x, z, 80)?.d ?? 99;
+        };
+        const front = side(f.W / 2 + 6) <= side(-(f.W / 2 + 6)) ? 1 : -1;
+        obj = place(ddn(f, front), f.cx, baseY(world, p), f.cz, f.angle);
         break;
       }
       case 'friendship': {
