@@ -10,6 +10,7 @@ import { planFootbridges, buildFootbridges } from './footbridges.js';
 import { Sound } from './audio.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
+import { Sky, HORIZON } from './sky.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
@@ -31,7 +32,7 @@ async function main() {
   document.body.prepend(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const sky = new THREE.Color('#a9c4dc');
+  const sky = new THREE.Color(HORIZON); // туман = цвет горизонта неба (sky.js)
   scene.background = sky;
   scene.fog = new THREE.Fog(sky, 250, 1600);
   const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.5, 4000);
@@ -85,6 +86,7 @@ async function main() {
   };
   respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0);
   race.start(car.pos.x, car.pos.y);
+  const skyDome = new Sky(scene, world.baseTerrain(0, 0));
   const traffic = new Traffic(world, scene);
   const signals = new Signals(world, traffic, scene);
   traffic.reset(car.pos.x, car.pos.y);
@@ -316,6 +318,7 @@ async function main() {
     sound.update(dt, car, inp, race);
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);
+    skyDome.update(dt, camera, car.pos.x, car.pos.y);
     sun.target.position.set(car.pos.x, car.y, car.pos.y);
     sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 300);
     updateHud();
