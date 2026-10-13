@@ -14,6 +14,7 @@ import { Signals } from './signals.js';
 import { Sky, HORIZON } from './sky.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
+import { NitroFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
@@ -70,8 +71,11 @@ async function main() {
     const m = buildPlayerModel(key, color);
     scene.add(m);
     car.setModel(m, MODELS[key].stats);
+    nitroFx.attach(m);
     car.update(0, {}); // поставить новую модель на место старой
   };
+  const nitroFx = new NitroFX(scene);
+  nitroFx.attach(car.model);
   const race = new Race(world, scene);
 
   // Старт у Центральной площади.
@@ -164,25 +168,37 @@ async function main() {
 
   let camMode = 0;
   let orbit = 0;
+  let lag = 0; // отставание камеры при разгоне, м
   const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
   let camInit = false;
   function updateCamera(dt) {
     const f = car.forward;
     const speed = Math.abs(car.speed);
     // 0 — за машиной, 1 — из салона, 2 — высоко сверху (видно город и пруд).
-    const back = [8.5 + speed * 0.04, 0.2, 70][camMode];
+    // Разгон — камера отстаёт (тянется назад пропорционально ускорению), торможение — подъезжает;
+    // нитро — ещё дальше, шире угол и лёгкая тряска.
+    lag += (Math.max(-6, Math.min(16, car.accel_ ?? 0)) * 0.09 + (car.nitroOn ? 1.2 : 0) - lag) * Math.min(1, dt * 3);
+    const back = [8 + speed * 0.02 + lag, 0.2, 70][camMode];
     const up = [3.3, 1.25, 55][camMode];
     const want = new THREE.Vector3(car.pos.x - f.x * back, car.y + up, car.pos.y - f.y * back);
     want.y = Math.max(want.y, world.ground(want.x, want.z) + 1.2);
     const look = new THREE.Vector3(car.pos.x + f.x * 6, car.y + 1.3, car.pos.y + f.y * 6);
     const k = camMode === 1 ? 1 : 1 - Math.exp(-dt * 7);
+    // Сглаживаем смещение камеры относительно машины, а не точку в мире: иначе на скорости
+    // камера отстаёт сама собой и машина уезжает вдаль. Отставание при разгоне задаёт lag.
+    const carP = new THREE.Vector3(car.pos.x, car.y, car.pos.y);
+    want.sub(carP);
+    look.sub(carP);
     if (!camInit) { camPos.copy(want); camLook.copy(look); camInit = true; }
     camPos.lerp(want, k);
     camLook.lerp(look, k);
-    camera.position.copy(camPos);
-    if (car.impact > 0) {
-      camera.position.x += (Math.random() - 0.5) * car.impact * 0.6;
-      camera.position.y += (Math.random() - 0.5) * car.impact * 0.6;
+    camera.position.copy(camPos).add(carP);
+    camera.position.y = Math.max(camera.position.y, world.ground(camera.position.x, camera.position.z) + 1);
+    const lookAt = camLook.clone().add(carP);
+    const shake = car.impact * 0.6 + (car.nitroOn ? 0.07 : 0);
+    if (shake > 0) {
+      camera.position.x += (Math.random() - 0.5) * shake;
+      camera.position.y += (Math.random() - 0.5) * shake;
     }
     // Гараж: камера облетает машину, кадр сдвинут влево от панели.
     if (garage.isOpen) {
@@ -200,8 +216,8 @@ async function main() {
     if (camera.view?.enabled) camera.clearViewOffset();
     const ov = window.game?.camOverride; // отладка: { pos: [x,y,z], look: [x,y,z] }
     if (ov) camera.position.set(...ov.pos);
-    camera.lookAt(ov ? new THREE.Vector3(...ov.look) : camLook);
-    const fov = 62 + Math.min(18, speed * 0.28);
+    camera.lookAt(ov ? new THREE.Vector3(...ov.look) : lookAt);
+    const fov = 62 + Math.min(12, speed * 0.2) + (car.nitroOn ? 6 : 0);
     camera.fov += (fov - camera.fov) * Math.min(1, dt * 3);
     camera.updateProjectionMatrix();
     car.model.visible = camMode !== 1 || garage.isOpen;
@@ -349,6 +365,7 @@ async function main() {
     fuel.update(dt, car);
     queues.update(dt, car);
     traffic.update(dt, car);
+    nitroFx.update(dt, car);
     sound.update(dt, car, inp, race);
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);

@@ -74,6 +74,8 @@ export class Car {
     // Пустой бак: мотор заглох — ни газа, ни заднего хода, ни нитро; тормоз работает.
     if (this.fuel <= 0) input = { ...input, up: false, nitro: false, down: input.down && vf > 0.5 };
     const nitroOn = input.nitro && this.nitro > 0 && vf > 5;
+    this.nitroOn = nitroOn;
+    const vf0 = vf;
     if (input.up || (input.down && vf <= 0.5)) {
       this.fuel = Math.max(0, this.fuel - (Math.abs(vf) * dt + 0.3 * dt) / TANK_M * this.eco * (nitroOn ? 3 : 1));
     }
@@ -101,6 +103,8 @@ export class Car {
     vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip) * dt);
     const f2 = this.forward, r2 = this.right;
     this.vel.set(f2.x * vf + r2.x * vr, f2.y * vf + r2.y * vr);
+    // Сглаженное продольное ускорение — для камеры (отстаёт при разгоне).
+    if (dt > 0) this.accel_ = (this.accel_ ?? 0) + ((vf - vf0) / dt - (this.accel_ ?? 0)) * Math.min(1, dt * 5);
     if (wet) this.vel.multiplyScalar(Math.exp(-2.4 * dt)); // вода держит
     this.pos.addScaledVector(this.vel, dt);
 
