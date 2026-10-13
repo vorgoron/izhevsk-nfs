@@ -100,7 +100,7 @@ export class Car {
     if (input.brake) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 9 * dt);
 
     // Руль: плавно к цели, на скорости — меньше угол.
-    const target = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const target = input.steer ?? (input.right ? 1 : 0) - (input.left ? 1 : 0);
     this.steer += (target - this.steer) * Math.min(1, dt * 8);
     const speedFactor = Math.min(1, Math.abs(vf) / 6) / (1 + Math.abs(vf) / 45);
     const driftBoost = input.brake ? 1.5 : 1;

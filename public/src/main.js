@@ -7,6 +7,7 @@ import { buildLandmarks } from './landmarks.js';
 import { Sound } from './audio.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
+import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
@@ -18,8 +19,9 @@ async function main() {
   status('Строю рельеф и дороги…');
   await frame();
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // На телефоне экономим: без MSAA, плотность пикселей не выше 1.5, тени мельче.
+  const renderer = new THREE.WebGLRenderer({ antialias: !isTouch });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -34,7 +36,7 @@ async function main() {
   scene.add(new THREE.HemisphereLight('#dfe9f5', '#5a5444', 1.4));
   const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.setScalar(isTouch ? 1024 : 2048);
   Object.assign(sun.shadow.camera, { left: -120, right: 120, top: 120, bottom: -120, near: 1, far: 600 });
   sun.shadow.bias = -0.0005;
   scene.add(sun, sun.target);
@@ -77,20 +79,31 @@ async function main() {
 
   const sound = new Sound();
   game.sound = sound;
-  addEventListener('pointerdown', () => sound.unlock());
+  // iOS разрешает звук только из обработчика касания/клика.
+  for (const ev of ['pointerdown', 'touchend', 'click']) addEventListener(ev, () => sound.unlock());
+
+  // Действия общие для клавиатуры и сенсорных кнопок.
+  const actions = {
+    sound: () => sound.toggleMute(),
+    traffic: () => { traffic.setEnabled(!traffic.enabled); return traffic.enabled; },
+    respawn: () => respawnAt(car.pos.x, car.pos.y),
+    race: () => race.start(car.pos.x, car.pos.y),
+    camera: () => { camMode = (camMode + 1) % 3; },
+    map: () => $('minimap').classList.toggle('big'),
+    fullscreen: toggleFullscreen,
+  };
+  const KEY_ACTIONS = { KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyM: 'map' };
 
   const keys = new Set();
+  const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
   addEventListener('keydown', (e) => {
     keys.add(e.code);
     sound.unlock();
-    if (e.code === 'KeyV') sound.toggleMute();
-    if (e.code === 'KeyT') traffic.setEnabled(!traffic.enabled);
-    if (e.code === 'KeyR') respawnAt(car.pos.x, car.pos.y);
-    if (e.code === 'KeyN') race.start(car.pos.x, car.pos.y);
-    if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
-    if (e.code === 'KeyM') $('minimap').classList.toggle('big');
+    if (!e.repeat && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
   });
+  setupTouch({ keys, analog, actions });
+  $('minimap').addEventListener('click', actions.map);
   addEventListener('keyup', (e) => keys.delete(e.code));
   addEventListener('blur', () => keys.clear());
   const input = () => ({
@@ -100,6 +113,7 @@ async function main() {
     right: keys.has('KeyD') || keys.has('ArrowRight'),
     brake: keys.has('Space'),
     nitro: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+    steer: analog.steer,
   });
 
   addEventListener('resize', () => {
