@@ -127,6 +127,7 @@ ROAD_WIDTH = {
     "pedestrian": 6, "road": 6,
 }
 PATHS = {"footway", "path", "steps", "cycleway", "track", "bridleway", "corridor"}
+FOOTBRIDGE_W = {"footway": 3.0, "path": 2.5, "steps": 2.5, "cycleway": 3.0, "track": 3.5, "pedestrian": 6.0}
 
 
 def road_width(tags):
@@ -142,11 +143,17 @@ def road_width(tags):
     return round(w, 1)
 
 
-def is_tunnel(tags):
+SHORT_TUNNEL = 60  # м: короче — проезд под пешеходным мостом/настилом, а не тоннель в земле
+
+
+def is_tunnel(tags, pts):
     """Настоящий тоннель — под землёй. building_passage и tunnel без layer<0 в центре —
-    арки и проезды под домами: это обычная дорога, арку прорежем в доме."""
+    арки и проезды под домами: это обычная дорога, арку прорежем в доме. Короткий тоннель —
+    проезд под мостом (рельеф мы не вырезаем, так что это тоже обычная дорога)."""
     t = tags.get("tunnel")
     if t in (None, "no", "building_passage"):
+        return False
+    if sum(math.dist(pts[i - 1], pts[i]) for i in range(1, len(pts))) < SHORT_TUNNEL:
         return False
     return (parse_num(tags.get("layer")) or 0) < 0 and tags.get("covered") != "yes"
 
@@ -523,13 +530,21 @@ def build_city():
             road_nodes.append(project(*nodes[nid]))
         return road_node_index[nid]
 
-    roads, paths, rails, buildings, areas, trees = [], [], [], [], [], []
+    roads, paths, rails, buildings, areas, trees, footbridges = [], [], [], [], [], [], []
 
     for wid, (nds, tags) in ways.items():
         nds = [n for n in nds if n in nodes]
         if len(nds) < 2:
             continue
         hw = tags.get("highway")
+        # Пешеходный мост: в браузере — настил с перилами над землёй/дорогой.
+        if hw in PATHS | {"pedestrian"} and tags.get("bridge") not in (None, "no"):
+            closed = nds[0] == nds[-1] and (tags.get("area") == "yes" or hw == "pedestrian")
+            pts = ring_xy(nds) if closed else [project(*nodes[n]) for n in nds]
+            length = sum(math.dist(pts[i - 1], pts[i]) for i in range(1, len(pts)))
+            if inside(pts) and length >= 4:
+                footbridges.append({"p": pts, "a": 1 if closed else 0, "w": FOOTBRIDGE_W.get(hw, 3.0)})
+            continue
         if hw and tags.get("area") != "yes":
             if hw in PATHS:
                 pts = ring_xy(nds) if nds[0] != nds[-1] else [project(*nodes[n]) for n in nds]
@@ -547,7 +562,7 @@ def build_city():
                 "k": hw,
                 "name": tags.get("name", ""),
                 "br": 1 if tags.get("bridge") not in (None, "no") else 0,
-                "tu": 1 if is_tunnel(tags) else 0,
+                "tu": 1 if is_tunnel(tags, pts) else 0,
                 "ow": 1 if tags.get("oneway") == "yes" else 0,
             })
             continue
@@ -602,6 +617,10 @@ def build_city():
                 trees.append([x, z])
 
     buildings = cut_passages(buildings, roads, road_nodes)
+    # Дорожка по мосту-площади — часть этой площади, отдельным настилом не нужна (было бы мерцание).
+    decks = [fb["p"] for fb in footbridges if fb["a"]]
+    footbridges = [fb for fb in footbridges if fb["a"] or not any(
+        point_in(*fb["p"][len(fb["p"]) // 2], d) or point_in(*fb["p"][0], d) and point_in(*fb["p"][-1], d) for d in decks)]
 
     # Большие площади (пруд) рисуем первыми, мелкие поверх.
     areas.sort(key=lambda a: -poly_area(a["p"]))
@@ -614,6 +633,7 @@ def build_city():
         "buildings": buildings,
         "areas": areas,
         "trees": trees,
+        "footbridges": footbridges,
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()

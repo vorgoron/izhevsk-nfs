@@ -4,6 +4,7 @@ import { buildTerrain, buildRoads, buildBuildings, buildTrees, buildMinimapCanva
 import { Car, buildCarModel } from './car.js';
 import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
+import { buildFootbridges } from './footbridges.js';
 import { Sound } from './audio.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
@@ -51,6 +52,7 @@ async function main() {
   await frame();
   scene.add(buildBuildings(world, renderer));
   scene.add(...buildTrees(world));
+  scene.add(buildFootbridges(world));
   const landmarks = buildLandmarks(world);
   scene.add(landmarks.group);
   const minimap = buildMinimapCanvas(world);
