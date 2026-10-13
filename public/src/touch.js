@@ -23,6 +23,7 @@ export function setupTouch({ keys, analog, actions }) {
       <button data-key="KeyW" class="pedal gas">газ</button>
     </div>
     <div id="tbar">
+      <button data-act="garage" title="Гараж">🚘</button>
       <button data-act="camera" title="Камера">📷</button>
       <button data-act="map" title="Карта">🗺</button>
       <button data-act="race" title="Новая гонка">🏁</button>

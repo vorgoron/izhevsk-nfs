@@ -35,6 +35,36 @@
     #attr { position: fixed; right: 8px; bottom: 4px; font-size: 11px; opacity: .7; }
     #attr a { color: inherit; }
 
+    /* ---------- гараж ---------- */
+    #garage { position: fixed; right: 0; top: 0; bottom: 0; width: min(46vw, 420px); z-index: 15; display: none; flex-direction: column;
+      background: rgba(16,19,22,.86); backdrop-filter: blur(6px); padding: 18px 16px calc(14px + env(safe-area-inset-bottom));
+      padding-right: calc(16px + env(safe-area-inset-right)); box-sizing: border-box; }
+    #garage.open { display: flex; }
+    #garage h2 { margin: 0 0 12px; font-size: 24px; font-style: italic; }
+    #garage h2 span { display: block; font-size: 13px; font-style: normal; font-weight: 400; opacity: .6; margin-top: 2px; }
+    #garage .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    #garage .card { text-align: left; color: #fff; font: inherit; background: rgba(255,255,255,.06); border: 2px solid transparent;
+      border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+    #garage .card.on { border-color: #ffd23f; background: rgba(255,210,63,.1); }
+    #garage .card b { font-size: 16px; }
+    #garage .card small { margin-left: 8px; opacity: .6; }
+    #garage .card p { margin: 4px 0 8px; font-size: 12.5px; opacity: .75; line-height: 1.35; }
+    #garage .stat { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: .85; margin-top: 3px; }
+    #garage .stat span { width: 68px; }
+    #garage .stat i { flex: 1; height: 5px; border-radius: 3px; background: linear-gradient(90deg, #ffd23f var(--v), rgba(255,255,255,.12) var(--v)); }
+    #garage .colors { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    #garage .colors button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); cursor: pointer; padding: 0; }
+    #garage .colors button.on { border-color: #fff; box-shadow: 0 0 0 2px #ffd23f; }
+    #garage .go { font: inherit; font-weight: 800; font-size: 18px; padding: 10px; border-radius: 10px; border: 0; background: #ffd23f;
+      color: #15181b; cursor: pointer; }
+    #garage .go kbd { font-size: 11px; font-weight: 600; opacity: .6; margin-left: 6px; }
+    #garage .hint { font-size: 11px; opacity: .55; margin-top: 8px; text-align: center; }
+    body.touch #garage .hint, body.touch #garage .go kbd { display: none; }
+    body.in-garage #touch, body.in-garage #speedo, body.in-garage #minimap { display: none; }
+    body.touch #garage { padding-top: calc(10px + env(safe-area-inset-top)); }
+    body.touch #garage h2 { font-size: 18px; margin-bottom: 8px; }
+    body.touch #garage .card p { display: none; }
+
     /* ---------- сенсорное управление (body.touch ставит touch.js) ---------- */
     body.touch { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     body.touch #help { display: none; }
@@ -96,7 +126,7 @@
     <kbd>W A S D</kbd> / стрелки — ехать<br>
     <kbd>Пробел</kbd> ручник/занос · <kbd>Shift</kbd> нитро<br>
     <kbd>R</kbd> на дорогу · <kbd>N</kbd> новая гонка<br>
-    <kbd>C</kbd> камера · <kbd>M</kbd> карта · <kbd>V</kbd> звук · <kbd>T</kbd> трафик
+    <kbd>C</kbd> камера · <kbd>M</kbd> карта · <kbd>V</kbd> звук · <kbd>T</kbd> трафик<br><kbd>G</kbd> гараж — выбор машины
   </div>
   <div id="banner" class="hud"></div>
   <canvas id="minimap" width="440" height="440"></canvas>

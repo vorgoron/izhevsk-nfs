@@ -1,16 +1,17 @@
 // Трафик: машины и автобусы по графу улиц вокруг игрока. Правостороннее движение,
 // односторонние улицы, торможение перед впереди идущими и перед игроком, столкновения.
 import * as THREE from 'three';
+import { MODELS, vehicleParts } from './vehicles.js';
 
 // Скорость по классу дороги, м/с. Нет в списке — трафика там нет (дворы, проезды).
 const SPEED = {
   trunk: 16, primary: 15, secondary: 14, tertiary: 12, unclassified: 9, residential: 8, living_street: 5,
   trunk_link: 11, primary_link: 11, secondary_link: 10, tertiary_link: 9,
 };
-const CARS = 45, BUSES = 6;
+// Состав потока: ижевские машины (vehicles.js) и автобусы.
+const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, odavan: 4, vesta: 13 };
+const BUSES = 6;
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
-const PALETTE = ['#e9e9e9', '#d4d6da', '#26282c', '#8a9097', '#1f3d73', '#7a1c1c', '#c9b38a', '#2e5c3a',
-  '#b0b7bf', '#f4f4f4', '#3f4650', '#5a6e8c', '#9c8b6e', '#3a3a3a'];
 const BUS_PALETTE = ['#f2c230', '#e8e8e8', '#3d8f4f', '#d9442f'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
 
@@ -36,19 +37,6 @@ function merged(parts) {
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 const wheel = (r) => new THREE.CylinderGeometry(r, r, 0.25, 10).rotateZ(Math.PI / 2);
 
-function carGeometry() {
-  const parts = [
-    [box(1.8, 0.6, 4.3), '#fff', 0, 0.65, 0],
-    [box(1.6, 0.55, 2.1), '#2b3b4a', 0, 1.22, -0.25],
-    [box(1.62, 0.08, 1.9), '#fff', 0, 1.52, -0.3],
-  ];
-  for (const sx of [-0.6, 0.6]) {
-    parts.push([box(0.4, 0.15, 0.05), '#fff6d0', sx, 0.75, 2.16], [box(0.4, 0.15, 0.05), '#ff2a1a', sx, 0.75, -2.16]);
-  }
-  for (const [x, z] of [[-0.85, 1.35], [0.85, 1.35], [-0.85, -1.35], [0.85, -1.35]]) parts.push([wheel(0.34), '#151618', x, 0.34, z]);
-  return merged(parts);
-}
-
 function busGeometry() {
   const parts = [
     [box(2.5, 2.4, 11.5), '#fff', 0, 1.65, 0],
@@ -70,28 +58,40 @@ export class Traffic {
     this.signals = null; // выставляет Signals
     this.#buildGraph();
 
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-    this.meshes = [new THREE.InstancedMesh(carGeometry(), mat, CARS), new THREE.InstancedMesh(busGeometry(), mat, BUSES)];
+    // Каждый тип — набор InstancedMesh с общими индексами: кузов (цвет от инстанса), детали, фары.
+    const lit = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const glow = new THREE.MeshBasicMaterial({ vertexColors: true });
+    const kinds = Object.entries(MIX).map(([key, count]) => {
+      const p = vehicleParts(MODELS[key], { wheelsInDetail: true });
+      return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0,
+        meshes: [new THREE.InstancedMesh(p.paint, lit, count), new THREE.InstancedMesh(p.detail, lit, count),
+          new THREE.InstancedMesh(p.lights, glow, count)] };
+    });
+    kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0,
+      meshes: [new THREE.InstancedMesh(busGeometry(), lit, BUSES)] });
+    this.meshes = kinds.flatMap((k) => k.meshes);
     const c = new THREE.Color();
     this.vehicles = [];
-    for (let i = 0; i < CARS + BUSES; i++) {
-      const bus = i >= CARS;
-      const mesh = this.meshes[bus ? 1 : 0], idx = bus ? i - CARS : i;
-      mesh.setColorAt(idx, c.set(bus ? BUS_PALETTE[idx % BUS_PALETTE.length] : PALETTE[i % PALETTE.length]));
-      this.vehicles.push({
-        mesh, idx, bus,
-        len: bus ? 11.5 : 4.3,
-        r: bus ? 1.3 : 1.1,
-        circles: bus ? [-4.5, -1.5, 1.5, 4.5] : [-1.2, 1.2], // коллайдеры вдоль кузова
-        maxSpeed: bus ? 11 : 17,
-        mood: 0.85 + ((i * 37) % 30) / 100, // кто-то едет бодрее
-        edge: null, next: null, s: 0, speed: 0,
-        x: 0, z: 0, heading: 0, dx: 0, dz: 1, hit: 0, stuck: 0, ghost: 0, active: false,
-      });
+    let n = 0;
+    for (const kind of kinds) {
+      const bus = kind.key === 'bus';
+      for (let idx = 0; idx < kind.count; idx++, n++) {
+        kind.meshes[kind.paint].setColorAt(idx, c.set(kind.colors[(idx * 3 + n) % kind.colors.length]));
+        this.vehicles.push({
+          meshes: kind.meshes, idx, bus, kind: kind.key,
+          len: kind.len,
+          r: bus ? 1.3 : 1.1,
+          circles: bus ? [-4.5, -1.5, 1.5, 4.5] : [-1.2, 1.2], // коллайдеры вдоль кузова
+          maxSpeed: bus ? 11 : 17 * (MODELS[kind.key]?.stats.kmh ?? 160) / 160,
+          mood: 0.85 + ((n * 37) % 30) / 100, // кто-то едет бодрее
+          edge: null, next: null, s: 0, speed: 0,
+          x: 0, z: 0, heading: 0, dx: 0, dz: 1, hit: 0, stuck: 0, ghost: 0, active: false,
+        });
+      }
     }
     for (const m of this.meshes) {
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      m.instanceColor.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
       m.castShadow = true;
       m.receiveShadow = true;
       m.frustumCulled = false; // инстансы разбросаны по карте, сфера геометрии им не подходит
@@ -288,7 +288,7 @@ export class Traffic {
     const p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), e = new THREE.Euler(0, 0, 0, 'YXZ');
     const w = this.world;
     for (const v of this.vehicles) {
-      if (!v.active) { v.mesh.setMatrixAt(v.idx, this.hidden); continue; }
+      if (!v.active) { for (const m of v.meshes) m.setMatrixAt(v.idx, this.hidden); continue; }
       // Наклон по поверхности, как у машины игрока: тангаж по осям колёс, крен по бокам.
       const fx = v.dx, fz = v.dz, rx = -fz, rz = fx, a = v.len * 0.32, b = v.bus ? 1.1 : 0.85;
       const hf = w.ground(v.x + fx * a, v.z + fz * a), hb = w.ground(v.x - fx * a, v.z - fz * a);
@@ -296,7 +296,8 @@ export class Traffic {
       p.set(v.x, Math.max(w.ground(v.x, v.z), (hf + hb) / 2), v.z);
       e.set(-Math.atan2(hf - hb, 2 * a), v.heading, Math.atan2(hl - hr, 2 * b));
       this.quat.setFromEuler(e);
-      v.mesh.setMatrixAt(v.idx, this.mat4.compose(p, this.quat, one));
+      this.mat4.compose(p, this.quat, one);
+      for (const m of v.meshes) m.setMatrixAt(v.idx, this.mat4);
     }
     for (const m of this.meshes) m.instanceMatrix.needsUpdate = true;
   }

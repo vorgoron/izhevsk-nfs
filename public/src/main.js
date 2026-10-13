@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { World } from './world.js';
 import { buildTerrain, buildRoads, buildBuildings, buildTrees, buildMinimapCanvas } from './build.js';
-import { Car, buildCarModel } from './car.js';
+import { Car } from './car.js';
+import { MODELS, buildPlayerModel } from './vehicles.js';
+import { Garage, loadChoice } from './garage.js';
 import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
 import { planFootbridges, buildFootbridges } from './footbridges.js';
@@ -58,9 +60,19 @@ async function main() {
   scene.add(landmarks.group);
   const minimap = buildMinimapCanvas(world);
 
-  const model = buildCarModel();
+  // Своя машина: выбор из гаража (localStorage), по умолчанию — «Ода».
+  const choice = loadChoice();
+  const model = buildPlayerModel(choice.model, choice.color);
   scene.add(model);
-  const car = new Car(world, model);
+  const car = new Car(world, model, MODELS[choice.model].stats);
+  const setVehicle = (key, color) => {
+    scene.remove(car.model);
+    car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
+    const m = buildPlayerModel(key, color);
+    scene.add(m);
+    car.setModel(m, MODELS[key].stats);
+    car.update(0, {}); // поставить новую модель на место старой
+  };
   const race = new Race(world, scene);
 
   // Старт у Центральной площади.
@@ -76,7 +88,15 @@ async function main() {
   const traffic = new Traffic(world, scene);
   const signals = new Signals(world, traffic, scene);
   traffic.reset(car.pos.x, car.pos.y);
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals }; // для отладки из консоли
+  // Сменил машину — гонка с начала (честно); первый запуск — сразу в гараж.
+  const garage = new Garage(choice, {
+    onChange: setVehicle,
+    onClose: (changed) => {
+      if (changed && race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
+    },
+  });
+  if (!choice.saved) garage.open();
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -92,10 +112,11 @@ async function main() {
     respawn: () => respawnAt(car.pos.x, car.pos.y),
     race: () => race.start(car.pos.x, car.pos.y),
     camera: () => { camMode = (camMode + 1) % 3; },
+    garage: () => garage.toggle(),
     map: () => $('minimap').classList.toggle('big'),
     fullscreen: toggleFullscreen,
   };
-  const KEY_ACTIONS = { KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyM: 'map' };
+  const KEY_ACTIONS = { KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyM: 'map' };
 
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
@@ -128,6 +149,7 @@ async function main() {
   // ---------------------------------------------------------------- камера
 
   let camMode = 0;
+  let orbit = 0;
   const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
   let camInit = false;
   function updateCamera(dt) {
@@ -148,13 +170,27 @@ async function main() {
       camera.position.x += (Math.random() - 0.5) * car.impact * 0.6;
       camera.position.y += (Math.random() - 0.5) * car.impact * 0.6;
     }
+    // Гараж: камера облетает машину, кадр сдвинут влево от панели.
+    if (garage.isOpen) {
+      orbit += dt * 0.35;
+      const c = new THREE.Vector3(car.pos.x, car.y + 0.7, car.pos.y);
+      camera.position.set(c.x + Math.sin(orbit) * 6.5, c.y + 1.6, c.z + Math.cos(orbit) * 6.5);
+      camera.lookAt(c);
+      camera.fov = 50;
+      const panel = Math.min(innerWidth * 0.46, 420);
+      camera.setViewOffset(innerWidth, innerHeight, panel / 2, 0, innerWidth, innerHeight);
+      camera.updateProjectionMatrix();
+      car.model.visible = true;
+      return;
+    }
+    if (camera.view?.enabled) camera.clearViewOffset();
     const ov = window.game?.camOverride; // отладка: { pos: [x,y,z], look: [x,y,z] }
     if (ov) camera.position.set(...ov.pos);
     camera.lookAt(ov ? new THREE.Vector3(...ov.look) : camLook);
     const fov = 62 + Math.min(18, speed * 0.28);
     camera.fov += (fov - camera.fov) * Math.min(1, dt * 3);
     camera.updateProjectionMatrix();
-    model.visible = camMode !== 1;
+    car.model.visible = camMode !== 1 || garage.isOpen;
   }
 
   // ---------------------------------------------------------------- HUD
@@ -230,7 +266,9 @@ async function main() {
     }
     $('landmark').textContent = near ? near.name : '';
     const banner = $('banner');
-    if (car.sink > 0.4) {
+    if (garage.isOpen) {
+      banner.classList.remove('show');
+    } else if (car.sink > 0.4) {
       banner.innerHTML = 'УТОНУЛ!<small>всё сначала</small>';
       banner.classList.add('show');
     } else if (race.state === 'countdown') {
@@ -260,7 +298,7 @@ async function main() {
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.1);
     acc += dt;
-    const inp = race.state === 'countdown' ? {} : input();
+    const inp = race.state === 'countdown' || garage.isOpen ? {} : input();
     while (acc >= STEP) {
       car.update(STEP, inp);
       acc -= STEP;
@@ -272,7 +310,7 @@ async function main() {
       else respawnAt(car.dry.x, car.dry.y);
       traffic.reset(car.pos.x, car.pos.y);
     }
-    race.update(dt, car);
+    if (!garage.isOpen) race.update(dt, car); // в гараже гонка на паузе
     signals.update(dt);
     traffic.update(dt, car);
     sound.update(dt, car, inp, race);
