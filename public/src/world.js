@@ -20,6 +20,51 @@ export class World {
     this.#initDem(city.dem);
     this.#initRoadIndex();
     this.#initBuildingIndex();
+    this.#initWaterMask();
+  }
+
+  // ---------------------------------------------------------------- вода
+
+  // Растр 2 м: вода из OSM минус коридоры дорог (мосты, плотина, набережные проезжаемы).
+  #initWaterMask() {
+    const [xmin, zmin, xmax, zmax] = this.bounds;
+    const S = 0.5; // пикселей на метр (клетка 2 м)
+    const w = Math.ceil((xmax - xmin) * S), h = Math.ceil((zmax - zmin) * S);
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    const tx = (x) => (x - xmin) * S, tz = (z) => (z - zmin) * S;
+    const ring = (pts) => {
+      g.moveTo(tx(pts[0][0]), tz(pts[0][1]));
+      for (let i = 1; i < pts.length; i++) g.lineTo(tx(pts[i][0]), tz(pts[i][1]));
+      g.closePath();
+    };
+    g.fillStyle = '#fff';
+    for (const a of this.city.areas) {
+      if (a.k !== 'water') continue;
+      g.beginPath();
+      ring(a.p);
+      for (const hole of a.holes || []) if (hole.length > 2) ring(hole);
+      g.fill('evenodd');
+    }
+    g.strokeStyle = '#000';
+    g.lineCap = g.lineJoin = 'round';
+    for (const r of this.roads) {
+      g.beginPath();
+      r.n.forEach((i, k) => g[k ? 'lineTo' : 'moveTo'](tx(this.nodes[i][0]), tz(this.nodes[i][1])));
+      g.lineWidth = (r.w + 1) * S;
+      g.stroke();
+    }
+    const px = g.getImageData(0, 0, w, h).data;
+    this.water = { mask: new Uint8Array(w * h), w, h, S, xmin, zmin };
+    for (let i = 0; i < w * h; i++) this.water.mask[i] = px[i * 4] > 127 ? 1 : 0;
+  }
+
+  isWater(x, z) {
+    const { mask, w, h, S, xmin, zmin } = this.water;
+    const i = Math.floor((x - xmin) * S), j = Math.floor((z - zmin) * S);
+    return i >= 0 && j >= 0 && i < w && j < h && mask[j * w + i] === 1;
   }
 
   // ---------------------------------------------------------------- рельеф
