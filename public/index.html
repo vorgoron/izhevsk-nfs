@@ -39,6 +39,10 @@
     #banner small { display: block; font-size: 20px; font-weight: 600; color: #fff; font-style: normal; margin-top: 6px; }
     #minimap { position: fixed; left: 24px; bottom: 24px; width: 220px; height: 220px; border-radius: 50%; border: 3px solid rgba(255,255,255,.7); box-shadow: 0 4px 16px rgba(0,0,0,.5); }
     #minimap.big { width: 420px; height: 420px; }
+    #north { position: fixed; z-index: 2; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; pointer-events: none;
+      background: #c62d2d; border: 2px solid rgba(255,255,255,.9); box-sizing: border-box; color: #fff; font: 700 14px/22px sans-serif;
+      text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+    body.in-garage #north { display: none; }
     #help { right: 24px; top: 20px; font-size: 13px; opacity: .85; text-align: right; line-height: 1.6; }
     #help kbd { background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 5px; font-family: inherit; }
     #attr { position: fixed; right: 8px; bottom: 4px; font-size: 11px; opacity: .7; }
@@ -141,6 +145,7 @@
   </div>
   <div id="banner" class="hud"></div>
   <canvas id="minimap" width="440" height="440"></canvas>
+  <div id="north">N</div>
   <div id="speedo" class="hud"><span id="speed">0</span> <span class="unit">км/ч</span><div id="nitro"><div id="nitro-fill"></div></div><div id="fuel"><div id="fuel-fill"></div></div></div>
   <div id="fuelhint" class="hud"></div>
   <div id="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">участники OpenStreetMap</a> · рельеф <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a> (Mapzen, SRTM)</div>
