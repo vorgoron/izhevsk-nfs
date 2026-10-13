@@ -6,6 +6,7 @@ export const HORIZON = '#b4cbe0'; // цвет горизонта = цвет ту
 const ZENITH = '#5f93cf';
 const CLOUDS = 70, AREA = 5200;   // облаков в квадрате AREA × AREA вокруг игрока
 const WIND = new THREE.Vector2(3.2, 1.1); // м/с
+const CLOUD_OPACITY = 0.45;
 
 function rand(seed) {
   let s = seed;
@@ -49,7 +50,10 @@ export class Sky {
       this.clouds.push(cloud);
     }
     const geo = new THREE.IcosahedronGeometry(1, 1);
-    const mat = new THREE.MeshLambertMaterial({ color: '#ffffff', emissive: '#6d7c8c', flatShading: true, fog: false });
+    // Полупрозрачные: без записи глубины клубки просвечивают друг через друга — где их больше,
+    // там облако плотнее, края — тоньше.
+    const mat = new THREE.MeshLambertMaterial({ color: '#ffffff', emissive: '#6d7c8c', flatShading: true, fog: false,
+      transparent: true, opacity: CLOUD_OPACITY, depthWrite: false });
     this.mesh = new THREE.InstancedMesh(geo, mat, puffs.length);
     this.mesh.frustumCulled = false;
     scene.add(this.mesh);
