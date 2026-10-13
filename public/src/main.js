@@ -4,7 +4,7 @@ import { buildTerrain, buildRoads, buildBuildings, buildTrees, buildMinimapCanva
 import { Car, buildCarModel } from './car.js';
 import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
-import { buildFootbridges } from './footbridges.js';
+import { planFootbridges, buildFootbridges } from './footbridges.js';
 import { Sound } from './audio.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
@@ -44,6 +44,7 @@ async function main() {
   const SUN_DIR = new THREE.Vector3(-0.5, 0.8, 0.35).normalize();
 
   const world = new World(city);
+  planFootbridges(world); // насыпи у мостов меняют рельеф — до постройки мешей
   world.buildGraph();
   const terrain = buildTerrain(world, renderer);
   scene.add(terrain.mesh);
@@ -52,7 +53,7 @@ async function main() {
   await frame();
   scene.add(buildBuildings(world, renderer));
   scene.add(...buildTrees(world));
-  scene.add(buildFootbridges(world));
+  scene.add(buildFootbridges(world, terrain.mesh.material));
   const landmarks = buildLandmarks(world);
   scene.add(landmarks.group);
   const minimap = buildMinimapCanvas(world);

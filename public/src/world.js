@@ -16,6 +16,7 @@ export class World {
     this.bounds = city.bounds;
     this.nodes = city.roadNodes;
     this.roads = city.roads.filter((r) => ROAD_CLASSES.has(r.k) && !r.tu);
+    this.patches = [];
     this.#initDem(city.dem);
     this.#initRoadIndex();
     this.#initBuildingIndex();
@@ -44,7 +45,18 @@ export class World {
     this.dem = { ...dem, h };
   }
 
+  // Рельеф с поправками (насыпи у мостов): по нему стоят дома, дороги, машины.
   terrain(x, z) {
+    let y = this.baseTerrain(x, z);
+    for (const patch of this.patches) y += patch(x, z, y);
+    return y;
+  }
+
+  // Поправка к рельефу: fn(x, z, base) → прибавка в метрах.
+  addTerrainPatch(fn) { this.patches.push(fn); }
+
+  // Исходный DEM (сетка 75 м, билинейно) — из него строится меш рельефа.
+  baseTerrain(x, z) {
     const { x0, z0, step, nx, nz, h } = this.dem;
     let fx = (x - x0) / step, fz = (z - z0) / step;
     fx = Math.min(Math.max(fx, 0), nx - 1.001);

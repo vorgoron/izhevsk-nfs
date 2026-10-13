@@ -79,10 +79,10 @@ function railTexture() {
   return t;
 }
 
-export function buildFootbridges(world) {
+// Вызывать сразу после создания World: считает высоты настилов по исходному рельефу и
+// ставит насыпи (поправки рельефа), по которым потом строятся дома, дороги и машины.
+export function planFootbridges(world) {
   const list = world.city.footbridges || [];
-  const group = new THREE.Group();
-  if (!list.length) return group;
 
   // Высота настила: над дорогой — с просветом, иначе — по рельефу. Касающиеся друг друга
   // мосты (площадь-мост и дорожки по ней) — на одной высоте.
@@ -108,6 +108,54 @@ export function buildFootbridges(world) {
   for (const it of items) {
     if (it.group) it.flat = Math.max(...it.group.items.map((q) => q.flat));
   }
+  for (const it of items) if (it.fb.a && (it.fb.level || it.fb.stairs)) setupEnds(world, it);
+  world.footbridgeItems = items;
+}
+
+// Ось моста (главное направление контура), концы вдоль оси; ось смотрит в сторону level.
+function axes(it) {
+  const p = it.o.poly;
+  const cx = p.reduce((a, q) => a + q[0], 0) / p.length, cz = p.reduce((a, q) => a + q[1], 0) / p.length;
+  let sxx = 0, szz = 0, sxz = 0;
+  for (const [x, z] of p) { sxx += (x - cx) ** 2; szz += (z - cz) ** 2; sxz += (x - cx) * (z - cz); }
+  const ang = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+  let ux = Math.cos(ang), uz = Math.sin(ang);
+  const lv = it.fb.level || [cx + ux, cz + uz];
+  if ((lv[0] - cx) * ux + (lv[1] - cz) * uz < 0) { ux = -ux; uz = -uz; }
+  const ss = p.map(([x, z]) => (x - cx) * ux + (z - cz) * uz), ts = p.map(([x, z]) => -(x - cx) * uz + (z - cz) * ux);
+  return { cx, cz, ux, uz, vx: -uz, vz: ux, sMin: Math.min(...ss), sMax: Math.max(...ss), hw: Math.max(...ts.map(Math.abs)) };
+}
+
+const PLATEAU_SLOPE = 0.04; // уклон, которым насыпь сходит на нет вдали от моста
+const WALL_FADE = 50;       // м: за краем моста насыпь вдоль стенки сходит на нет
+
+function setupEnds(world, it) {
+  const a = axes(it);
+  it.axes = a;
+  const top = it.flat;
+  if (it.fb.level) {
+    // Насыпь со стороны level: вровень с настилом у края моста, дальше плавно вниз до рельефа.
+    // Со стороны моста — резкий край (подпорная стенка).
+    const fade = (t) => {
+      const e = Math.abs(t) - (a.hw + 8);
+      return e <= 0 ? 1 : e >= WALL_FADE ? 0 : 0.5 + 0.5 * Math.cos((Math.PI * e) / WALL_FADE);
+    };
+    const raise = (x, z, base) => {
+      const s = (x - a.cx) * a.ux + (z - a.cz) * a.uz - a.sMax;
+      if (s < 0 || s > 400) return 0;
+      const w = fade(-(x - a.cx) * a.uz + (z - a.cz) * a.ux);
+      return w ? Math.max(0, top - PLATEAU_SLOPE * s - base) * w : 0;
+    };
+    world.addTerrainPatch(raise);
+    it.plateau = { raise, fade, T: a.hw + 8 + WALL_FADE };
+  }
+}
+
+export function buildFootbridges(world, terrainMaterial) {
+  const items = world.footbridgeItems || [];
+  const group = new THREE.Group();
+  if (!items.length) return group;
+
   // Дорожка-мост через овраг/воду без дорог: настил по прямой между берегами.
   const topAt = (it, x, z) => {
     // Дорожка поверх моста-площади — чуть ниже её настила, чтобы поверхности не мерцали.
@@ -150,6 +198,11 @@ export function buildFootbridges(world) {
 
       const len = Math.hypot(x2 - x1, z2 - z1);
       if (!sd[i] || len < 0.3) continue;
+      // Торец к площади — вровень, без перил; торец к лестнице — проход.
+      if (it.axes) {
+        const ax = it.axes, s = (((x1 + x2) / 2 - ax.cx) * ax.ux + ((z1 + z2) / 2 - ax.cz) * ax.uz);
+        if ((it.fb.level && s > ax.sMax - 1.5) || (it.fb.stairs && s < ax.sMin + 1.5)) continue;
+      }
       // Перила: ажурная лента, текстура повторяется каждые 1.2 м.
       const u = len / 1.2;
       rp.push(x1, ys[i], z1, x2, ys[j], z2, x2, ys[j] + RAIL_H, z2, x1, ys[i], z1, x2, ys[j] + RAIL_H, z2, x1, ys[i] + RAIL_H, z1);
@@ -182,6 +235,11 @@ export function buildFootbridges(world) {
   railMesh.castShadow = true;
   group.add(slabMesh, railMesh);
 
+  for (const it of items) {
+    if (it.plateau) group.add(buildPlateau(world, it, terrainMaterial, iron));
+    if (it.fb.stairs) group.add(buildStairs(world, it, concrete, iron));
+  }
+
   const m = new THREE.Matrix4();
   if (columns.length) {
     const colGeo = new THREE.BoxGeometry(0.6, 1, 0.6).translate(0, 0.5, 0);
@@ -204,4 +262,131 @@ export function buildFootbridges(world) {
     group.add(pole, ball);
   }
   return group;
+}
+
+// ---------------------------------------------------------------- насыпь и лестница
+
+const rect = (x, z, ux, uz, len, wid) => {
+  const vx = -uz, vz = ux;
+  return [[x - vx * wid, z - vz * wid], [x + ux * len - vx * wid, z + uz * len - vz * wid],
+    [x + ux * len + vx * wid, z + uz * len + vz * wid], [x + vx * wid, z + vz * wid]];
+};
+
+// Поверх меша рельефа (у него сетка 15 м, резкую ступень он не покажет): мелкая сетка по насыпи
+// с той же текстурой подложки, белая подпорная стенка и перила по её краю.
+function buildPlateau(world, it, terrainMaterial, iron) {
+  const a = it.axes, { raise, T } = it.plateau;
+  const [xmin, zmin, xmax, zmax] = world.bounds;
+  const W = xmax - xmin, H = zmax - zmin;
+  const g = new THREE.Group();
+  const STEP = 3, S = Math.min(400, (it.flat - world.baseTerrain(a.cx, a.cz) + 2) / PLATEAU_SLOPE);
+  const ns = Math.ceil(S / STEP), nt = Math.ceil((2 * T) / STEP);
+  const pos = [], uv = [], idx = [];
+  const lifted = [];
+  for (let i = 0; i <= ns; i++) {
+    for (let j = 0; j <= nt; j++) {
+      const s = a.sMax + Math.min(i * STEP, S) + (i === 0 ? 0.02 : 0), t = -T + j * STEP;
+      const x = a.cx + a.ux * s + a.vx * t, z = a.cz + a.uz * s + a.vz * t;
+      const base = world.baseTerrain(x, z), r = raise(x, z, base);
+      lifted.push(r > 0.02);
+      pos.push(x, base + r + 0.04, z);
+      uv.push((x - xmin) / W, 1 - (z - zmin) / H);
+    }
+  }
+  const k = (i, j) => i * (nt + 1) + j;
+  for (let i = 0; i < ns; i++) {
+    for (let j = 0; j < nt; j++) {
+      if (!(lifted[k(i, j)] || lifted[k(i + 1, j)] || lifted[k(i, j + 1)] || lifted[k(i + 1, j + 1)])) continue;
+      idx.push(k(i, j), k(i, j + 1), k(i + 1, j), k(i + 1, j), k(i, j + 1), k(i + 1, j + 1));
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mat = terrainMaterial.clone();
+  mat.side = THREE.DoubleSide;
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = -2;
+  const top = new THREE.Mesh(geo, mat);
+  top.receiveShadow = true;
+  g.add(top);
+
+  // Стенка по краю насыпи (s = 0), перила там, где нет моста.
+  const wp = [], rp = [], ruv = [];
+  const edge = (t) => {
+    const x = a.cx + a.ux * (a.sMax + 0.02) + a.vx * t, z = a.cz + a.uz * (a.sMax + 0.02) + a.vz * t;
+    const base = world.baseTerrain(x, z);
+    return [x, z, base, base + raise(x, z, base)];
+  };
+  for (let t = -T; t < T; t += 1) {
+    const [x1, z1, b1, h1] = edge(t), [x2, z2, b2, h2] = edge(t + 1);
+    if (h1 - b1 < 0.05 && h2 - b2 < 0.05) continue;
+    wp.push(x1, b1 - 0.5, z1, x2, b2 - 0.5, z2, x2, h2, z2, x1, b1 - 0.5, z1, x2, h2, z2, x1, h1, z1);
+    if (h1 - b1 > 0.5) world.addCollider(rect(x1, z1, x2 - x1, z2 - z1, 1, 0.3));
+    if (Math.abs(t + 0.5) > a.hw && h1 - b1 > 0.8) {
+      rp.push(x1, h1, z1, x2, h2, z2, x2, h2 + RAIL_H, z2, x1, h1, z1, x2, h2 + RAIL_H, z2, x1, h1 + RAIL_H, z1);
+      ruv.push(0, 0, 0.83, 0, 0.83, 1, 0, 0, 0.83, 1, 0, 1);
+    }
+  }
+  const wall = new THREE.BufferGeometry();
+  wall.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3));
+  wall.computeVertexNormals();
+  const wm = new THREE.Mesh(wall, new THREE.MeshLambertMaterial({ color: '#efeee9', side: THREE.DoubleSide }));
+  wm.castShadow = wm.receiveShadow = true;
+  const rail = new THREE.BufferGeometry();
+  rail.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
+  rail.setAttribute('uv', new THREE.Float32BufferAttribute(ruv, 2));
+  rail.computeVertexNormals();
+  g.add(wm, new THREE.Mesh(rail, iron));
+  return g;
+}
+
+// Прямая лестница вниз с торца моста, против оси (к пруду): ступени-блоки до земли, перила.
+function buildStairs(world, it, concrete, iron) {
+  const a = it.axes;
+  const RISE = 0.16, RUN = 0.34, HALF = Math.min(3, a.hw);
+  const x0 = a.cx + a.ux * a.sMin, z0 = a.cz + a.uz * a.sMin;
+  const dx = -a.ux, dz = -a.uz;
+  const steps = [];
+  let y = it.flat, d = 0;
+  while (steps.length < 200) {
+    y -= RISE;
+    const x = x0 + dx * (d + RUN / 2), z = z0 + dz * (d + RUN / 2);
+    const g = world.terrain(x, z);
+    if (y <= g + 0.02) break;
+    steps.push([x, z, g, y]);
+    d += RUN;
+  }
+  const g = new THREE.Group();
+  if (!steps.length) return g;
+  const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  const mesh = new THREE.InstancedMesh(box, concrete, steps.length);
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(dx, dz));
+  const m = new THREE.Matrix4(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+  steps.forEach(([x, z, gr, top], i) => {
+    mesh.setMatrixAt(i, m.compose(p.set(x, gr - 0.3, z), q, sc.set(HALF * 2, top - gr + 0.3, RUN + 0.01)));
+  });
+  mesh.castShadow = mesh.receiveShadow = true;
+  g.add(mesh);
+  world.addCollider(rect(x0, z0, dx * d, dz * d, 1, HALF));
+
+  // Перила по бокам — наклонные ажурные ленты.
+  const rp = [], ruv = [];
+  const last = steps[steps.length - 1];
+  for (const side of [-1, 1]) {
+    const ox = -dz * HALF * side, oz = dx * HALF * side;
+    const ax = x0 + ox, az = z0 + oz, bx = x0 + dx * d + ox, bz = z0 + dz * d + oz;
+    const ya = it.flat, yb = last[3];
+    const u = d / 1.2;
+    rp.push(ax, ya, az, bx, yb, bz, bx, yb + RAIL_H, bz, ax, ya, az, bx, yb + RAIL_H, bz, ax, ya + RAIL_H, az);
+    ruv.push(0, 0, u, 0, u, 1, 0, 0, u, 1, 0, 1);
+  }
+  const rail = new THREE.BufferGeometry();
+  rail.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
+  rail.setAttribute('uv', new THREE.Float32BufferAttribute(ruv, 2));
+  rail.computeVertexNormals();
+  g.add(new THREE.Mesh(rail, iron));
+  return g;
 }

@@ -64,7 +64,8 @@ export function buildTerrain(world, renderer) {
   geo.rotateX(-Math.PI / 2);
   geo.translate(xmin + W / 2, 0, zmin + H / 2);
   const pos = geo.attributes.position;
-  for (let i = 0; i < pos.count; i++) pos.setY(i, world.terrain(pos.getX(i), pos.getZ(i)));
+  // Меш — по исходному DEM: резкие насыпи сетка 15 м не передаст, их рисует footbridges.js поверх.
+  for (let i = 0; i < pos.count; i++) pos.setY(i, world.baseTerrain(pos.getX(i), pos.getZ(i)));
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
   mesh.receiveShadow = true;

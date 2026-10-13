@@ -127,6 +127,11 @@ ROAD_WIDTH = {
     "pedestrian": 6, "road": 6,
 }
 PATHS = {"footway", "path", "steps", "cycleway", "track", "bridleway", "corridor"}
+# Особые пешеходные мосты: level — точка в сторону, где земля поднимается до настила
+# (мост выходит на площадь вровень), stairs — лестница вниз с противоположного конца.
+FOOTBRIDGE_STYLE = {
+    106782602: {"level": [0, 0], "stairs": 1},  # с Центральной площади над Карла Маркса к Максима Горького
+}
 FOOTBRIDGE_W = {"footway": 3.0, "path": 2.5, "steps": 2.5, "cycleway": 3.0, "track": 3.5, "pedestrian": 6.0}
 
 
@@ -543,7 +548,8 @@ def build_city():
             pts = ring_xy(nds) if closed else [project(*nodes[n]) for n in nds]
             length = sum(math.dist(pts[i - 1], pts[i]) for i in range(1, len(pts)))
             if inside(pts) and length >= 4:
-                footbridges.append({"p": pts, "a": 1 if closed else 0, "w": FOOTBRIDGE_W.get(hw, 3.0)})
+                footbridges.append({"p": pts, "a": 1 if closed else 0, "w": FOOTBRIDGE_W.get(hw, 3.0),
+                                    **FOOTBRIDGE_STYLE.get(wid, {})})
             continue
         if hw and tags.get("area") != "yes":
             if hw in PATHS:
