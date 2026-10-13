@@ -59,13 +59,13 @@ export function buildTerrain(world, renderer) {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-  const seg = 15;
-  const geo = new THREE.PlaneGeometry(W, H, Math.ceil(W / seg), Math.ceil(H / seg));
+  const geo = new THREE.PlaneGeometry(W, H, world.mesh.nx, world.mesh.nz);
   geo.rotateX(-Math.PI / 2);
   geo.translate(xmin + W / 2, 0, zmin + H / 2);
   const pos = geo.attributes.position;
-  // Меш — по исходному DEM: резкие насыпи сетка 15 м не передаст, их рисует footbridges.js поверх.
-  for (let i = 0; i < pos.count; i++) pos.setY(i, world.baseTerrain(pos.getX(i), pos.getZ(i)));
+  // Меш — по исходному DEM (World.meshTerrain повторяет его треугольники): резкие насыпи
+  // сетка 15 м не передаст, их рисует footbridges.js поверх.
+  for (let i = 0; i < pos.count; i++) pos.setY(i, world.meshTerrain(pos.getX(i), pos.getZ(i)));
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
   mesh.receiveShadow = true;

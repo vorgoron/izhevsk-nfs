@@ -289,7 +289,7 @@ function buildPlateau(world, it, terrainMaterial, iron) {
       const x = a.cx + a.ux * s + a.vx * t, z = a.cz + a.uz * s + a.vz * t;
       const base = world.baseTerrain(x, z), r = raise(x, z, base);
       lifted.push(r > 0.02);
-      pos.push(x, base + r + 0.04, z);
+      pos.push(x, world.meshTerrain(x, z) + r + 0.04, z);
       uv.push((x - xmin) / W, 1 - (z - zmin) / H);
     }
   }
@@ -317,8 +317,8 @@ function buildPlateau(world, it, terrainMaterial, iron) {
   const wp = [], rp = [], ruv = [];
   const edge = (t) => {
     const x = a.cx + a.ux * (a.sMax + 0.02) + a.vx * t, z = a.cz + a.uz * (a.sMax + 0.02) + a.vz * t;
-    const base = world.baseTerrain(x, z);
-    return [x, z, base, base + raise(x, z, base)];
+    const base = world.baseTerrain(x, z), mesh = world.meshTerrain(x, z);
+    return [x, z, mesh, mesh + raise(x, z, base)];
   };
   for (let t = -T; t < T; t += 1) {
     const [x1, z1, b1, h1] = edge(t), [x2, z2, b2, h2] = edge(t + 1);

@@ -285,11 +285,17 @@ export class Traffic {
   }
 
   #sync() {
-    const p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+    const p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), e = new THREE.Euler(0, 0, 0, 'YXZ');
+    const w = this.world;
     for (const v of this.vehicles) {
       if (!v.active) { v.mesh.setMatrixAt(v.idx, this.hidden); continue; }
-      p.set(v.x, this.world.ground(v.x, v.z), v.z);
-      this.quat.setFromAxisAngle(this.up, v.heading);
+      // Наклон по поверхности, как у машины игрока: тангаж по осям колёс, крен по бокам.
+      const fx = v.dx, fz = v.dz, rx = -fz, rz = fx, a = v.len * 0.32, b = v.bus ? 1.1 : 0.85;
+      const hf = w.ground(v.x + fx * a, v.z + fz * a), hb = w.ground(v.x - fx * a, v.z - fz * a);
+      const hl = w.ground(v.x - rx * b, v.z - rz * b), hr = w.ground(v.x + rx * b, v.z + rz * b);
+      p.set(v.x, Math.max(w.ground(v.x, v.z), (hf + hb) / 2), v.z);
+      e.set(-Math.atan2(hf - hb, 2 * a), v.heading, Math.atan2(hl - hr, 2 * b));
+      this.quat.setFromEuler(e);
       v.mesh.setMatrixAt(v.idx, this.mat4.compose(p, this.quat, one));
     }
     for (const m of this.meshes) m.instanceMatrix.needsUpdate = true;

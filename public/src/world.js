@@ -9,6 +9,7 @@ export const MARKED_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondar
 // Чем важнее дорога, тем выше её полотно — так она перекрывает второстепенные на перекрёстках.
 const LIFT = { motorway: 0.40, trunk: 0.40, primary: 0.38, secondary: 0.35, tertiary: 0.32, service: 0.24 };
 export const roadLift = (k) => LIFT[k.replace('_link', '')] ?? 0.28;
+export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
 
 export class World {
   constructor(city) {
@@ -18,6 +19,7 @@ export class World {
     this.roads = city.roads.filter((r) => ROAD_CLASSES.has(r.k) && !r.tu);
     this.patches = [];
     this.#initDem(city.dem);
+    this.#initMeshGrid();
     this.#initRoadIndex();
     this.#initBuildingIndex();
     this.#initWaterMask();
@@ -91,10 +93,37 @@ export class World {
   }
 
   // Рельеф с поправками (насыпи у мостов): по нему стоят дома, дороги, машины.
+  // Высота берётся с той же треугольной сетки, что и меш рельефа, — иначе машина то висит,
+  // то проваливается (DEM билинейный, а меш — треугольники 15 м).
   terrain(x, z) {
-    let y = this.baseTerrain(x, z);
-    for (const patch of this.patches) y += patch(x, z, y);
+    const base = this.baseTerrain(x, z);
+    let y = this.meshTerrain(x, z);
+    for (const patch of this.patches) y += patch(x, z, base);
     return y;
+  }
+
+  // Сетка меша рельефа (build.js строит PlaneGeometry ровно по ней).
+  #initMeshGrid() {
+    const [xmin, zmin, xmax, zmax] = this.bounds;
+    const W = xmax - xmin, H = zmax - zmin;
+    const nx = Math.ceil(W / TERRAIN_SEG), nz = Math.ceil(H / TERRAIN_SEG);
+    const h = new Float32Array((nx + 1) * (nz + 1));
+    for (let j = 0; j <= nz; j++) {
+      for (let i = 0; i <= nx; i++) h[j * (nx + 1) + i] = this.baseTerrain(xmin + (i * W) / nx, zmin + (j * H) / nz);
+    }
+    this.mesh = { xmin, zmin, W, H, nx, nz, dx: W / nx, dz: H / nz, h };
+  }
+
+  // Как PlaneGeometry режет клетку: диагональ из (i, j+1) в (i+1, j).
+  meshTerrain(x, z) {
+    const { xmin, zmin, nx, nz, dx, dz, h } = this.mesh;
+    let fx = (x - xmin) / dx, fz = (z - zmin) / dz;
+    fx = Math.min(Math.max(fx, 0), nx - 1e-6);
+    fz = Math.min(Math.max(fz, 0), nz - 1e-6);
+    const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+    const a = h[j * (nx + 1) + i], d = h[j * (nx + 1) + i + 1];
+    const b = h[(j + 1) * (nx + 1) + i], c = h[(j + 1) * (nx + 1) + i + 1];
+    return u + v <= 1 ? a + (d - a) * u + (b - a) * v : c + (b - c) * (1 - u) + (d - c) * (1 - v);
   }
 
   // Поправка к рельефу: fn(x, z, base) → прибавка в метрах.
@@ -169,13 +198,15 @@ export class World {
     return this.roadGrid.get(Math.floor(x / this.roadCell) * 100003 + Math.floor(z / this.roadCell)) || [];
   }
 
-  // Высота поверхности, по которой едет машина: рельеф, а на мосту — полотно моста.
+  // Высота поверхности, по которой едет машина: рельеф, на дороге — её полотно (оно чуть
+  // приподнято над рельефом), на мосту — настил моста.
   ground(x, z) {
-    let y = this.terrain(x, z) + 0.3;
+    const t = this.terrain(x, z);
+    let y = t;
     for (const s of this.nearbyRoadSegments(x, z)) {
-      if (s.ya === undefined) continue;
       const c = World.closest(s, x, z);
-      if (c.d < s.w / 2 + 0.5) y = Math.max(y, s.ya + (s.yb - s.ya) * c.t);
+      if (c.d > s.w / 2 + 0.3) continue;
+      y = Math.max(y, s.ya === undefined ? t + s.road.lift : s.ya + (s.yb - s.ya) * c.t);
     }
     return y;
   }
