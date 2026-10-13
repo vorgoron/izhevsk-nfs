@@ -3,6 +3,7 @@ import * as THREE from 'three';
 
 // Скорость, разгон и сцепление — от модели (vehicles.js), здесь базовые величины.
 const NITRO_K = 1.3;      // нитро: верхняя скорость ×1.3
+const NITRO_UNLOCK = 0.25; // после опустошения нитро снова доступно с этого запаса
 const ACCEL = 13;
 const BRAKE = 28;
 const REVERSE_MAX = 12;
@@ -73,7 +74,11 @@ export class Car {
 
     // Пустой бак: мотор заглох — ни газа, ни заднего хода, ни нитро; тормоз работает.
     if (this.fuel <= 0) input = { ...input, up: false, nitro: false, down: input.down && vf > 0.5 };
-    const nitroOn = input.nitro && this.nitro > 0 && vf > 5;
+    // Кончилось нитро — заперто, пока баллон не наполнится на четверть (иначе на пустом баллоне
+    // нитро включалось бы каждый кадр на крохи восстановления).
+    if (this.nitro <= 0) this.nitroLocked = true;
+    else if (this.nitro >= NITRO_UNLOCK) this.nitroLocked = false;
+    const nitroOn = input.nitro && !this.nitroLocked && vf > 5;
     this.nitroOn = nitroOn;
     const vf0 = vf;
     if (input.up || (input.down && vf <= 0.5)) {

@@ -290,6 +290,7 @@ async function main() {
   function updateHud() {
     $('speed').textContent = Math.round(Math.abs(car.speed) * 3.6);
     $('nitro-fill').style.width = `${car.nitro * 100}%`;
+    $('nitro').classList.toggle('locked', !!car.nitroLocked); // пусто — ждём четверть баллона
     const r = world.nearestRoad(car.pos.x, car.pos.y, 12);
     const street = r?.seg.road.name;
     if (street && street !== lastStreet) {
