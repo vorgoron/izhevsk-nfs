@@ -173,6 +173,11 @@ def is_tunnel(tags, pts):
     return (parse_num(tags.get("layer")) or 0) < 0 and tags.get("covered") != "yes"
 
 
+def is_forest(tags):
+    """Лес (в браузере — в основном ели), а не парк/сквер."""
+    return tags.get("landuse") == "forest" or tags.get("natural") == "wood"
+
+
 def area_kind(tags):
     if tags.get("natural") == "water" or tags.get("waterway") == "riverbank" or tags.get("landuse") in ("reservoir", "basin"):
         return "water"
@@ -943,7 +948,7 @@ def build_city():
         if kind:
             pts = ring_xy(nds)
             if len(pts) >= 3 and inside(pts):
-                areas.append({"k": kind, "p": pts})
+                areas.append({"k": kind, "p": pts, **({"f": 1} if is_forest(tags) else {})})
                 if tags.get("amenity") == "fuel":
                     fuel.append({"name": tags.get("brand") or osm_name(tags) or "АЗС", "p": pts})
 
@@ -969,7 +974,7 @@ def build_city():
                 own = [h for h in holes if len(h) >= 3 and point_in(*h[0], pts)]
                 buildings.append(building_entry(pts, tags, rid, lm, own))
             else:
-                areas.append({"k": kind, "p": pts, **({"holes": holes} if holes else {})})
+                areas.append({"k": kind, "p": pts, **({"holes": holes} if holes else {}), **({"f": 1} if is_forest(tags) else {})})
 
     for nid, tags in node_tags.items():
         if tags.get("natural") == "tree":
