@@ -158,7 +158,6 @@ export class Race {
       const y = car.y + 2.5 + Math.sin(performance.now() / 300) * 0.08;
       this.arrow.position.set(car.pos.x, y, car.pos.y);
       this.arrow.lookAt(target.x, y, target.z);
-      this.arrow.rotateX(0.5); // носом вниз: из камеры за машиной видна плоскость, а не ребро
     }
   }
 
