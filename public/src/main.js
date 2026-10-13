@@ -12,6 +12,7 @@ import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
 import { Sky, HORIZON } from './sky.js';
 import { Fuel } from './fuel.js';
+import { Queues } from './queues.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
@@ -89,6 +90,7 @@ async function main() {
   race.start(car.pos.x, car.pos.y);
   const skyDome = new Sky(scene, world.baseTerrain(0, 0));
   const fuel = new Fuel(world, scene);
+  const queues = new Queues(world, fuel, scene);
   const traffic = new Traffic(world, scene);
   const signals = new Signals(world, traffic, scene);
   traffic.reset(car.pos.x, car.pos.y);
@@ -100,7 +102,7 @@ async function main() {
     },
   });
   if (!choice.saved) garage.open();
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -345,6 +347,7 @@ async function main() {
     if (!garage.isOpen) race.update(dt, car); // в гараже гонка на паузе
     signals.update(dt);
     fuel.update(dt, car);
+    queues.update(dt, car);
     traffic.update(dt, car);
     sound.update(dt, car, inp, race);
     landmarks.group.userData.update(performance.now() / 1000);

@@ -77,6 +77,7 @@ export class Fuel {
       for (let i = 0; i < n; i++) {
         const s = (i - (n - 1) / 2) * (roof.len / n);
         const x = roof.cx + roof.ux * s, z = roof.cz + roof.uz * s, y = w.terrain(x, z);
+        (st.pumps ||= []).push({ x, z, vx: -roof.uz, vz: roof.ux }); // для очереди: островок и его направление
         add(islandGeo, island, x, z, y, rot);
         add(pumpGeo, pumpMat, x, z, y, rot);
         add(screenGeo, accent, x, z, y, rot);
@@ -107,6 +108,7 @@ export class Fuel {
         group.add(sign);
         w.addCollider(rect(sx, sz, -dz / L, dx / L, 0.8, 0.3));
         st.sign = [sx, sz];
+        st.entry = { x: best.x, z: best.z, road: best.r }; // въезд: вершина контура у дороги
       }
     }
     scene.add(group);
