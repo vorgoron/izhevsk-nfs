@@ -120,6 +120,16 @@ export class Sound {
     o.stop(t + 0.35);
   }
 
+  // Трамвайный звонок: два коротких «дзынь».
+  bell() {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t = this.ctx.currentTime;
+    for (const k of [0, 0.22]) {
+      this.#tone(1568, t + k, 0.35, 'sine', 0.18);
+      this.#tone(2093, t + k, 0.25, 'sine', 0.08);
+    }
+  }
+
   // Предупреждение: два нисходящих тона (критично — три и громче).
   warn(critical) {
     if (!this.ctx || this.ctx.state !== 'running') return;

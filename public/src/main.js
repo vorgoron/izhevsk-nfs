@@ -14,6 +14,7 @@ import { Signals } from './signals.js';
 import { Sky, HORIZON } from './sky.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
+import { Trams } from './trams.js';
 import { NitroFX, DustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 
@@ -112,6 +113,8 @@ async function main() {
 
   const sound = new Sound();
   game.sound = sound;
+  const trams = new Trams(world, scene, sound);
+  game.trams = trams;
   // iOS разрешает звук только из обработчика касания/клика.
   for (const ev of ['pointerdown', 'touchend', 'click']) addEventListener(ev, () => sound.unlock());
 
@@ -255,6 +258,14 @@ async function main() {
       mg.fillRect(x - r, z - r, 2 * r, 2 * r);
       mg.fillStyle = '#fff';
       mg.fillRect(x - r * 0.45, z - r * 0.55, r * 0.9, r * 1.1);
+    }
+    mg.fillStyle = '#e0453a'; // трамваи
+    for (const t of trams.near(car.pos.x, car.pos.y, 700)) {
+      mg.save();
+      mg.translate((t.x - xmin) * scale, (t.z - zmin) * scale);
+      mg.rotate(Math.atan2(t.dz, t.dx));
+      mg.fillRect(-4 / zoom, -1.6 / zoom, 8 / zoom, 3.2 / zoom);
+      mg.restore();
     }
     if (traffic.enabled) {
       mg.fillStyle = '#cfd3d8';
@@ -412,6 +423,7 @@ async function main() {
     signals.update(dt);
     fuel.update(dt, car);
     queues.update(dt, car);
+    trams.update(dt, car);
     car.checkStuck(dt, inp);
     traffic.update(dt, car);
     nitroFx.update(dt, car);

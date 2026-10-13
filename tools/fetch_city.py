@@ -547,6 +547,50 @@ def cut_passages(buildings, roads, road_nodes):
     return out
 
 
+# ---------------------------------------------------------------- трамваи
+
+def tram_routes():
+    """Маршруты трамваев (route=tram): ломаная по путям в порядке участников отношения,
+    остановки (роль stop*) — расстоянием вдоль ломаной."""
+    out = []
+    for rid, (members, tags) in relations.items():
+        if tags.get("route") != "tram" or tags.get("type") != "route":
+            continue
+        chain = []
+        for t, ref, role in members:
+            if t != "way" or ref not in ways or role not in ("", "forward", "backward"):
+                continue
+            nds = [n for n in ways[ref][0] if n in nodes]
+            if len(nds) < 2:
+                continue
+            if chain:
+                # Развернуть кусок, чтобы он продолжал предыдущий (первый тоже, если надо).
+                if nds[-1] == chain[-1] or (nds[0] != chain[-1] and math.dist(project(*nodes[nds[-1]]), project(*nodes[chain[-1]]))
+                                             < math.dist(project(*nodes[nds[0]]), project(*nodes[chain[-1]]))):
+                    nds = nds[::-1]
+                if nds[0] == chain[-1]:
+                    nds = nds[1:]
+            chain += nds
+        if len(chain) < 2:
+            continue
+        # Первый кусок мог быть развёрнут не так: если конец первого не стыкуется со вторым — переворот.
+        pts = [project(*nodes[n]) for n in chain]
+        acc = [0.0]
+        for i in range(1, len(pts)):
+            acc.append(acc[-1] + math.dist(pts[i - 1], pts[i]))
+        stops = []
+        for t, ref, role in members:
+            if t == "node" and role.startswith("stop") and ref in nodes:
+                p = project(*nodes[ref])
+                best = min(range(len(pts)), key=lambda i: math.dist(pts[i], p))
+                if math.dist(pts[best], p) < 40:
+                    stops.append(round(acc[best], 1))
+        out.append({"ref": tags.get("ref", ""), "name": tags.get("name", ""),
+                    "p": [(round(x, 2), round(z, 2)) for x, z in pts], "stops": sorted(stops)})
+    print(f"tram routes: {len(out)}")
+    return out
+
+
 # ---------------------------------------------------------------- заправки-точки
 
 def add_point_fuel_stations(fuel, areas, buildings, roads, road_nodes, inside):
@@ -889,6 +933,7 @@ def build_city():
         "footbridges": footbridges,
         "waterways": waterways,
         "fuel": fuel,
+        "trams": tram_routes(),
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()
