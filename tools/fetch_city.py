@@ -547,6 +547,63 @@ def cut_passages(buildings, roads, road_nodes):
     return out
 
 
+# ---------------------------------------------------------------- заправки-точки
+
+def add_point_fuel_stations(fuel, areas, buildings, roads, road_nodes, inside):
+    """АЗС, отмеченные в OSM только точкой: площадка 34×24 м вдоль ближайшей дороги
+    и навес над колонками, если на месте нет домов."""
+    n = 0
+    for nid, tags in node_tags.items():
+        if tags.get("amenity") != "fuel":
+            continue
+        x, z = project(*nodes[nid])
+        if not inside([(x, z)]) or any(point_in(x, z, st["p"]) for st in fuel):
+            continue
+        best = None
+        for r in roads:
+            if r["k"] not in DRIVE:
+                continue
+            for i in range(1, len(r["n"])):
+                a, b = road_nodes[r["n"][i - 1]], road_nodes[r["n"][i]]
+                if abs(a[0] - x) > 200 and abs(b[0] - x) > 200:
+                    continue
+                dx, dz = b[0] - a[0], b[1] - a[1]
+                l2 = dx * dx + dz * dz or 1
+                t = max(0, min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2))
+                d = math.hypot(x - a[0] - dx * t, z - a[1] - dz * t)
+                if best is None or d < best[0]:
+                    best = (d, dx, dz)
+        if not best or best[0] > 120:
+            continue
+        L = math.hypot(best[1], best[2])
+        ux, uz = best[1] / L, best[2] / L
+
+        def rect(cx, cz, hl, hw):
+            return [(round(cx + ux * a - uz * b, 2), round(cz + uz * a + ux * b, 2)) for a, b in ((-hl, -hw), (hl, -hw), (hl, hw), (-hl, hw))]
+
+        # Рядом здание без этажности и назначения — это навес/магазин АЗС (часто так и размечено):
+        # площадка вокруг него, а само здание станет низким навесом (ниже, «Здания на АЗС»).
+        near = [b for b in buildings if b["_auto_h"] and b["_btag"] in ("yes", "roof", "service", "retail") and b["_area"] < 1500
+                and (point_in(x, z, b["p"]) or min(math.dist((x, z), p) for p in b["p"]) < 25)]
+        if near:
+            xs = [p[0] for b in near for p in b["p"]]
+            zs = [p[1] for b in near for p in b["p"]]
+            m = 10
+            site = [(min(xs) - m, min(zs) - m), (max(xs) + m, min(zs) - m), (max(xs) + m, max(zs) + m), (min(xs) - m, max(zs) + m)]
+        else:
+            site = rect(x, z, 17, 12)
+            # На месте другие дома (точка в OSM неточная) — площадку не ставим.
+            if any(point_in(*b["p"][0], site) or point_in(x, z, b["p"]) for b in buildings
+                   if abs(b["p"][0][0] - x) < 60 and abs(b["p"][0][1] - z) < 60):
+                continue
+            buildings.append({"p": rect(x, z, 9, 5), "h": 5.3, "mh": 4.5, "s": 5, "_raised": True, "_auto_h": False,
+                              "_btag": "roof", "_levels": None, "_area": 180.0, "_fuel": True})
+        areas.append({"k": "paved", "p": site})
+        fuel.append({"name": tags.get("brand") or osm_name(tags) or "АЗС", "p": site})
+        n += 1
+    print(f"point fuel stations: {n}")
+
+
 # ---------------------------------------------------------------- мосты
 
 WATERWAY_W = {"river": 12, "canal": 6, "stream": 3, "ditch": 1.5, "drain": 1.5}
@@ -795,6 +852,7 @@ def build_city():
             if xmin < x < xmax and zmin < z < zmax:
                 trees.append([x, z])
 
+    add_point_fuel_stations(fuel, areas, buildings, roads, road_nodes, inside)
     # Здания на АЗС без этажности — магазин и навес в один этаж, а не выдуманные 6 этажей.
     # Навес над проездом поднимается целиком (тонкой плитой), а не режется аркой.
     for b in buildings:
