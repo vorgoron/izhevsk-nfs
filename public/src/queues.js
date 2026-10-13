@@ -26,7 +26,10 @@ export class Queues {
       const path = this.#path(st);
       if (!path) continue;
       const len = pathLength(path);
-      const n = Math.min(CARS, Math.floor(len / SLOT));
+      // Хвост обрывается там, где упёрся бы в проезжую часть улицы (перекрёсток, узкая обочина).
+      let n = 0;
+      while (n < Math.min(CARS, Math.floor(len / SLOT)) && !this.#onStreet(pointAt(path, n * SLOT))) n++;
+      if (n < 3) continue;
       const cars = [];
       for (let i = 0; i < n; i++) cars.push(this.#newCar(r));
       this.queues.push({ st, path, len, cars, timer: 6 + r() * 10, shift: 0, r });
@@ -58,6 +61,14 @@ export class Queues {
     this.zero = new THREE.Matrix4().makeScale(0, 0, 0);
   }
 
+  #onStreet({ x, z }) {
+    for (const s of this.world.nearbyRoadSegments(x, z)) {
+      if (MINOR.has(s.road.k)) continue;
+      if (this.world.constructor.closest(s, x, z).d < s.w / 2 + 1.1) return true;
+    }
+    return false;
+  }
+
   #newCar(r) {
     const kind = KINDS[Math.floor(r() * KINDS.length)];
     const colors = MODELS[kind].colors;
@@ -68,7 +79,10 @@ export class Queues {
   // против движения, повторяя её изгибы.
   #path(st) {
     const w = this.world, pump = st.pumps[0];
-    const p0 = [pump.x + pump.vx * 3.2, pump.z + pump.vz * 3.2];
+    // Головная машина — вдоль островка, сбоку от колонки (островок вытянут по v, сбоку — по u).
+    const ux = pump.vz, uz = -pump.vx;
+    const p0 = [pump.x + ux * 2.4 - pump.vx * 1.6, pump.z + uz * 2.4 - pump.vz * 1.6];
+    const p1 = [pump.x + ux * 2.4 + pump.vx * 4, pump.z + uz * 2.4 + pump.vz * 4];
     // Ближайшая улица к территории АЗС.
     let best = null;
     for (const s of w.segmentsNear(st.cx, st.cz, Math.max(st.len, st.wid) / 2 + 120)) {
@@ -88,14 +102,14 @@ export class Queues {
     const right = (ex - best.px) * -dz + (ez - best.pz) * dx > 0; // АЗС справа от a→b
     // Справа от направления движения стоит очередь: при АЗС справа едут a→b, хвост тянется к a.
     const back = right ? -1 : 1;
-    const curb = seg.w / 2 + 0.6; // на обочине, за краем полотна: крайняя правая полоса — для трафика
+    const curb = seg.w / 2 + 1.8; // за краем полотна (машина ~1.7 м шириной): проезжая часть — для трафика
     const offset = ([x, z], [nx, nz]) => [x + nx * curb, z + nz * curb];
     // Нормаль к АЗС: обходим против движения, АЗС справа от движения — то есть (tz, -tx) от обхода.
     const sideN = (ax, az, bx, bz) => {
       const L = Math.hypot(bx - ax, bz - az) || 1;
       return [(bz - az) / L, -(bx - ax) / L];
     };
-    const path = [p0, [ex, ez]];
+    const path = [p0, p1, [ex, ez]];
     let prev = [best.px, best.pz], k = back < 0 ? i - 1 : i, total = 0;
     path.push(offset(prev, sideN(prev[0], prev[1], nodes[k][0], nodes[k][1])));
     while (total < 240 && k >= 0 && k < nodes.length) {
