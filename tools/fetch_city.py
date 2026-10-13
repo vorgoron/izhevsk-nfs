@@ -3,7 +3,7 @@
 
 Источники:
   - OSM: основной API (api/0.6/map), тайлами — Overpass часто лежит.
-  - Рельеф: Open-Meteo Elevation API (Copernicus DEM GLO-90).
+  - Рельеф: тайлы высот Terrarium (AWS Terrain Tiles, источник — SRTM и др.).
 Сырые ответы кешируются в data/raw/, повторный запуск ничего не качает.
 
 Запуск: python3 tools/fetch_city.py
@@ -21,12 +21,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, "data", "raw")
 OUT = os.path.join(ROOT, "public", "city.json")
 
-# Центр: пруд, плотина, Центральная площадь, ул. Пушкинская/Удмуртская/Карла Маркса.
-SOUTH, NORTH = 56.835, 56.862
-WEST, EAST = 53.175, 53.235
+# Область: AREA=city (по умолчанию) — застроенный Ижевск, AREA=center — только центр (быстро,
+# для отладки). Сетка тайлов OSM привязана к одной точке, так что кеш центра годится и для города.
+AREAS = {
+    "center": (56.835, 56.862, 53.175, 53.235),  # пруд, плотина, Центральная площадь, Пушкинская
+    "city": (56.7756, 56.9268, 53.075, 53.335),  # ~16 × 17 км
+}
+AREA = os.environ.get("AREA", "city")
+SOUTH, NORTH, WEST, EAST = AREAS[AREA]
 LAT0, LON0 = 56.8495, 53.2045  # ~ Центральная площадь
 TILE_LON, TILE_LAT = 0.01, 0.0054
-DEM_STEP = 75.0  # метров между точками сетки рельефа (сам DEM ~90 м)
+DEM_STEP = 30.0  # метров между точками сетки рельефа (тайлы Terrarium ~10 м/пиксель, данные SRTM ~30 м)
 
 UA = "izhevsk-nfs-prototype/0.1 (personal hobby project)"
 
@@ -682,23 +687,46 @@ def build_city():
 
 # ---------------------------------------------------------------- рельеф
 
+TERRAIN_Z = 13  # тайлы высот Terrarium: z13 ≈ 10 м на пиксель на широте Ижевска
+
+
+def terrarium_tile(x, y):
+    """Тайл высот Terrarium (AWS Terrain Tiles): PNG, высота = R*256 + G + B/256 - 32768."""
+    from PIL import Image
+    import io
+    body = fetch(f"https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{TERRAIN_Z}/{x}/{y}.png",
+                 f"terrarium_{TERRAIN_Z}_{x}_{y}.png", pause=0.2)
+    return Image.open(io.BytesIO(body)).convert("RGB").load()
+
+
 def download_dem(bounds):
+    """Сетка высот с шагом DEM_STEP по тайлам Terrarium (билинейно между пикселями)."""
     xmin, zmin, xmax, zmax = bounds
     nx = int((xmax - xmin) / DEM_STEP) + 1
     nz = int((zmax - zmin) / DEM_STEP) + 1
-    pts = [unproject(xmin + i * DEM_STEP, zmin + j * DEM_STEP) for j in range(nz) for i in range(nx)]
+    n = 2 ** TERRAIN_Z
+    tiles = {}
+
+    def px_height(gx, gy):
+        tx, ty = int(gx // 256), int(gy // 256)
+        if (tx, ty) not in tiles:
+            print(f"DEM tile {tx},{ty}")
+            tiles[(tx, ty)] = terrarium_tile(tx, ty)
+        r, g, b = tiles[(tx, ty)][int(gx) % 256, int(gy) % 256]
+        return r * 256 + g + b / 256 - 32768
+
     heights = []
-    for k in range(0, len(pts), 100):
-        chunk = pts[k:k + 100]
-        q = urllib.parse.urlencode({
-            "latitude": ",".join(f"{p[0]:.6f}" for p in chunk),
-            "longitude": ",".join(f"{p[1]:.6f}" for p in chunk),
-        })
-        print(f"DEM {k // 100 + 1}/{math.ceil(len(pts) / 100)}")
-        body = fetch(f"https://api.open-meteo.com/v1/elevation?{q}", f"dem_{DEM_STEP:g}_{k}.json",
-                     pause=11)  # Open-Meteo: 600 координат в минуту
-        heights += json.loads(body)["elevation"]
-    return {"x0": xmin, "z0": zmin, "step": DEM_STEP, "nx": nx, "nz": nz, "h": [round(h, 1) for h in heights]}
+    for j in range(nz):
+        for i in range(nx):
+            lat, lon = unproject(xmin + i * DEM_STEP, zmin + j * DEM_STEP)
+            gx = (lon + 180) / 360 * n * 256 - 0.5
+            gy = (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n * 256 - 0.5
+            fx, fy = math.floor(gx), math.floor(gy)
+            u, v = gx - fx, gy - fy
+            h = (px_height(fx, fy) * (1 - u) * (1 - v) + px_height(fx + 1, fy) * u * (1 - v)
+                 + px_height(fx, fy + 1) * (1 - u) * v + px_height(fx + 1, fy + 1) * u * v)
+            heights.append(round(h, 1))
+    return {"x0": xmin, "z0": zmin, "step": DEM_STEP, "nx": nx, "nz": nz, "h": heights}
 
 
 def main():
@@ -708,7 +736,7 @@ def main():
     city = build_city()
     city["dem"] = download_dem(city["bounds"])
     city["origin"] = [LAT0, LON0]
-    city["attribution"] = "© OpenStreetMap contributors (ODbL); рельеф: Copernicus DEM via Open-Meteo"
+    city["attribution"] = "© OpenStreetMap contributors (ODbL); рельеф: Terrain Tiles (Mapzen / AWS, SRTM)"
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(city, f, ensure_ascii=False, separators=(",", ":"))

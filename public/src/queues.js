@@ -5,6 +5,7 @@ import { MODELS, vehicleParts } from './vehicles.js';
 
 const SLOT = 5.6;             // м между машинами в очереди
 const CARS = 26;              // машин в очереди
+const ACTIVE = 1000;          // м: очереди дальше не рисуем и не двигаем
 const MINOR = new Set(['service', 'living_street']);
 const MOVE_TIME = 2.2;        // с: подтягивание на одно место
 const KINDS = ['oda', 'oda', 'm412', 'kombi', 'kabluk', 'odavan', 'vesta', 'm412'];
@@ -23,6 +24,7 @@ export class Queues {
     for (const st of fuel.stations) {
       if (!st.pumps?.length || !st.entry) continue;
       const path = this.#path(st);
+      if (!path) continue;
       const len = pathLength(path);
       const n = Math.min(CARS, Math.floor(len / SLOT));
       const cars = [];
@@ -31,7 +33,7 @@ export class Queues {
     }
 
     // InstancedMesh-тройки на модель, ёмкость — на все очереди сразу.
-    const total = this.queues.reduce((a, q) => a + q.cars.length, 0);
+    const total = Math.min(this.queues.length, 8) * CARS; // одновременно рядом — не больше 8 заправок
     const lit = new THREE.MeshLambertMaterial({ vertexColors: true });
     const glow = new THREE.MeshBasicMaterial({ vertexColors: true });
     this.kinds = {};
@@ -69,13 +71,14 @@ export class Queues {
     const p0 = [pump.x + pump.vx * 3.2, pump.z + pump.vz * 3.2];
     // Ближайшая улица к территории АЗС.
     let best = null;
-    for (const s of w.segments) {
+    for (const s of w.segmentsNear(st.cx, st.cz, Math.max(st.len, st.wid) / 2 + 120)) {
       if (MINOR.has(s.road.k)) continue;
       for (const [x, z] of st.p) {
         const c = w.constructor.closest(s, x, z);
         if (!best || c.d < best.d) best = { ...c, s, x, z };
       }
     }
+    if (!best) return null; // рядом нет улицы — без очереди
     const { s: seg, x: ex, z: ez } = best, road = seg.road;
     const nodes = road.n.map((i) => w.nodes[i]);
     let i = nodes.findIndex((p, k) => k > 0 && nodes[k - 1][0] === seg.ax && nodes[k - 1][1] === seg.az && p[0] === seg.bx && p[1] === seg.bz);
@@ -111,7 +114,10 @@ export class Queues {
   }
 
   update(dt, car) {
-    for (const q of this.queues) {
+    // Рисуем и двигаем только очереди рядом с игроком (в городе десятки заправок).
+    const dist = (q) => Math.hypot(q.path[1][0] - car.pos.x, q.path[1][1] - car.pos.y);
+    this.active = this.queues.filter((q) => dist(q) < ACTIVE).sort((a, b) => dist(a) - dist(b)).slice(0, 8);
+    for (const q of this.active) {
       // Подошла очередь: голова уезжает, все подтягиваются, хвост пополняется.
       q.timer -= dt;
       if (q.timer <= 0 && q.shift === 0) {
@@ -135,7 +141,7 @@ export class Queues {
 
   #collidePlayer(car) {
     const f = car.forward;
-    for (const q of this.queues) {
+    for (const q of this.active) {
       if (Math.hypot(q.path[1][0] - car.pos.x, q.path[1][1] - car.pos.y) > q.len + 30) continue;
       q.cars.forEach((_, i) => {
         const v = this.#pose(q, i);
@@ -166,7 +172,7 @@ export class Queues {
   #sync() {
     const used = {};
     const w = this.world, c = new THREE.Color();
-    for (const q of this.queues) {
+    for (const q of this.active) {
       q.cars.forEach((cv, i) => {
         const v = this.#pose(q, i);
         const meshes = this.kinds[cv.kind];

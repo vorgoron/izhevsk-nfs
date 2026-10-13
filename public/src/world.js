@@ -10,6 +10,7 @@ export const MARKED_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondar
 const LIFT = { motorway: 0.40, trunk: 0.40, primary: 0.38, secondary: 0.35, tertiary: 0.32, service: 0.24 };
 export const roadLift = (k) => LIFT[k.replace('_link', '')] ?? 0.28;
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
+export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
 
 export class World {
   constructor(city) {
@@ -22,28 +23,100 @@ export class World {
     this.#initMeshGrid();
     this.#initRoadIndex();
     this.#initBuildingIndex();
-    this.#initWaterMask();
+    this.#initChunks();
+  }
+
+  // ---------------------------------------------------------------- квадраты подгрузки
+
+  // Город делится на квадраты по сетке рельефа; для каждого — что в нём рисовать.
+  // Дома и деревья — по центру, дороги для мешей — отрезками по середине (runs), участки,
+  // тропинки и дороги для подложки и миникарты — всем квадратам, которых касается рамка.
+  #initChunks() {
+    const { nx, nz, dx, dz, xmin, zmin } = this.mesh;
+    const C = CHUNK_CELLS;
+    this.chunk = { nci: Math.ceil(nx / C), ncj: Math.ceil(nz / C), sx: dx * C, sz: dz * C, xmin, zmin };
+    this.chunkData = new Map();
+    const at = (ci, cj) => {
+      const k = ci * 10000 + cj;
+      let d = this.chunkData.get(k);
+      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], lines: [], runs: [], buildings: [], trees: [], water: null }));
+      return d;
+    };
+    const cell = (x, z) => [Math.floor((x - xmin) / this.chunk.sx), Math.floor((z - zmin) / this.chunk.sz)];
+    const overlap = (pts, pad, fn) => {
+      let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+      for (const [x, z] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      const [a, b] = cell(x0 - pad, z0 - pad), [c, d] = cell(x1 + pad, z1 + pad);
+      for (let i = Math.max(0, a); i <= Math.min(this.chunk.nci - 1, c); i++) {
+        for (let j = Math.max(0, b); j <= Math.min(this.chunk.ncj - 1, d); j++) fn(at(i, j));
+      }
+    };
+    const c = this.city;
+    for (const a of c.areas) overlap(a.p, 0, (d) => d.areas.push(a));
+    for (const p of c.paths) overlap(p, 2, (d) => d.paths.push(p));
+    for (const r of c.rails) overlap(r.p, 2, (d) => d.rails.push(r));
+    for (const b of c.buildings) {
+      let sx = 0, sz = 0;
+      for (const [x, z] of b.p) { sx += x; sz += z; }
+      at(...cell(sx / b.p.length, sz / b.p.length)).buildings.push(b);
+    }
+    for (const t of c.trees) at(...cell(t[0], t[1])).trees.push(t);
+    for (const r of this.roads) {
+      const pts = r.n.map((i) => this.nodes[i]);
+      overlap(pts, r.w, (d) => d.lines.push(r));
+      // Отрезки подряд в одном квадрате — один кусок ленты.
+      let run = null;
+      for (let i = 1; i < pts.length; i++) {
+        const [ci, cj] = cell((pts[i - 1][0] + pts[i][0]) / 2, (pts[i - 1][1] + pts[i][1]) / 2);
+        if (run && run.ci === ci && run.cj === cj) { run.to = i; continue; }
+        run = { road: r, from: i - 1, to: i, ci, cj };
+        at(ci, cj).runs.push(run);
+      }
+    }
+  }
+
+  chunkAt(x, z) {
+    const { xmin, zmin, sx, sz } = this.chunk;
+    return [Math.floor((x - xmin) / sx), Math.floor((z - zmin) / sz)];
+  }
+
+  chunkInfo(ci, cj) {
+    const C = CHUNK_CELLS, { nx, nz, dx, dz, xmin, zmin } = this.mesh;
+    const i0 = ci * C, j0 = cj * C, i1 = Math.min(nx, i0 + C), j1 = Math.min(nz, j0 + C);
+    const empty = { areas: [], paths: [], rails: [], lines: [], runs: [], buildings: [], trees: [] };
+    return { ci, cj, i0, j0, i1, j1, x0: xmin + i0 * dx, z0: zmin + j0 * dz, x1: xmin + i1 * dx, z1: zmin + j1 * dz,
+      data: this.chunkData.get(ci * 10000 + cj) || empty };
   }
 
   // ---------------------------------------------------------------- вода
 
-  // Растр 2 м: вода из OSM минус коридоры дорог (мост и плотина — не вода, там не тонем).
-  #initWaterMask() {
-    const [xmin, zmin, xmax, zmax] = this.bounds;
-    const S = 0.5; // пикселей на метр (клетка 2 м)
-    const w = Math.ceil((xmax - xmin) * S), h = Math.ceil((zmax - zmin) * S);
+  // Вода: растр 2 м на квадрат, строится при первом обращении. Вода из OSM минус коридоры
+  // дорог (мост и плотина — не вода, там не тонем).
+  isWater(x, z) {
+    const [ci, cj] = this.chunkAt(x, z);
+    if (ci < 0 || cj < 0 || ci >= this.chunk.nci || cj >= this.chunk.ncj) return false;
+    const info = this.chunkInfo(ci, cj), d = info.data;
+    if (!d.areas.some((a) => a.k === 'water')) return false;
+    if (!d.water) d.water = this.#waterMask(info);
+    const S = 0.5, i = Math.floor((x - info.x0) * S), j = Math.floor((z - info.z0) * S);
+    return d.water.mask[j * d.water.w + i] === 1;
+  }
+
+  #waterMask(info) {
+    const S = 0.5; // пикселей на метр
+    const w = Math.ceil((info.x1 - info.x0) * S) + 1, h = Math.ceil((info.z1 - info.z0) * S) + 1;
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
     const g = c.getContext('2d', { willReadFrequently: true });
-    const tx = (x) => (x - xmin) * S, tz = (z) => (z - zmin) * S;
+    const tx = (x) => (x - info.x0) * S, tz = (z) => (z - info.z0) * S;
     const ring = (pts) => {
       g.moveTo(tx(pts[0][0]), tz(pts[0][1]));
       for (let i = 1; i < pts.length; i++) g.lineTo(tx(pts[i][0]), tz(pts[i][1]));
       g.closePath();
     };
     g.fillStyle = '#fff';
-    for (const a of this.city.areas) {
+    for (const a of info.data.areas) {
       if (a.k !== 'water') continue;
       g.beginPath();
       ring(a.p);
@@ -52,22 +125,18 @@ export class World {
     }
     g.strokeStyle = '#000';
     g.lineCap = g.lineJoin = 'round';
-    for (const r of this.roads) {
+    for (const r of info.data.lines) {
       g.beginPath();
       r.n.forEach((i, k) => g[k ? 'lineTo' : 'moveTo'](tx(this.nodes[i][0]), tz(this.nodes[i][1])));
       g.lineWidth = (r.w + 1) * S;
       g.stroke();
     }
     const px = g.getImageData(0, 0, w, h).data;
-    this.water = { mask: new Uint8Array(w * h), w, h, S, xmin, zmin };
-    for (let i = 0; i < w * h; i++) this.water.mask[i] = px[i * 4] > 127 ? 1 : 0;
+    const mask = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) mask[i] = px[i * 4] > 127 ? 1 : 0;
+    return { mask, w };
   }
 
-  isWater(x, z) {
-    const { mask, w, h, S, xmin, zmin } = this.water;
-    const i = Math.floor((x - xmin) * S), j = Math.floor((z - zmin) * S);
-    return i >= 0 && j >= 0 && i < w && j < h && mask[j * w + i] === 1;
-  }
 
   // ---------------------------------------------------------------- рельеф
 
@@ -196,6 +265,17 @@ export class World {
 
   nearbyRoadSegments(x, z) {
     return this.roadGrid.get(Math.floor(x / this.roadCell) * 100003 + Math.floor(z / this.roadCell)) || [];
+  }
+
+  // Отрезки дорог в радиусе r (по сетке индекса, без перебора всего города).
+  segmentsNear(x, z, r) {
+    const c = this.roadCell, out = new Set();
+    for (let i = Math.floor((x - r) / c); i <= Math.floor((x + r) / c); i++) {
+      for (let j = Math.floor((z - r) / c); j <= Math.floor((z + r) / c); j++) {
+        for (const s of this.roadGrid.get(i * 100003 + j) || []) out.add(s);
+      }
+    }
+    return out;
   }
 
   // Высота поверхности, по которой едет машина: рельеф, на дороге — её полотно (оно чуть

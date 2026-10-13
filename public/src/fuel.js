@@ -59,15 +59,18 @@ export class Fuel {
     const screenGeo = new THREE.BoxGeometry(0.57, 0.3, 0.5).translate(0, 1.45, 0);
     const pillarGeo = new THREE.BoxGeometry(0.4, 1, 0.4).translate(0, 0.5, 0);
     const group = new THREE.Group();
+    let sg = null; // группа текущей заправки: дальние скрываем (update)
     const add = (geo, mat, x, z, y, rot, sy = 1) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
       m.rotation.y = rot;
       m.scale.y = sy;
       m.castShadow = m.receiveShadow = true;
-      group.add(m);
+      sg.add(m);
     };
     for (const st of this.stations) {
+      sg = st.group = new THREE.Group();
+      group.add(sg);
       const accent = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL((st.name.length * 0.13) % 1, 0.5, 0.42) });
       // Колонки под навесом из OSM (или по центру территории): островки вдоль длинной оси навеса.
       const roof = st.roofs?.[0] ? axes(st.roofs[0]) : { ...st, len: Math.min(st.len * 0.5, 24), wid: 10 };
@@ -105,7 +108,7 @@ export class Fuel {
         sign.position.set(sx, sy, sz);
         sign.rotation.y = Math.atan2(dx, dz);
         sign.castShadow = true;
-        group.add(sign);
+        sg.add(sign);
         w.addCollider(rect(sx, sz, -dz / L, dx / L, 0.8, 0.3));
         st.sign = [sx, sz];
         st.entry = { x: best.x, z: best.z, road: best.r }; // въезд: вершина контура у дороги
@@ -157,6 +160,7 @@ export class Fuel {
 
   // Стоим на территории АЗС — бак наполняется.
   update(dt, car) {
+    for (const s of this.stations) s.group.visible = Math.hypot(s.cx - car.pos.x, s.cz - car.pos.y) < 1500;
     const st = Math.abs(car.speed) < STOP_SPEED && car.sink === 0 ? this.inside(car.pos.x, car.pos.y) : null;
     car.refueling = !!st && car.fuel < 1;
     if (car.refueling) car.fuel = Math.min(1, car.fuel + REFUEL_RATE * dt);

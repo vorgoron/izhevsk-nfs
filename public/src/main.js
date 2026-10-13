@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { World } from './world.js';
-import { buildTerrain, buildRoads, buildBuildings, buildTrees, buildMinimapCanvas } from './build.js';
+import { MINIMAP_SCALE } from './build.js';
+import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
 import { MODELS, buildPlayerModel } from './vehicles.js';
 import { Garage, loadChoice } from './garage.js';
@@ -51,17 +52,12 @@ async function main() {
   const world = new World(city);
   planFootbridges(world); // насыпи у мостов меняют рельеф — до постройки мешей
   world.buildGraph();
-  const terrain = buildTerrain(world, renderer);
-  scene.add(terrain.mesh);
-  scene.add(buildRoads(world, renderer));
-  status('Строю дома…');
-  await frame();
-  scene.add(buildBuildings(world, renderer));
-  scene.add(...buildTrees(world));
-  scene.add(buildFootbridges(world, terrain.mesh.material));
+  // Город строится квадратами вокруг игрока (chunks.js); на телефоне — ближе и проще.
+  const chunks = new ChunkManager(world, scene, renderer, isTouch ? { radius: 1300, texSize: 512 } : { radius: 1800, texSize: 1024 });
+  scene.add(buildFootbridges(world, new THREE.MeshLambertMaterial({ color: '#9a968e' })));
   const landmarks = buildLandmarks(world);
   scene.add(landmarks.group);
-  const minimap = buildMinimapCanvas(world);
+  const minimap = new MinimapTiles(world);
 
   // Своя машина: выбор из гаража (localStorage), по умолчанию — «Ода».
   const choice = loadChoice();
@@ -88,6 +84,9 @@ async function main() {
   };
   respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0);
   race.start(car.pos.x, car.pos.y);
+  status('Строю город вокруг…');
+  await frame();
+  chunks.preload(car.pos.x, car.pos.y, 900);
   const skyDome = new Sky(scene, world.baseTerrain(0, 0));
   const fuel = new Fuel(world, scene);
   const queues = new Queues(world, fuel, scene);
@@ -102,7 +101,7 @@ async function main() {
     },
   });
   if (!choice.saved) garage.open();
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues, chunks }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -214,7 +213,7 @@ async function main() {
   const mg = mm.getContext('2d');
   function drawMinimap() {
     const size = mm.width;
-    const { canvas: src, scale } = minimap;
+    const scale = MINIMAP_SCALE;
     const [xmin, zmin] = world.bounds;
     const zoom = mm.classList.contains('big') ? 0.35 : 1.1;
     const cx = (car.pos.x - xmin) * scale, cz = (car.pos.y - zmin) * scale;
@@ -225,7 +224,7 @@ async function main() {
     mg.rotate(car.heading + Math.PI); // курс машины — вверх
     mg.scale(zoom, zoom);
     mg.translate(-cx, -cz);
-    mg.drawImage(src, 0, 0);
+    minimap.draw(mg, car.pos.x, car.pos.y, (size / 2 / zoom / scale) * 1.42, scale);
     for (const m of landmarks.markers) {
       mg.beginPath();
       mg.arc((m.x - xmin) * scale, (m.z - zmin) * scale, 4 / zoom, 0, 7);
@@ -336,6 +335,7 @@ async function main() {
       car.update(STEP, inp);
       acc -= STEP;
     }
+    chunks.update(car.pos.x, car.pos.y, isTouch ? 1 : 2);
     if (car.drowned) {
       // Утонул — всё сначала: та же гонка с отсчётом, полное нитро, трафик заново.
       car.nitro = 1;

@@ -12,6 +12,7 @@ const SPEED = {
 const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, odavan: 4, vesta: 13 };
 const BUSES = 6;
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
+const GRID = 100; // м: клетка сетки рёбер
 const BUS_PALETTE = ['#f2c230', '#e8e8e8', '#3d8f4f', '#d9442f'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
 
@@ -108,6 +109,7 @@ export class Traffic {
     const w = this.world;
     this.out = new Map();
     this.edges = [];
+    this.grid = new Map();
     const add = (a, b, road) => {
       const [ax, az] = w.nodes[a], [bx, bz] = w.nodes[b];
       const len = Math.hypot(bx - ax, bz - az);
@@ -117,6 +119,9 @@ export class Traffic {
         off: road.ow ? 0 : Math.min(road.w / 4, 3.4), v: SPEED[road.k], w: road.w, road,
       };
       this.edges.push(e);
+      // Сетка рёбер для появления машин рядом с игроком (город большой — случайное ребро далеко).
+      const key = Math.floor((ax + bx) / 2 / GRID) * 100003 + Math.floor((az + bz) / 2 / GRID);
+      (this.grid.get(key) || this.grid.set(key, []).get(key)).push(e);
       if (!this.out.has(a)) this.out.set(a, []);
       this.out.get(a).push(e);
     };
@@ -143,7 +148,11 @@ export class Traffic {
 
   #spawn(v, px, pz, minD) {
     for (let tries = 0; tries < 300; tries++) {
-      const e = this.edges[(Math.random() * this.edges.length) | 0];
+      // Случайная точка в кольце вокруг игрока → случайное ребро из её клетки.
+      const a = Math.random() * Math.PI * 2, r = minD + Math.random() * (SPAWN_MAX - minD);
+      const cell = this.grid.get(Math.floor((px + Math.cos(a) * r) / GRID) * 100003 + Math.floor((pz + Math.sin(a) * r) / GRID));
+      if (!cell) continue;
+      const e = cell[(Math.random() * cell.length) | 0];
       const s = Math.random() * e.len;
       const x = e.ax + e.dx * s - e.dz * e.off, z = e.az + e.dz * s + e.dx * e.off;
       const d = Math.hypot(x - px, z - pz);

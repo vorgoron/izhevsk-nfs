@@ -96,9 +96,15 @@ export function planFootbridges(world) {
     }
     return { fb, o, smp, overRoad: road > -Infinity, flat: Math.max(ground + 0.4, road + CLEARANCE), group: null };
   });
+  // Габариты — быстрая отсечка: мостов в городе много, точное сравнение только для соседних.
+  for (const it of items) {
+    const xs = it.smp.map((p) => p[0]), zs = it.smp.map((p) => p[1]);
+    it.bb = [Math.min(...xs) - 4, Math.min(...zs) - 4, Math.max(...xs) + 4, Math.max(...zs) + 4];
+  }
+  const touch = (a, b) => a.bb[0] < b.bb[2] && b.bb[0] < a.bb[2] && a.bb[1] < b.bb[3] && b.bb[1] < a.bb[3];
   for (const a of items) {
     for (const b of items) {
-      if (a === b || a.group === b.group && a.group) continue;
+      if (a === b || a.group === b.group && a.group || !touch(a, b)) continue;
       const near = a.smp.some(([x, z]) => b.fb.a ? pointIn(x, z, b.o.poly) : b.smp.some(([u, v]) => Math.hypot(u - x, v - z) < 3));
       if (!near) continue;
       const g = a.group || b.group || { flat: -Infinity, items: [] };
