@@ -11,6 +11,7 @@ const DRIFT_GRIP = 1.4;
 const STEER_RATE = 2.3;   // рад/с на средней скорости
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
+const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
 
 export function buildCarModel() {
   const car = new THREE.Group();
@@ -67,11 +68,17 @@ export class Car {
     this.roll = 0;
     this.wheelSpin = 0;
     this.impact = 0;
+    this.sink = 0;          // сколько секунд в воде
+    this.drowned = false;
+    this.dry = new THREE.Vector2(); // последняя точка на суше
   }
 
   place(x, z, heading) {
     this.pos.set(x, z);
     this.vel.set(0, 0);
+    this.sink = 0;
+    this.drowned = false;
+    this.pitch = 0;
     this.heading = heading;
     this.y = this.world.ground(x, z);
   }
@@ -81,6 +88,15 @@ export class Car {
   get speed() { return this.vel.dot(this.forward); }
 
   update(dt, input) {
+    // В воде: мотор заглох, руль не слушается, машина тонет. drowned — пора начинать сначала.
+    const wet = this.sink > 0 || this.world.isWater(this.pos.x, this.pos.y);
+    if (wet) {
+      this.sink += dt;
+      this.drowned = this.sink > SINK_TIME;
+      input = {};
+    } else {
+      this.dry.set(this.pos.x, this.pos.y);
+    }
     const f = this.forward, r = this.right;
     let vf = this.vel.dot(f), vr = this.vel.dot(r);
 
@@ -109,9 +125,8 @@ export class Car {
     vr *= Math.exp(-(input.brake ? DRIFT_GRIP : GRIP) * dt);
     const f2 = this.forward, r2 = this.right;
     this.vel.set(f2.x * vf + r2.x * vr, f2.y * vf + r2.y * vr);
-    const px = this.pos.x, pz = this.pos.y;
+    if (wet) this.vel.multiplyScalar(Math.exp(-2.4 * dt)); // вода держит
     this.pos.addScaledVector(this.vel, dt);
-    this.#keepOutOfWater(px, pz);
 
     this.#collide();
 
@@ -129,33 +144,14 @@ export class Car {
     const lean = this.steer * Math.min(1, Math.abs(vf) / 30) * 0.05;
     this.roll += (Math.atan2(hl - hr, 1.8) - lean - this.roll) * k;
 
+    if (this.sink > 0) {
+      // Уходит под воду носом вниз.
+      this.y = ground - Math.min(3.2, this.sink * this.sink * 0.55);
+      this.pitch = Math.min(0.45, this.sink * 0.22);
+    }
+
     this.impact = Math.max(0, this.impact - dt * 2);
     this.#syncModel(dt, vf);
-  }
-
-  // Вода — как стена: по берегу скользим, поперёк — отскок.
-  #inWater() {
-    const f = this.forward, reach = AXLE + RADIUS;
-    const { x, y } = this.pos;
-    return this.world.isWater(x, y) || this.world.isWater(x + f.x * reach, y + f.y * reach)
-      || this.world.isWater(x - f.x * reach, y - f.y * reach);
-  }
-
-  #keepOutOfWater(px, pz) {
-    if (!this.#inWater()) return;
-    const nx = this.pos.x, nz = this.pos.y;
-    let hit;
-    this.pos.set(nx, pz);
-    if (!this.#inWater()) hit = 'z';
-    else {
-      this.pos.set(px, nz);
-      if (!this.#inWater()) hit = 'x';
-      else { this.pos.set(px, pz); hit = 'xz'; }
-    }
-    const v = Math.abs(hit === 'z' ? this.vel.y : hit === 'x' ? this.vel.x : this.vel.length());
-    if (hit !== 'x') this.vel.y *= -0.3;
-    if (hit !== 'z') this.vel.x *= -0.3;
-    this.impact = Math.max(this.impact, Math.min(1, v / 25));
   }
 
   #collide() {

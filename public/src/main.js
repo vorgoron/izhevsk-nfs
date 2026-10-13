@@ -230,7 +230,10 @@ async function main() {
     }
     $('landmark').textContent = near ? near.name : '';
     const banner = $('banner');
-    if (race.state === 'countdown') {
+    if (car.sink > 0.4) {
+      banner.innerHTML = 'УТОНУЛ!<small>всё сначала</small>';
+      banner.classList.add('show');
+    } else if (race.state === 'countdown') {
       banner.textContent = Math.ceil(race.countdown);
       banner.classList.add('show');
     } else if (race.state === 'running') {
@@ -261,6 +264,13 @@ async function main() {
     while (acc >= STEP) {
       car.update(STEP, inp);
       acc -= STEP;
+    }
+    if (car.drowned) {
+      // Утонул — всё сначала: та же гонка с отсчётом, полное нитро, трафик заново.
+      car.nitro = 1;
+      if (race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
+      else respawnAt(car.dry.x, car.dry.y);
+      traffic.reset(car.pos.x, car.pos.y);
     }
     race.update(dt, car);
     signals.update(dt);

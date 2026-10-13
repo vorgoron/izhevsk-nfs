@@ -73,6 +73,17 @@ export class Race {
     return true;
   }
 
+  // Тот же маршрут заново: отсчёт со старта.
+  restart() {
+    if (!this.route.length) return false;
+    this.state = 'countdown';
+    this.countdown = 3;
+    this.time = 0;
+    this.next = 0;
+    this.#updateGateLook();
+    return true;
+  }
+
   #total() {
     let l = 0;
     for (let i = 1; i < this.route.length; i++) {

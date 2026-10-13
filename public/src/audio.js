@@ -119,6 +119,22 @@ export class Sound {
     o.stop(t + 0.35);
   }
 
+  #splash() {
+    const ctx = this.ctx, t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(2500, t);
+    f.frequency.exponentialRampToValueAtTime(250, t + 1.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.9, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.3);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t, Math.random());
+    src.stop(t + 1.4);
+  }
+
   update(dt, car, input, race) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime;
@@ -149,6 +165,11 @@ export class Sound {
     set(this.wind.g.gain, Math.min(0.25, (kmh / 200) ** 2 * 0.25), 0.2);
     const nitroOn = input.nitro && car.nitro > 0 && car.speed > 5;
     set(this.nitroV.g.gain, nitroOn ? 0.18 : 0, nitroOn ? 0.05 : 0.15);
+
+    // ---- вода: плюх при въезде, потом бульканье
+    if (car.sink > 0 && !this.prev.sink) this.#splash();
+    if (car.sink > 0.3 && Math.random() < dt * 9) this.#tone(180 + Math.random() * 260, t, 0.08, 'sine', 0.12);
+    this.prev.sink = car.sink;
 
     // ---- удар о стену: impact подскакивает в момент столкновения
     if (car.impact > this.prev.impact + 0.05) this.#thump(Math.min(1, 0.3 + car.impact));
