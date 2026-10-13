@@ -550,32 +550,112 @@ def cut_passages(buildings, roads, road_nodes):
 
 # ---------------------------------------------------------------- трамваи
 
-def tram_routes():
+TRACK_HALF = 1.6   # м: половина междупутья (оси путей ~3.2 м)
+
+
+def align_tram_tracks():
+    """Два прохода: второй уточняет по уже выровненным соседям."""
+    out = None
+    for _ in range(2):
+        out = _align_pass(out)
+    print(f"tram tracks aligned: {len(out)} ways")
+    return out
+
+
+def _align_pass(prev):
+    """Пути двухпутной линии в OSM нарисованы независимо и местами сходятся/расходятся.
+    Каждую точку пути (через ≤8 м) ставим на ±1.6 м от середины между ним и соседним
+    параллельным путём (2–7 м), затем сглаживаем. Где соседа нет (развилки, одиночный
+    путь, перекрёстки) — как в OSM. Возвращает {way id: [(x, z)]}."""
+    lines = {}
+    for wid, (nds, tags) in ways.items():
+        if tags.get("railway") != "tram" or tags.get("service") or tags.get("tunnel") not in (None, "no"):
+            continue
+        if prev is not None:
+            if wid in prev:
+                lines[wid] = prev[wid]
+            continue
+        p = [project(*nodes[n]) for n in nds if n in nodes]
+        if len(p) < 2:
+            continue
+        r = [p[0]]
+        for a, b in zip(p, p[1:]):
+            k = max(1, math.ceil(math.dist(a, b) / 8))
+            r += [(a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k) for j in range(1, k + 1)]
+        lines[wid] = r
+    cell = 20.0
+    grid = {}
+    for wid, p in lines.items():
+        for i in range(1, len(p)):
+            a, b = p[i - 1], p[i]
+            for gx in range(int(min(a[0], b[0]) // cell) - 1, int(max(a[0], b[0]) // cell) + 2):
+                for gz in range(int(min(a[1], b[1]) // cell) - 1, int(max(a[1], b[1]) // cell) + 2):
+                    grid.setdefault((gx, gz), []).append((wid, a, b))
+    out = {}
+    for wid, p in lines.items():
+        q = []
+        fixed = []
+        for i, P in enumerate(p):
+            a, b = p[max(0, i - 1)], p[min(len(p) - 1, i + 1)]
+            L = math.dist(a, b) or 1
+            dx, dz = (b[0] - a[0]) / L, (b[1] - a[1]) / L
+            best = None
+            for w2, c, d in grid.get((int(P[0] // cell), int(P[1] // cell)), ()):
+                if w2 == wid:
+                    continue
+                ex, ez = d[0] - c[0], d[1] - c[1]
+                l2 = ex * ex + ez * ez or 1
+                if abs(ex * dx + ez * dz) / math.sqrt(l2) < 0.94:
+                    continue
+                t = max(0, min(1, ((P[0] - c[0]) * ex + (P[1] - c[1]) * ez) / l2))
+                Q = (c[0] + ex * t, c[1] + ez * t)
+                D = math.dist(P, Q)
+                if 1.5 < D < 9 and (best is None or D < best[0]):
+                    best = (D, Q)
+            if best:
+                Q = best[1]
+                mx, mz = (P[0] + Q[0]) / 2, (P[1] + Q[1]) / 2
+                side = 1 if (P[0] - Q[0]) * -dz + (P[1] - Q[1]) * dx > 0 else -1
+                q.append((mx - dz * TRACK_HALF * side, mz + dx * TRACK_HALF * side))
+                fixed.append(True)
+            else:
+                q.append(P)
+                fixed.append(False)
+        # Сглаживание (концы на месте — стыки с соседними кусками).
+        for _ in range(3):
+            q = [q[0]] + [((q[i - 1][0] + 2 * q[i][0] + q[i + 1][0]) / 4, (q[i - 1][1] + 2 * q[i][1] + q[i + 1][1]) / 4)
+                          if (fixed[i - 1] or fixed[i] or fixed[i + 1]) else q[i] for i in range(1, len(q) - 1)] + [q[-1]]
+        out[wid] = [(round(x, 2), round(z, 2)) for x, z in q]
+    return out
+
+def tram_routes(aligned):
     """Маршруты трамваев (route=tram): ломаная по путям в порядке участников отношения,
     остановки (роль stop*) — расстоянием вдоль ломаной."""
     out = []
     for rid, (members, tags) in relations.items():
         if tags.get("route") != "tram" or tags.get("type") != "route":
             continue
-        chain = []
+        chain, pts = [], []
         for t, ref, role in members:
             if t != "way" or ref not in ways or role not in ("", "forward", "backward"):
                 continue
             nds = [n for n in ways[ref][0] if n in nodes]
             if len(nds) < 2:
                 continue
+            geo = list(aligned.get(ref) or [project(*nodes[n]) for n in nds])
             if chain:
-                # Развернуть кусок, чтобы он продолжал предыдущий (первый тоже, если надо).
+                # Развернуть кусок, чтобы он продолжал предыдущий.
                 if nds[-1] == chain[-1] or (nds[0] != chain[-1] and math.dist(project(*nodes[nds[-1]]), project(*nodes[chain[-1]]))
                                              < math.dist(project(*nodes[nds[0]]), project(*nodes[chain[-1]]))):
                     nds = nds[::-1]
+                    geo = geo[::-1]
                 if nds[0] == chain[-1]:
                     nds = nds[1:]
+                    geo = geo[1:]
             chain += nds
-        if len(chain) < 2:
+            pts += geo
+        if len(pts) < 2:
             continue
-        # Первый кусок мог быть развёрнут не так: если конец первого не стыкуется со вторым — переворот.
-        pts = [project(*nodes[n]) for n in chain]
         acc = [0.0]
         for i in range(1, len(pts)):
             acc.append(acc[-1] + math.dist(pts[i - 1], pts[i]))
@@ -846,7 +926,7 @@ def build_city():
         if tags.get("railway") in ("rail", "tram", "light_rail") and tags.get("tunnel") is None:
             pts = [project(*nodes[n]) for n in nds]
             if inside(pts):
-                rails.append({"p": pts, "k": tags["railway"]})
+                rails.append({"p": pts, "k": tags["railway"], "_w": wid})
             continue
         if nds[0] != nds[-1]:
             continue
@@ -909,6 +989,11 @@ def build_city():
     classify_bridges(roads, road_nodes, waterways, rails)
     mark_village_houses(buildings)
     buildings = cut_passages(buildings, roads, road_nodes)
+    aligned = align_tram_tracks()
+    for r in rails:
+        w = r.pop("_w", None)
+        if w in aligned:
+            r["p"] = aligned[w]
     # Навесы над колонками: здания-крыши (mh — высота низа) внутри территории АЗС.
     for st in fuel:
         roofs = [b for b in buildings if b.get("mh") and point_in(*b["p"][0], st["p"])]
@@ -934,7 +1019,7 @@ def build_city():
         "footbridges": footbridges,
         "waterways": waterways,
         "fuel": fuel,
-        "trams": tram_routes(),
+        "trams": tram_routes(aligned),
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()
