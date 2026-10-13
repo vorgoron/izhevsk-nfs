@@ -14,6 +14,7 @@ const M = {
   silver: lambert('#9fb0be'),
   concrete: lambert('#e4e1da'),
   dark: lambert('#2b2b2b'),
+  blue: new THREE.MeshPhongMaterial({ color: '#3f78b5', specular: '#cfe3ff', shininess: 60 }),
   gold: new THREE.MeshPhongMaterial({ color: '#d2a53a', specular: '#fff1b8', shininess: 90, emissive: '#2a1d00' }),
 };
 
@@ -46,9 +47,9 @@ function dome(r, mat, x, y0, z, squash = 1) {
 }
 
 const ONION = [[0, 0], [0.62, 0], [0.86, 0.1], [1, 0.28], [0.98, 0.42], [0.82, 0.58], [0.52, 0.74], [0.24, 0.87], [0.1, 0.96], [0.05, 1.08]];
-function onion(r, h, x, y0, z, withCross = true) {
+function onion(r, h, x, y0, z, withCross = true, mat = M.gold) {
   const g = new THREE.Group();
-  g.add(mesh(new THREE.LatheGeometry(ONION.map(([a, b]) => new THREE.Vector2(a * r, b * h)), 20), M.gold));
+  g.add(mesh(new THREE.LatheGeometry(ONION.map(([a, b]) => new THREE.Vector2(a * r, b * h)), 20), mat));
   if (withCross) g.add(cross(h * 0.5, 0, h * 1.05, 0));
   g.position.set(x, y0, z);
   return g;
@@ -243,6 +244,64 @@ function nevsky({ L, W }) {
   g.add(dome(t * 0.3, M.gold, tx, 30.7, 0, 0.8));
   g.add(cone(t * 0.08, 14, M.gold, tx, 32.5, 0, 8));
   g.add(cross(2.6, tx, 46, 0));
+  return g;
+}
+
+// Свято-Троицкий собор (Советская / Удмуртская): белый пятиглавый храм — четверик с портиками,
+// большой барабан с золотой главой, четыре малые синие главы, трапезная и ярусная колокольня.
+function troitsky({ L, W }) {
+  const g = new THREE.Group();
+  const s = Math.min(W * 0.95, L * 0.5);
+  const cx = L * 0.14;
+  g.add(box(s, 18, s, M.white, cx, -3, 0));
+  g.add(pilasters(s, s, 18, cx, -3, 0));
+  g.add(windowBand(3, s, s, 5, cx, 0));
+  const turned = windowBand(3, s, s, 5, 0, 0);
+  turned.rotation.y = Math.PI / 2;
+  turned.position.x = cx;
+  g.add(turned);
+  g.add(box(s + 0.8, 0.8, s + 0.8, M.cream, cx, 15, 0)); // карниз
+  g.add(box(s + 0.2, 1.2, s + 0.2, M.silver, cx, 15.8, 0));
+  // Портики с севера и юга.
+  for (const side of [-1, 1]) {
+    const z = side * (s / 2 + 2);
+    g.add(portico(4, cx - s * 0.2, cx + s * 0.2, z, 'x', 9, 0.4, 0));
+    g.add(box(s * 0.5, 1, 4.4, M.white, cx, 9, side * (s / 2 + 1.5)));
+    g.add(pediment(s * 0.5, 2.4, 4.4, cx, 10, side * (s / 2 + 1.5)));
+  }
+  // Апсида на востоке.
+  g.add(mesh(new THREE.CylinderGeometry(s * 0.3, s * 0.3, 12, 20, 1, false, 0, Math.PI), M.white, cx + s / 2, 3, 0));
+  g.add(dome(s * 0.3, M.silver, cx + s / 2, 9, 0, 0.5));
+  // Центральный барабан и большая золотая глава.
+  const dr = s * 0.22;
+  g.add(cyl(dr, 8, M.white, cx, 16.5, 0, 16));
+  g.add(windowBand(4, dr * 1.4, dr * 1.4, 19, cx, 0));
+  g.add(cyl(dr + 0.4, 0.6, M.cream, cx, 24.3, 0, 16));
+  g.add(onion(dr * 1.05, dr * 2.2, cx, 24.8, 0));
+  // Малые главы по углам — синие.
+  for (const [dx, dz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+    const x = cx + dx * s * 0.33, z = dz * s * 0.33;
+    g.add(cyl(dr * 0.45, 4, M.white, x, 16.5, z, 12));
+    g.add(onion(dr * 0.5, dr * 1.1, x, 20.5, z, true, M.blue));
+  }
+  // Трапезная и колокольня на западе.
+  const t = Math.min(9, W * 0.45);
+  const tx = -L / 2 + t / 2;
+  const refStart = tx + t / 2, refEnd = cx - s / 2;
+  if (refEnd > refStart) {
+    g.add(box(refEnd - refStart, 11, W * 0.6, M.white, (refStart + refEnd) / 2, -3, 0));
+    g.add(box(refEnd - refStart + 0.4, 1, W * 0.6 + 0.4, M.silver, (refStart + refEnd) / 2, 8, 0));
+  }
+  g.add(box(t, 22, t, M.white, tx, -3, 0));
+  g.add(pilasters(t, t, 22, tx, -3, 0));
+  g.add(box(t + 0.6, 0.7, t + 0.6, M.cream, tx, 19, 0));
+  g.add(box(t * 0.75, 7, t * 0.75, M.white, tx, 19.7, 0));
+  g.add(colonnade(8, t * 0.38, 6, 0.22, M.cream, tx, 20.2, 0)); // ярус звона
+  g.add(box(t * 0.8, 0.6, t * 0.8, M.cream, tx, 26.7, 0));
+  g.add(cyl(t * 0.25, 4, M.white, tx, 27.3, 0, 12));
+  g.add(onion(t * 0.24, t * 0.5, tx, 31.3, 0, false, M.blue));
+  g.add(cone(t * 0.06, 9, M.gold, tx, 31.3 + t * 0.5, 0, 8));
+  g.add(cross(2.4, tx, 40.5 + t * 0.5, 0));
   return g;
 }
 
@@ -507,9 +566,11 @@ export function buildLandmarks(world) {
     const p = lm.p;
     switch (lm.key) {
       case 'mikhailovsky':
-      case 'nevsky': {
+      case 'nevsky':
+      case 'troitsky': {
         const f = fit(p, 0); // храмы ориентированы алтарём на восток
-        obj = place(lm.key === 'nevsky' ? nevsky(f) : mikhailovsky(f), f.cx, baseY(world, p), f.cz, 0);
+        const model = { nevsky, mikhailovsky, troitsky }[lm.key];
+        obj = place(model(f), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
       case 'friendship': {

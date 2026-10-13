@@ -199,7 +199,7 @@ DEFAULT_LEVELS = {
     "commercial": 3, "retail": 2, "office": 5, "industrial": 3, "warehouse": 2,
     "garage": 1, "garages": 1, "shed": 1, "roof": 1, "kiosk": 1, "service": 1,
     "stadium": 4, "grandstand": 3, "sports_hall": 3,
-    "church": 4, "cathedral": 8, "school": 3, "kindergarten": 2, "university": 5,
+    "church": 2, "chapel": 1.5, "cathedral": 6, "school": 3, "kindergarten": 2, "university": 5,
     "hospital": 5, "public": 4, "civic": 4, "hotel": 8, "train_station": 3,
 }
 
@@ -216,6 +216,7 @@ def parse_num(s):
 LANDMARKS = {
     "mikhailovsky": ("way", 28988606, "Свято-Михайловский собор", "replace"),
     "nevsky": ("way", 151492280, "Александро-Невский собор", "replace"),
+    "troitsky": ("way", 453556944, "Свято-Троицкий собор", "replace"),
     "friendship": ("way", 442350429, "Монумент «Навеки с Россией»", "replace"),
     "rotunda": ("way", 446870127, "Ротонда", "replace"),
     "mosque": ("way", 146942052, "Центральная мечеть", "replace"),
@@ -302,8 +303,10 @@ def building_style(tags, wid):
     if b in ("stadium", "grandstand"):
         return 5
     mat = tags.get("building:material", "")
-    if b in ("church", "cathedral", "chapel") or tags.get("amenity") == "place_of_worship":
+    if tags.get("amenity") == "place_of_worship" and tags.get("religion", "christian") == "christian":
         return 4
+    if b in ("church", "cathedral", "chapel"):
+        return 2  # постройки при храме без отметки «храм» — обычный оштукатуренный дом
     if b in ("industrial", "warehouse", "garage", "garages", "shed", "service", "roof"):
         return 3
     if mat == "brick":
@@ -371,6 +374,9 @@ def building_entry(pts, tags, eid, lm, holes=()):
         **({"mh": mh} if mh else {}),
         **({"name": osm_name(tags)} if osm_name(tags) else {}),
         **({"lm": lm} if lm else {}),
+        # Православный/христианский храм без своей модели — в браузере главка на крыше.
+        **({"pw": 1} if not lm and tags.get("amenity") == "place_of_worship"
+           and tags.get("religion", "christian") == "christian" else {}),
         "_raised": is_raised(tags),
         "_auto_h": not (tags.get("height") or tags.get("building:levels")),  # высота выдумана, не из тегов
     }

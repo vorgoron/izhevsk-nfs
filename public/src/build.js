@@ -243,11 +243,30 @@ function windowTexture(renderer) {
   return t;
 }
 
+const ONION = [[0, 0], [0.62, 0], [0.86, 0.1], [1, 0.28], [0.98, 0.42], [0.82, 0.58], [0.52, 0.74], [0.24, 0.87], [0.1, 0.96], [0.05, 1.08]];
+
 export function buildingMaterials(renderer) {
   return {
     walls: new THREE.MeshLambertMaterial({ vertexColors: true, map: windowTexture(renderer) }),
     roofs: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    // Главки храмов: барабан, луковица, крест (единичного размера, масштаб — в матрице).
+    drumGeo: new THREE.CylinderGeometry(0.5, 0.5, 1.6, 12).translate(0, 0.8, 0),
+    onionGeo: new THREE.LatheGeometry(ONION.map(([a, b]) => new THREE.Vector2(a * 0.62, b * 1.3)), 16).translate(0, 1.6, 0),
+    crossGeo: new THREE.BoxGeometry(0.06, 0.9, 0.06).translate(0, 3.4, 0),
+    drum: new THREE.MeshLambertMaterial({ color: '#f2eee4' }),
+    gold: new THREE.MeshPhongMaterial({ color: '#d2a53a', specular: '#fff1b8', shininess: 90, emissive: '#2a1d00' }),
   };
+}
+
+function domeMeshes(domes, mats) {
+  const out = [[mats.drumGeo, mats.drum], [mats.onionGeo, mats.gold], [mats.crossGeo, mats.gold]].map(([g, m]) => new THREE.InstancedMesh(g, m, domes.length));
+  const m = new THREE.Matrix4();
+  domes.forEach(([x, z, top, s], i) => {
+    m.makeScale(s, s, s).setPosition(x, top, z);
+    for (const im of out) im.setMatrixAt(i, m);
+  });
+  for (const im of out) { im.castShadow = true; im.computeBoundingSphere(); }
+  return out;
 }
 
 // Куски одного дома, разрезанного аркой (общий g): индекс по g, чтобы уровень крыши был общим.
@@ -256,6 +275,7 @@ let pieceIndex = null;
 export function buildBuildingChunk(world, list, mats) {
   const wp = [], wn = [], wc = [], wuv = [];
   const rp = [], rc = [];
+  const domes = []; // [x, z, крыша, размер]
   const col = new THREE.Color();
   if (!pieceIndex) {
     pieceIndex = new Map();
@@ -340,6 +360,13 @@ export function buildBuildingChunk(world, list, mats) {
     }
     }
 
+    // Храм без своей модели: главка на барабане над серединой крыши.
+    if (b.pw) {
+      let ax = 0, az = 0;
+      for (const [x, z] of pts) { ax += x; az += z; }
+      domes.push([ax / pts.length, az / pts.length, top, Math.min(3.5, Math.max(1.2, Math.sqrt(Math.abs(area) / 2) * 0.14))]);
+    }
+
     const contour = pts.map(([x, z]) => new THREE.Vector2(x, z));
     const tris = THREE.ShapeUtils.triangulateShape(contour, holes.map((h) => h.map(([x, z]) => new THREE.Vector2(x, z))));
     pts = [...pts, ...holes.flat()]; // индексы треугольников — по контуру и дырам подряд
@@ -382,6 +409,7 @@ export function buildBuildingChunk(world, list, mats) {
     m.receiveShadow = true;
     group.add(m);
   }
+  if (domes.length) group.add(...domeMeshes(domes, mats));
   return group;
 }
 
