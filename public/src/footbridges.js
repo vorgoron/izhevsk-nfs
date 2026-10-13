@@ -19,6 +19,18 @@ function roadBelow(world, x, z, pad = 1) {
   return y;
 }
 
+// Высота полотна автомобильного моста под точкой (или null): тротуары вдоль моста идут по нему.
+function bridgeDeckAt(world, x, z, pad) {
+  let best = null;
+  for (const s of world.segmentsNear(x, z, 20)) {
+    if (s.ya === undefined) continue;
+    const c = World.closest(s, x, z);
+    if (c.d > s.w / 2 + pad) continue;
+    if (!best || c.d < best.d) best = { d: c.d, y: s.ya + (s.yb - s.ya) * c.t };
+  }
+  return best ? best.y : null;
+}
+
 function pointIn(x, z, p) {
   let ins = false;
   for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
@@ -94,7 +106,10 @@ export function planFootbridges(world) {
       ground = Math.max(ground, world.terrain(x, z));
       road = Math.max(road, roadBelow(world, x, z));
     }
-    return { fb, o, smp, overRoad: road > -Infinity, flat: Math.max(ground + 0.4, road + CLEARANCE), group: null };
+    // Тротуар автомобильного моста (в OSM — отдельный пешеходный мост рядом): идёт по полотну
+    // моста, а не висит на 5.5 м над ним.
+    const along = !fb.a && smp.filter(([x, z]) => bridgeDeckAt(world, x, z, fb.w / 2 + 3) !== null).length >= smp.length * 0.6;
+    return { fb, o, smp, along, overRoad: !along && road > -Infinity, flat: Math.max(ground + 0.4, road + CLEARANCE), group: null };
   });
   // Габариты — быстрая отсечка: мостов в городе много, точное сравнение только для соседних.
   for (const it of items) {
@@ -104,7 +119,7 @@ export function planFootbridges(world) {
   const touch = (a, b) => a.bb[0] < b.bb[2] && b.bb[0] < a.bb[2] && a.bb[1] < b.bb[3] && b.bb[1] < a.bb[3];
   for (const a of items) {
     for (const b of items) {
-      if (a === b || a.group === b.group && a.group || !touch(a, b)) continue;
+      if (a === b || a.group === b.group && a.group || a.along || b.along || !touch(a, b)) continue;
       const near = a.smp.some(([x, z]) => b.fb.a ? pointIn(x, z, b.o.poly) : b.smp.some(([u, v]) => Math.hypot(u - x, v - z) < 3));
       if (!near) continue;
       const g = a.group || b.group || { flat: -Infinity, items: [] };
@@ -164,6 +179,7 @@ export function buildFootbridges(world, terrainMaterial) {
 
   // Дорожка-мост через овраг/воду без дорог: настил по прямой между берегами.
   const topAt = (it, x, z) => {
+    if (it.along) return (bridgeDeckAt(world, x, z, 15) ?? it.flat) + 0.25;
     // Дорожка поверх моста-площади — чуть ниже её настила, чтобы поверхности не мерцали.
     if (it.group && !it.fb.a && it.group.items.some((q) => q.fb.a)) return it.flat - 0.05;
     if (it.group || it.overRoad || it.fb.a) return it.flat;
@@ -219,7 +235,7 @@ export function buildFootbridges(world, terrainMaterial) {
       for (let d = 2; d < len - 1; d += 4.5) {
         const x = x1 + ((x2 - x1) * d) / len + ix * 1.0, z = z1 + ((z2 - z1) * d) / len + iz * 1.0;
         const top = ys[i] + ((ys[j] - ys[i]) * d) / len - SLAB, g = world.terrain(x, z);
-        if (top - g < 2.2 || roadBelow(world, x, z, 1.2) > -Infinity) continue;
+        if (it.along || top - g < 2.2 || roadBelow(world, x, z, 1.2) > -Infinity) continue; // у тротуара опоры — мостовые
         columns.push([x, z, g, top]);
       }
       for (let d = 6; it.fb.a && d < len - 3; d += 18) {

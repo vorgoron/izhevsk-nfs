@@ -1,6 +1,6 @@
 // Построение мешей города из World.
 import * as THREE from 'three';
-import { MARKED_CLASSES } from './world.js';
+import { MARKED_CLASSES, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
 
 const AREA_COLORS = {
@@ -53,6 +53,7 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
     g.strokeStyle = color;
     g.stroke();
   };
+  for (const w of data.waterways) stroke(w.p, w.w, AREA_COLORS.water); // речки и ручьи
   for (const p of data.paths) stroke(p, 2.2, '#a7a196');
   for (const r of data.rails) stroke(r.p, r.k === 'tram' ? 2 : 3.2, '#4d4038');
   // Асфальт под дорожными мешами закрывает щели на перекрёстках.
@@ -131,12 +132,20 @@ export function roadMaterials(renderer) {
     side: THREE.DoubleSide,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
-  return { marked: mat(true), plain: mat(false) };
+  return {
+    marked: mat(true), plain: mat(false),
+    // Мосты: плита, парапеты, опоры.
+    concrete: new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }),
+    pillarGeo: new THREE.BoxGeometry(1.3, 1, 1.3).translate(0, 0.5, 0),
+  };
 }
+
+const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
 
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
 export function buildRoadChunk(world, runs, mats) {
   const buckets = { marked: { p: [], uv: [], idx: [] }, plain: { p: [], uv: [], idx: [] } };
+  const bp = [], pillars = []; // мостовые плиты и парапеты (треугольники), опоры [x, z, низ, верх]
 
   for (const { road, from, to } of runs) {
     const b = buckets[MARKED_CLASSES.has(road.k.replace('_link', '')) ? 'marked' : 'plain'];
@@ -160,6 +169,7 @@ export function buildRoadChunk(world, runs, mats) {
     const half = road.w / 2;
     const base = b.p.length / 3;
     // Продольная координата текстуры — от начала дороги, чтобы разметка не сбивалась на стыке квадратов.
+    let bridgeEdge = null; // нормаль полотна в предыдущей точке (для бортов моста)
     let v = 0;
     for (let i = 1; i <= from; i++) {
       const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
@@ -187,6 +197,25 @@ export function buildRoadChunk(world, runs, mats) {
       const yr = ys[i] ?? world.terrain(x - nx, z - nz) + road.lift;
       b.p.push(x + nx, yl, z + nz, x - nx, yr, z - nz);
       b.uv.push(0, v / 12, 1, v / 12);
+      // Мост: борта (фасция + парапет) по краям и плита снизу; опоры до земли через ~20 м.
+      if (ys[i] != null && i > 0) {
+        const [px, pz] = pts[i - 1], pl = bridgeEdge, y0 = ys[i - 1], y1 = ys[i];
+        const o = 1 + 0.25 / half; // борт чуть снаружи полотна
+        for (const sgn of [1, -1]) {
+          const ax = px + sgn * pl.nx * o, az = pz + sgn * pl.nz * o, bx = x + sgn * nx * o, bz = z + sgn * nz * o;
+          quad(bp, [ax, y0 - DECK, az], [bx, y1 - DECK, bz], [bx, y1 + PARAPET, bz], [ax, y0 + PARAPET, az]);
+        }
+        quad(bp, [px + pl.nx * o, y0 - DECK, pz + pl.nz * o], [x + nx * o, y1 - DECK, z + nz * o],
+          [x - nx * o, y1 - DECK, z - nz * o], [px - pl.nx * o, y0 - DECK, pz - pl.nz * o]);
+        if (Math.floor(v / PILLAR_STEP) !== Math.floor((v - Math.hypot(x - px, z - pz)) / PILLAR_STEP)) {
+          for (const off of road.w > 12 ? [-0.5, 0.5] : [0]) {
+            const qx = x + nx * off, qz = z + nz * off, g = world.terrain(qx, qz);
+            const onRoad = world.nearbyRoadSegments(qx, qz).some((q) => q.ya === undefined && World.closest(q, qx, qz).d < q.w / 2 + 1);
+            if (y1 - DECK - g > 2.5 && !onRoad) pillars.push([qx, qz, g - 0.5, y1 - DECK]); // не на дорогу под мостом
+          }
+        }
+      }
+      bridgeEdge = { nx, nz };
       if (i > 0) {
         const a = base + (i - 1) * 2;
         b.idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -206,7 +235,35 @@ export function buildRoadChunk(world, runs, mats) {
     mesh.receiveShadow = true;
     group.add(mesh);
   }
+  if (bp.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mats.concrete);
+    m.castShadow = m.receiveShadow = true;
+    group.add(m);
+  }
+  if (pillars.length) {
+    const im = new THREE.InstancedMesh(mats.pillarGeo, mats.concrete, pillars.length);
+    const mt = new THREE.Matrix4();
+    pillars.forEach(([x, z, y0, y1], i) => im.setMatrixAt(i, mt.makeScale(1, y1 - y0, 1).setPosition(x, y0, z)));
+    im.castShadow = true;
+    im.computeBoundingSphere();
+    group.add(im);
+    // Опоры твёрдые; квадрат строится заново при подгрузке — добавляем коллайдер один раз.
+    world.pillarSet ??= new Set();
+    for (const [x, z] of pillars) {
+      const key = `${Math.round(x)},${Math.round(z)}`;
+      if (world.pillarSet.has(key)) continue;
+      world.pillarSet.add(key);
+      world.addCollider([[x - 0.7, z - 0.7], [x + 0.7, z - 0.7], [x + 0.7, z + 0.7], [x - 0.7, z + 0.7]]);
+    }
+  }
   return group;
+}
+
+function quad(arr, a, b, c, d) {
+  arr.push(...a, ...b, ...c, ...a, ...c, ...d);
 }
 
 // ---------------------------------------------------------------- здания
@@ -559,6 +616,14 @@ export function drawMinimapTile(world, info) {
     for (const [x, z] of a.p) g.lineTo(tx(x), tz(z));
     g.fillStyle = a.k === 'water' ? '#24465c' : '#25331f';
     g.fill();
+  }
+  g.lineCap = g.lineJoin = 'round';
+  g.strokeStyle = '#24465c';
+  for (const w of data.waterways) {
+    g.beginPath();
+    w.p.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)));
+    g.lineWidth = Math.max(1, w.w * S);
+    g.stroke();
   }
   g.fillStyle = '#34373a';
   for (let di = -1; di <= 1; di++) {

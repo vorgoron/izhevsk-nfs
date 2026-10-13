@@ -546,6 +546,73 @@ def cut_passages(buildings, roads, road_nodes):
     return out
 
 
+# ---------------------------------------------------------------- мосты
+
+WATERWAY_W = {"river": 12, "canal": 6, "stream": 3, "ditch": 1.5, "drain": 1.5}
+
+
+def seg_cross(a, b, c, d):
+    """Точка пересечения отрезков ab и cd или None."""
+    r = (b[0] - a[0], b[1] - a[1])
+    q = (d[0] - c[0], d[1] - c[1])
+    den = r[0] * q[1] - r[1] * q[0]
+    if abs(den) < 1e-9:
+        return None
+    t = ((c[0] - a[0]) * q[1] - (c[1] - a[1]) * q[0]) / den
+    u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den
+    if 0 <= t <= 1 and 0 <= u <= 1:
+        return (a[0] + r[0] * t, a[1] + r[1] * t)
+    return None
+
+
+def classify_bridges(roads, road_nodes, waterways, rails):
+    """Что пересекает автомобильный мост: водоток (в браузере — овраг под мостом) или дорогу/рельсы
+    (нижняя дорога уходит в выемку). cx: [[x, z, "w"|"o"]]."""
+    cell = 100.0
+    grid = {}
+
+    def put(kind, ref, pts):
+        for i in range(1, len(pts)):
+            a, b = pts[i - 1], pts[i]
+            for gx in range(int(min(a[0], b[0]) // cell), int(max(a[0], b[0]) // cell) + 1):
+                for gz in range(int(min(a[1], b[1]) // cell), int(max(a[1], b[1]) // cell) + 1):
+                    grid.setdefault((gx, gz), []).append((kind, ref, a, b))
+
+    for w in waterways:
+        put("w", w, w["p"])
+    for r in rails:
+        put("o", r, r["p"])
+    for r in roads:
+        if not r["br"] and not r["tu"] and r["k"] in DRIVE:
+            put("o", r, [road_nodes[n] for n in r["n"]])
+    nb = 0
+    for r in roads:
+        if not r["br"] or r["tu"]:
+            continue
+        pts = [road_nodes[n] for n in r["n"]]
+        own = set(r["n"])
+        found = []
+        for i in range(1, len(pts)):
+            a, b = pts[i - 1], pts[i]
+            seen = set()
+            for gx in range(int(min(a[0], b[0]) // cell), int(max(a[0], b[0]) // cell) + 1):
+                for gz in range(int(min(a[1], b[1]) // cell), int(max(a[1], b[1]) // cell) + 1):
+                    for kind, ref, c, d in grid.get((gx, gz), ()):
+                        if ref is r or (id(ref), c, d) in seen:
+                            continue
+                        seen.add((id(ref), c, d))
+                        # Примыкание к концам моста — не пересечение.
+                        if kind == "o" and isinstance(ref, dict) and "n" in ref and set(ref["n"]) & own:
+                            continue
+                        p = seg_cross(a, b, c, d)
+                        if p and min(math.dist(p, pts[0]), math.dist(p, pts[-1])) > 4:
+                            found.append([round(p[0], 1), round(p[1], 1), kind])
+        if found:
+            r["cx"] = found
+            nb += 1
+    print(f"bridges over something: {nb} of {sum(1 for r in roads if r['br'])}")
+
+
 # ---------------------------------------------------------------- частный сектор
 
 HOUSE_TAGS = {"house", "detached", "semidetached_house", "bungalow", "cabin", "farm", "terrace"}
@@ -627,7 +694,7 @@ def build_city():
             road_nodes.append(project(*nodes[nid]))
         return road_node_index[nid]
 
-    roads, paths, rails, buildings, areas, trees, footbridges, fuel = [], [], [], [], [], [], [], []
+    roads, paths, rails, buildings, areas, trees, footbridges, fuel, waterways = [], [], [], [], [], [], [], [], []
 
     for wid, (nds, tags) in ways.items():
         nds = [n for n in nds if n in nodes]
@@ -663,6 +730,11 @@ def build_city():
                 "tu": 1 if is_tunnel(tags, pts) else 0,
                 "ow": 1 if tags.get("oneway") == "yes" else 0,
             })
+            continue
+        if tags.get("waterway") in WATERWAY_W and tags.get("tunnel") in (None, "no"):
+            pts = [project(*nodes[n]) for n in nds]
+            if inside(pts):
+                waterways.append({"p": pts, "k": tags["waterway"], "w": WATERWAY_W[tags["waterway"]]})
             continue
         if tags.get("railway") in ("rail", "tram", "light_rail") and tags.get("tunnel") is None:
             pts = [project(*nodes[n]) for n in nds]
@@ -726,6 +798,7 @@ def build_city():
             b["_raised"] = True
             if b["_auto_h"]:
                 b["h"] = 4.1
+    classify_bridges(roads, road_nodes, waterways, rails)
     mark_village_houses(buildings)
     buildings = cut_passages(buildings, roads, road_nodes)
     # Навесы над колонками: здания-крыши (mh — высота низа) внутри территории АЗС.
@@ -751,6 +824,7 @@ def build_city():
         "areas": areas,
         "trees": trees,
         "footbridges": footbridges,
+        "waterways": waterways,
         "fuel": fuel,
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.

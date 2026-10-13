@@ -29,6 +29,7 @@ export class World {
     this.patches = [];
     this.#initDem(city.dem);
     this.#initMeshGrid();
+    this.#carveUnderBridges();
     this.#initRoadIndex();
     this.#initBuildingIndex();
     this.#initChunks();
@@ -47,7 +48,7 @@ export class World {
     const at = (ci, cj) => {
       const k = ci * 10000 + cj;
       let d = this.chunkData.get(k);
-      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], lines: [], runs: [], buildings: [], trees: [], water: null }));
+      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], water: null }));
       return d;
     };
     const cell = (x, z) => [Math.floor((x - xmin) / this.chunk.sx), Math.floor((z - zmin) / this.chunk.sz)];
@@ -63,6 +64,7 @@ export class World {
     for (const a of c.areas) overlap(a.p, 0, (d) => d.areas.push(a));
     for (const p of c.paths) overlap(p, 2, (d) => d.paths.push(p));
     for (const r of c.rails) overlap(r.p, 2, (d) => d.rails.push(r));
+    for (const w of c.waterways || []) overlap(w.p, w.w, (d) => d.waterways.push(w));
     for (const b of c.buildings) {
       let sx = 0, sz = 0;
       for (const [x, z] of b.p) { sx += x; sz += z; }
@@ -91,7 +93,7 @@ export class World {
   chunkInfo(ci, cj) {
     const C = CHUNK_CELLS, { nx, nz, dx, dz, xmin, zmin } = this.mesh;
     const i0 = ci * C, j0 = cj * C, i1 = Math.min(nx, i0 + C), j1 = Math.min(nz, j0 + C);
-    const empty = { areas: [], paths: [], rails: [], lines: [], runs: [], buildings: [], trees: [] };
+    const empty = { areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [] };
     return { ci, cj, i0, j0, i1, j1, x0: xmin + i0 * dx, z0: zmin + j0 * dz, x1: xmin + i1 * dx, z1: zmin + j1 * dz,
       data: this.chunkData.get(ci * 10000 + cj) || empty };
   }
@@ -189,6 +191,66 @@ export class World {
       for (let i = 0; i <= nx; i++) h[j * (nx + 1) + i] = this.baseTerrain(xmin + (i * W) / nx, zmin + (j * H) / nz);
     }
     this.mesh = { xmin, zmin, W, H, nx, nz, dx: W / nx, dz: H / nz, h };
+  }
+
+  // Под мостами — то, что они пересекают (сетка рельефа 30 м и сглаживание овраги съедают):
+  // над водотоком — овраг вдоль русла, над дорогой/рельсами — нижняя дорога уходит в выемку.
+  // Правится сетка меша, так что рельеф, дороги, дома и машины видят одно и то же.
+  #carveUnderBridges() {
+    const c = this.city, { h, nx, nz, dx, dz, xmin, zmin } = this.mesh;
+    const depth = new Float32Array(h.length);
+    const lines = [
+      ...(c.waterways || []).map((w) => ({ k: 'w', p: w.p, w: w.w })),
+      ...c.rails.map((r) => ({ k: 'o', p: r.p, w: 4 })),
+      ...c.roads.filter((r) => !r.br && !r.tu && ROAD_CLASSES.has(r.k)).map((r) => ({ k: 'o', p: r.n.map((i) => c.roadNodes[i]), w: r.w })),
+    ];
+    const segDist = (x, z, a, b) => World.closest({ ax: a[0], az: a[1], bx: b[0], bz: b[1] }, x, z);
+    for (const r of c.roads) {
+      if (!r.br || !r.cx) continue;
+      const pts = r.n.map((i) => c.roadNodes[i]);
+      let L = 0;
+      for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      for (const [cx, cz, k] of r.cx) {
+        // Пересечённая линия: водоток или нижняя дорога, проходящая через точку пересечения.
+        const segs = [];
+        for (const ln of lines) {
+          if (ln.k !== k) continue;
+          for (let i = 1; i < ln.p.length; i++) {
+            if (segDist(cx, cz, ln.p[i - 1], ln.p[i]).d < 2) {
+              for (let j = 1; j < ln.p.length; j++) {
+                if (segDist(cx, cz, ln.p[j - 1], ln.p[j]).d < 450) segs.push([ln.p[j - 1], ln.p[j], ln.w]); // только рядом с пересечением
+              }
+              break;
+            }
+          }
+        }
+        if (!segs.length) continue;
+        const D = k === 'w' ? Math.min(12, Math.max(3, L * 0.15)) : 6.5;
+        const along = k === 'w' ? Math.max(60, L) : 90;
+        const halfW = (w) => (k === 'w' ? Math.max(8, L / 2 - 3) : w / 2 + 10);
+        const R = along + 40;
+        const i0 = Math.max(0, Math.floor((cx - R - xmin) / dx)), i1 = Math.min(nx, Math.ceil((cx + R - xmin) / dx));
+        const j0 = Math.max(0, Math.floor((cz - R - zmin) / dz)), j1 = Math.min(nz, Math.ceil((cz + R - zmin) / dz));
+        for (let j = j0; j <= j1; j++) {
+          for (let i = i0; i <= i1; i++) {
+            const x = xmin + i * dx, z = zmin + j * dz;
+            let best = 0;
+            for (const [a, b, w] of segs) {
+              const q = segDist(x, z, a, b), W = halfW(w);
+              if (q.d >= W) continue;
+              const s = Math.hypot(q.px - cx, q.pz - cz); // вдоль линии от пересечения
+              if (s >= along) continue;
+              const across = 1 - (q.d / W) ** 2;
+              const lengthwise = k === 'w' ? 1 - (s / along) ** 2 : Math.min(1, (along - s) / (along * 0.6)); // выемка — плавные спуски
+              best = Math.max(best, D * across * lengthwise);
+            }
+            const n = j * (nx + 1) + i;
+            depth[n] = Math.max(depth[n], best);
+          }
+        }
+      }
+    }
+    for (let n = 0; n < h.length; n++) h[n] -= depth[n];
   }
 
   // Как PlaneGeometry режет клетку: диагональ из (i, j+1) в (i+1, j).
