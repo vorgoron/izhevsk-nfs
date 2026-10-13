@@ -120,6 +120,14 @@ export class Sound {
     o.stop(t + 0.35);
   }
 
+  // Предупреждение: два нисходящих тона (критично — три и громче).
+  warn(critical) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t = this.ctx.currentTime;
+    const notes = critical ? [988, 784, 988, 784] : [880, 660];
+    notes.forEach((f, i) => this.#tone(f, t + i * 0.18, 0.16, 'square', critical ? 0.16 : 0.12));
+  }
+
   #splash() {
     const ctx = this.ctx, t = ctx.currentTime;
     const src = ctx.createBufferSource();

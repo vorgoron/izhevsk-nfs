@@ -293,6 +293,47 @@ async function main() {
     mg.fill();
   }
 
+  // ---------------------------------------------------------------- предупреждения о бензине
+
+  // 25% — плашка «мало бензина» и сигнал; 10% — «на исходе», пульсирующие края экрана,
+  // сигнал раз в 10 с. Пока мало — подсказка с расстоянием и указатель ⛽ на ободе миникарты.
+  const LOW_FUEL = 0.25, CRIT_FUEL = 0.1;
+  const fuelPtr = $('fuelptr');
+  let fuelLevel = 2, warnTimer = 0, toastTimer = 0, lastHud = performance.now();
+  const fmtDist = (d) => (d < 1000 ? `${Math.round(d / 10) * 10} м` : `${(d / 1000).toFixed(1)} км`);
+  function fuelWarnings() {
+    const now = performance.now(), dt = (now - lastHud) / 1000;
+    lastHud = now;
+    const level = car.fuel <= 0 ? 0 : car.fuel < CRIT_FUEL ? 0 : car.fuel < LOW_FUEL ? 1 : 2;
+    const nf = level < 2 && !car.refueling ? fuel.nearest(car.pos.x, car.pos.y) : null;
+    if (level < fuelLevel && car.fuel > 0) {
+      // Перешли порог вниз — плашка на 4 с и сигнал.
+      const t = $('fuelwarn');
+      t.innerHTML = `${level === 0 ? 'БЕНЗИН НА ИСХОДЕ!' : 'МАЛО БЕНЗИНА'}<small>${nf ? `⛽ ${nf.station.name} — ${fmtDist(nf.d)}` : ''}</small>`;
+      t.classList.toggle('crit', level === 0);
+      t.classList.add('show');
+      toastTimer = 4;
+      sound.warn(level === 0);
+      warnTimer = 10;
+    }
+    if (level > fuelLevel) $('fuelwarn').classList.remove('show'); // заправился
+    fuelLevel = level;
+    toastTimer -= dt;
+    if (toastTimer <= 0) $('fuelwarn').classList.remove('show');
+    if (level === 0 && car.fuel > 0 && (warnTimer -= dt) <= 0) { sound.warn(true); warnTimer = 10; }
+    document.body.classList.toggle('fuel-crit', level === 0 && car.fuel > 0 && !car.refueling);
+    $('fuelhint').textContent = nf ? `⛽ ${nf.station.name} — ${fmtDist(nf.d)}` : '';
+    $('fuelhint').classList.toggle('crit', level === 0);
+    // Указатель на ближайшую заправку по ободу миникарты (как N): угол = направление + (курс + π).
+    fuelPtr.style.display = nf && !garage.isOpen ? 'block' : 'none';
+    if (nf) {
+      const box = mm.getBoundingClientRect(), r = box.width / 2;
+      const a = Math.atan2(nf.station.cz - car.pos.y, nf.station.cx - car.pos.x) + car.heading + Math.PI;
+      fuelPtr.style.left = `${box.left + r + Math.cos(a) * r}px`;
+      fuelPtr.style.top = `${box.top + r + Math.sin(a) * r}px`;
+    }
+  }
+
   let lastStreet = '';
   function updateHud() {
     $('speed').textContent = Math.round(Math.abs(car.speed) * 3.6);
@@ -334,11 +375,10 @@ async function main() {
     } else {
       banner.classList.remove('show');
     }
-    // Бак: шкала под нитро; мало бензина — мигает и подсказывает ближайшую заправку.
+    // Бак: шкала под нитро; мало бензина — ступенчатые предупреждения (fuelWarnings).
     $('fuel-fill').style.width = `${car.fuel * 100}%`;
-    $('fuel').classList.toggle('low', car.fuel < 0.2);
-    const nf = car.fuel < 0.25 && !car.refueling ? fuel.nearest(car.pos.x, car.pos.y) : null;
-    $('fuelhint').textContent = nf ? `⛽ ${nf.station.name} — ${nf.d < 1000 ? `${Math.round(nf.d / 10) * 10} м` : `${(nf.d / 1000).toFixed(1)} км`}` : '';
+    $('fuel').classList.toggle('low', car.fuel < LOW_FUEL);
+    fuelWarnings();
     $('time').textContent = formatTime(race.time);
     $('cp').textContent = race.checkpoints.length ? `${Math.min(race.next, race.checkpoints.length)}/${race.checkpoints.length}` : '–';
     $('dist').textContent = `${(race.length / 1000).toFixed(1)} км`;
