@@ -56,7 +56,7 @@ export class ChunkManager {
       // Общие материалы и геометрии деревьев не трогаем; своё — геометрии и текстура земли.
       if (!o.isInstancedMesh) o.geometry.dispose();
       else o.dispose();
-      if (o.material.map && !Object.values(this.mats.roads).includes(o.material) && o.material !== this.mats.buildings.walls) {
+      if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls) {
         o.material.map.dispose();
         o.material.dispose();
       }

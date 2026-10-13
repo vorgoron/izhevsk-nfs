@@ -100,22 +100,44 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
 
 // ---------------------------------------------------------------- дороги
 
-function asphaltTexture(marked, renderer) {
+// Разметка дороги (поперёк u = 0…1, u = 0 — левый край по ходу ребра):
+// 'plain' — без разметки; иначе «полос слева/полос справа/односторонняя», например '2/2/0'.
+// Края — сплошные; на двусторонней — осевая (на 4+ полосах двойная сплошная, иначе прерывистая);
+// между полосами одного направления — прерывистые.
+export function roadMarking(road) {
+  if (!MARKED_CLASSES.has(road.k.replace('_link', ''))) return 'plain';
+  const total = Math.max(1, road.ln ?? Math.round((road.w - 1) / 3.3));
+  if (road.ow) return `${total}/0/1`;
+  const right = road.lf ?? Math.max(1, Math.ceil(total / 2)), left = road.lb ?? Math.max(1, total - right);
+  return `${left}/${right}/0`;
+}
+
+function asphaltTexture(key, renderer) {
+  const W = 256, H = 256;
   const c = document.createElement('canvas');
-  c.width = 128; c.height = 256;
+  c.width = W; c.height = H;
   const g = c.getContext('2d');
   g.fillStyle = '#3a3b3d';
-  g.fillRect(0, 0, 128, 256);
-  for (let i = 0; i < 2500; i++) {
+  g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 5000; i++) {
     const v = 40 + Math.random() * 40;
     g.fillStyle = `rgba(${v},${v},${v},0.5)`;
-    g.fillRect(Math.random() * 128, Math.random() * 256, 1.5, 1.5);
+    g.fillRect(Math.random() * W, Math.random() * H, 1.5, 1.5);
   }
-  if (marked) {
+  if (key !== 'plain') {
+    const [left, right, ow] = key.split('/').map(Number);
+    const n = left + right;
     g.fillStyle = '#d8d8d0';
-    g.fillRect(3, 0, 3, 256);
-    g.fillRect(122, 0, 3, 256);
-    g.fillRect(62, 0, 4, 128); // прерывистая осевая
+    const line = (u, w = 4) => g.fillRect(u * W - w / 2, 0, w, H);
+    const dash = (u, w = 4) => g.fillRect(u * W - w / 2, 0, w, H / 2);
+    line(0.02); line(0.98); // края
+    for (let i = 1; i < n; i++) {
+      const u = 0.02 + (0.96 * i) / n;
+      if (!ow && i === left) {
+        if (n >= 4) { line(u - 0.012, 3); line(u + 0.012, 3); } // двойная сплошная
+        else dash(u);
+      } else dash(u, 3);
+    }
   }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = THREE.ClampToEdgeWrapping;
@@ -127,13 +149,20 @@ function asphaltTexture(marked, renderer) {
 
 // Материалы асфальта общие на все квадраты.
 export function roadMaterials(renderer) {
-  const mat = (marked) => new THREE.MeshLambertMaterial({
-    map: asphaltTexture(marked, renderer),
-    side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-  });
+  const cache = new Map();
   return {
-    marked: mat(true), plain: mat(false),
+    // Материал асфальта под вид разметки (roadMarking), создаётся при первой надобности.
+    asphalt(key) {
+      if (!cache.has(key)) {
+        cache.set(key, new THREE.MeshLambertMaterial({
+          map: asphaltTexture(key, renderer),
+          side: THREE.DoubleSide,
+          polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+        }));
+      }
+      return cache.get(key);
+    },
+    owns: (m) => [...cache.values()].includes(m),
     // Мосты: плита, парапеты, опоры.
     concrete: new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }),
     pillarGeo: new THREE.BoxGeometry(1.3, 1, 1.3).translate(0, 0.5, 0),
@@ -144,11 +173,12 @@ const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
 
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
 export function buildRoadChunk(world, runs, mats) {
-  const buckets = { marked: { p: [], uv: [], idx: [] }, plain: { p: [], uv: [], idx: [] } };
+  const buckets = {};
   const bp = [], pillars = []; // мостовые плиты и парапеты (треугольники), опоры [x, z, низ, верх]
 
   for (const { road, from, to } of runs) {
-    const b = buckets[MARKED_CLASSES.has(road.k.replace('_link', '')) ? 'marked' : 'plain'];
+    const mk = roadMarking(road);
+    const b = (buckets[mk] ??= { p: [], uv: [], idx: [] });
     // Ресемплинг до 5 м, чтобы полотно повторяло рельеф.
     const src = road.n.slice(from, to + 1).map((i) => world.nodes[i]);
     const ysrc = road.y?.slice(from, to + 1);
@@ -231,7 +261,7 @@ export function buildRoadChunk(world, runs, mats) {
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
     geo.setIndex(b.idx);
     geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, mats[name]);
+    const mesh = new THREE.Mesh(geo, mats.asphalt(name));
     mesh.receiveShadow = true;
     group.add(mesh);
   }
