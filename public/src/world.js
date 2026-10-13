@@ -63,7 +63,7 @@ export class World {
     const c = this.city;
     for (const a of c.areas) overlap(a.p, 0, (d) => d.areas.push(a));
     for (const p of c.paths) overlap(p, 2, (d) => d.paths.push(p));
-    for (const r of c.rails) overlap(r.p, 2, (d) => d.rails.push(r));
+    for (const r of c.rails) overlap(r.p, 5, (d) => d.rails.push(r)); // запас: деревья не ближе 3.5 м к путям
     for (const w of c.waterways || []) overlap(w.p, w.w, (d) => d.waterways.push(w));
     for (const b of c.buildings) {
       let sx = 0, sz = 0;

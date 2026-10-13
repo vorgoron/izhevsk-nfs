@@ -635,9 +635,9 @@ function mergeGeos(geos) {
   return out;
 }
 
-const PARK_DENSITY = 1 / 110;   // деревьев на м² рамки парка/леса
+const PARK_DENSITY = 1 / 150;   // деревьев на м² рамки парка/леса
 const MAX_TREES = 1100;         // на квадрат
-const STREET_STEP = [16, 30];   // м между деревьями вдоль улицы (случайно в диапазоне)
+const STREET_STEP = [26, 44];   // м между деревьями вдоль улицы (случайно в диапазоне)
 const STREET_KINDS = new Set(['primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'living_street']);
 
 // Деревья квадрата: из OSM, случайные в парках (лиственные) и лесах (в основном ели),
@@ -648,7 +648,11 @@ export function buildTreeChunk(world, info, mats) {
   const POINT_CLEAR = { wheel: 27 }; // колесо широкое: деревья врезались бы в нижние кабинки
   const clear = (world.city.landmarks || []).map((l) => [l.x, l.z, l.p
     ? Math.max(...l.p.map(([x, z]) => Math.hypot(x - l.x, z - l.z))) + 6 : POINT_CLEAR[l.key] ?? 12]);
-  const free = (x, z) => clear.every(([cx, cz, r]) => Math.hypot(x - cx, z - cz) > r);
+  // Не на рельсах: трамвайные и железнодорожные пути квадрата ± 3.5 м от оси.
+  const railSegs = [];
+  for (const r of data.rails) for (let i = 1; i < r.p.length; i++) railSegs.push({ ax: r.p[i - 1][0], az: r.p[i - 1][1], bx: r.p[i][0], bz: r.p[i][1] });
+  const offRails = (x, z) => railSegs.every((sg) => World.closest(sg, x, z).d > 3.5);
+  const free = (x, z) => clear.every(([cx, cz, r]) => Math.hypot(x - cx, z - cz) > r) && offRails(x, z);
   const leafy = data.trees.filter(([x, z]) => free(x, z));
   const spruce = [];
   let rnd = (info.ci * 48271 + info.cj * 16807 + 12345) % 2147483647 || 1;
@@ -690,7 +694,7 @@ export function buildTreeChunk(world, info, mats) {
         const dx = (bx - ax) / L, dz = (bz - az) / L;
         for (const side of [-1, 1]) {
           for (let t = 6 + rand() * 10; t < L - 6; t += STREET_STEP[0] + rand() * (STREET_STEP[1] - STREET_STEP[0])) {
-            if (rand() < 0.2 || count() >= MAX_TREES) continue; // с пропусками
+            if (rand() < 0.3 || count() >= MAX_TREES) continue; // с пропусками
             const off = road.w / 2 + 2.5 + rand() * 1.5;
             const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
             const nr = world.nearestRoad(x, z, 4);
