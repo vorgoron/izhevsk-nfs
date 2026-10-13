@@ -728,6 +728,10 @@ def build_city():
                 "name": osm_name(tags),
                 "br": 1 if tags.get("bridge") not in (None, "no") else 0,
                 "tu": 1 if is_tunnel(tags, pts) else 0,
+                # Полосы из OSM (если размечены): всего, вперёд, назад — для трафика.
+                **({"ln": int(parse_num(tags["lanes"]))} if parse_num(tags.get("lanes")) else {}),
+                **({"lf": int(parse_num(tags["lanes:forward"]))} if parse_num(tags.get("lanes:forward")) else {}),
+                **({"lb": int(parse_num(tags["lanes:backward"]))} if parse_num(tags.get("lanes:backward")) else {}),
                 "ow": 1 if tags.get("oneway") == "yes" else 0,
             })
             continue

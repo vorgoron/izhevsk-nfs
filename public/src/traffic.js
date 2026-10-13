@@ -110,13 +110,20 @@ export class Traffic {
     this.out = new Map();
     this.edges = [];
     this.grid = new Map();
-    const add = (a, b, road) => {
+    const add = (a, b, road, forward) => {
       const [ax, az] = w.nodes[a], [bx, bz] = w.nodes[b];
       const len = Math.hypot(bx - ax, bz - az);
       if (len < 0.05) return;
+      // Полосы в своём направлении: из OSM (lanes, lanes:forward/backward) или по ширине.
+      const total = road.ln ?? Math.max(1, Math.round((road.w - 1) / 3.3));
+      const lanes = Math.max(1, road.ow ? total : (forward ? road.lf : road.lb) ?? Math.floor(total / 2));
+      const half = road.ow ? road.w / 2 : road.w / 2, span = road.ow ? road.w : road.w / 2;
+      const laneW = span / lanes;
+      // Смещение центра полосы j (0 — крайняя правая) вправо от оси дороги.
+      const laneOff = (j) => half - (Math.min(j, lanes - 1) + 0.5) * laneW;
       const e = {
         a, b, ax, az, len, dx: (bx - ax) / len, dz: (bz - az) / len,
-        off: road.ow ? 0 : Math.min(road.w / 4, 3.4), v: SPEED[road.k], w: road.w, road,
+        lanes, laneOff, off: laneOff(0), v: SPEED[road.k], w: road.w, road,
       };
       this.edges.push(e);
       // Сетка рёбер для появления машин рядом с игроком (город большой — случайное ребро далеко).
@@ -128,8 +135,8 @@ export class Traffic {
     for (const r of w.roads) {
       if (!SPEED[r.k]) continue;
       for (let i = 1; i < r.n.length; i++) {
-        add(r.n[i - 1], r.n[i], r);
-        if (!r.ow) add(r.n[i], r.n[i - 1], r);
+        add(r.n[i - 1], r.n[i], r, true);
+        if (!r.ow) add(r.n[i], r.n[i - 1], r, false);
       }
     }
   }
@@ -154,12 +161,14 @@ export class Traffic {
       if (!cell) continue;
       const e = cell[(Math.random() * cell.length) | 0];
       const s = Math.random() * e.len;
-      const x = e.ax + e.dx * s - e.dz * e.off, z = e.az + e.dz * s + e.dx * e.off;
+      const lane = v.bus ? 0 : (Math.random() * e.lanes) | 0; // автобус — в правой
+      const off = e.laneOff(lane);
+      const x = e.ax + e.dx * s - e.dz * off, z = e.az + e.dz * s + e.dx * off;
       const d = Math.hypot(x - px, z - pz);
       if (d < minD || d > SPAWN_MAX) continue;
       if (this.vehicles.some((o) => o.active && Math.hypot(o.x - x, o.z - z) < 14)) continue;
       Object.assign(v, { edge: e, next: this.#choose(e), s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz),
-        speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true });
+        lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true });
       return;
     }
     v.active = false;
@@ -234,6 +243,24 @@ export class Traffic {
     const f = car.forward;
     check(car.pos.x, car.pos.y, 4.3, false, f.x, f.y);
 
+    // Упёрлись в медленного впереди — перестроиться в соседнюю полосу, если она свободна.
+    v.laneCool = Math.max(0, v.laneCool - dt);
+    v.slowT = blockedByTraffic && limit < e.v * v.mood * 0.6 ? v.slowT + dt : 0;
+    if (v.slowT > 1.5 && v.laneCool <= 0 && e.lanes > 1) {
+      const cur = Math.min(v.lane, e.lanes - 1);
+      for (const nl of [cur + 1, cur - 1]) {
+        if (nl < 0 || nl >= e.lanes) continue;
+        const shift = e.laneOff(nl) - e.laneOff(cur); // вправо — положительно
+        const free = this.vehicles.every((o) => {
+          if (o === v || !o.active || o.dx * v.dx + o.dz * v.dz < 0.5) return true;
+          const rx = o.x - v.x, rz = o.z - v.z;
+          const ahead = rx * v.dx + rz * v.dz, lat = rx * -v.dz + rz * v.dx;
+          return Math.abs(lat - shift) > 1.8 || ahead < -9 || ahead > 14;
+        });
+        if (free) { v.lane = nl; v.laneCool = 4; v.slowT = 0; break; }
+      }
+    }
+
     // Застряли в пробке из таких же (не очередь на светофоре) — ненадолго «не замечаем» соседей, чтобы рассосалось.
     v.ghost = Math.max(0, v.ghost - dt);
     if (blockedByTraffic && v.speed < 0.3) v.stuck += dt;
@@ -254,7 +281,8 @@ export class Traffic {
 
     // Целевая точка на полосе; визуально догоняем плавно, чтобы на углах не дёргалось.
     const ce = v.edge;
-    const tx = ce.ax + ce.dx * v.s - ce.dz * ce.off, tz = ce.az + ce.dz * v.s + ce.dx * ce.off;
+    const off = ce.laneOff(v.lane ?? 0); // полоса; если на новом ребре полос меньше — крайняя доступная
+    const tx = ce.ax + ce.dx * v.s - ce.dz * off, tz = ce.az + ce.dz * v.s + ce.dx * off;
     const k = Math.min(1, dt * 6);
     v.x += (tx - v.x) * k;
     v.z += (tz - v.z) * k;

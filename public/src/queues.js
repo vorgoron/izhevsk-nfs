@@ -88,7 +88,7 @@ export class Queues {
     const right = (ex - best.px) * -dz + (ez - best.pz) * dx > 0; // АЗС справа от a→b
     // Справа от направления движения стоит очередь: при АЗС справа едут a→b, хвост тянется к a.
     const back = right ? -1 : 1;
-    const curb = seg.w / 2 - 1.1;
+    const curb = seg.w / 2 + 0.6; // на обочине, за краем полотна: крайняя правая полоса — для трафика
     const offset = ([x, z], [nx, nz]) => [x + nx * curb, z + nz * curb];
     // Нормаль к АЗС: обходим против движения, АЗС справа от движения — то есть (tz, -tx) от обхода.
     const sideN = (ax, az, bx, bz) => {
