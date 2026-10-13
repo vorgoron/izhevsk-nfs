@@ -32,6 +32,7 @@ export class World {
     this.#carveUnderBridges();
     this.#initRoadIndex();
     this.#initBuildingIndex();
+    this.#initRailIndex();
     this.#initChunks();
   }
 
@@ -350,6 +351,22 @@ export class World {
     let kind = null;
     for (const a of d.areas) if (pointInRing(x, z, a.p) && !(a.holes || []).some((h) => pointInRing(x, z, h))) kind = a.k;
     return kind === 'paved' || kind === 'industrial' || kind === 'track' ? 'paved' : 'ground';
+  }
+
+  // Трамвайные и железнодорожные пути: индекс отрезков (дороги их не перекрывают, опоры не ставятся).
+  #initRailIndex() {
+    this.railCell = 25;
+    this.railGrid = new Map();
+    for (const r of this.city.rails) {
+      for (let i = 1; i < r.p.length; i++) {
+        const [ax, az] = r.p[i - 1], [bx, bz] = r.p[i];
+        this.#insert(this.railGrid, this.railCell, { ax, az, bx, bz, k: r.k }, 6);
+      }
+    }
+  }
+
+  railsNear(x, z) {
+    return this.railGrid.get(Math.floor(x / this.railCell) * 100003 + Math.floor(z / this.railCell)) || [];
   }
 
   // Отрезки дорог в радиусе r (по сетке индекса, без перебора всего города).

@@ -236,6 +236,7 @@ export function buildFootbridges(world, terrainMaterial) {
         const x = x1 + ((x2 - x1) * d) / len + ix * 1.0, z = z1 + ((z2 - z1) * d) / len + iz * 1.0;
         const top = ys[i] + ((ys[j] - ys[i]) * d) / len - SLAB, g = world.terrain(x, z);
         if (it.along || top - g < 2.2 || roadBelow(world, x, z, 1.2) > -Infinity) continue; // у тротуара опоры — мостовые
+        if (world.railsNear(x, z).some((sg) => World.closest(sg, x, z).d < 3)) continue; // не на рельсах
         columns.push([x, z, g, top]);
       }
       for (let d = 6; it.fb.a && d < len - 3; d += 18) {

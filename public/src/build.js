@@ -55,9 +55,9 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
   };
   for (const w of data.waterways) stroke(w.p, w.w, AREA_COLORS.water); // речки и ручьи
   for (const p of data.paths) stroke(p, 2.2, '#a7a196');
-  for (const r of data.rails) stroke(r.p, r.k === 'tram' ? 2 : 3.2, '#4d4038');
-  // Асфальт под дорожными мешами закрывает щели на перекрёстках.
+  // Асфальт под дорожными мешами закрывает щели на перекрёстках; пути — поверх него.
   for (const r of data.lines) stroke(r.n.map((i) => world.nodes[i]), r.w + 0.6, '#3b3c3e');
+  for (const r of data.rails) stroke(r.p, r.k === 'tram' ? 2.4 : 3.2, '#4d4038');
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -171,6 +171,7 @@ export function roadMaterials(renderer) {
 }
 
 const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
+const ysOnBridge = (y) => y != null;
 
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
 export function buildRoadChunk(world, runs, mats) {
@@ -221,12 +222,28 @@ export function buildRoadChunk(world, runs, mats) {
         const al = Math.hypot(ax, az) || 1;
         m = Math.min(2, 1 / Math.max(0.3, (ax / al) * dx + (az / al) * dz));
       }
-      const nx = -dz * half * m, nz = dx * half * m;
+      // Полотно не заходит на трамвайные пути рядом (в OSM ось дороги часто ближе к путям, чем
+      // половина её ширины): край с той стороны отступает до 2 м от оси пути.
+      let hl = half, hr = half;
+      if (!ysOnBridge(ys[i])) {
+        const [x0, z0] = pts[i];
+        for (const sg of world.railsNear(x0, z0)) {
+          if (sg.k !== 'tram') continue;
+          const ex = sg.bx - sg.ax, ez = sg.bz - sg.az, el = Math.hypot(ex, ez) || 1;
+          if (Math.abs((ex * dx + ez * dz) / el) < 0.9) continue; // пересечение, а не вдоль
+          const c = World.closest(sg, x0, z0);
+          const lat = (c.px - x0) * -dz + (c.pz - z0) * dx; // >0 — слева (сторона +n)
+          if (Math.abs(lat) > half + 2.2) continue;
+          if (lat > 0) hl = Math.min(hl, Math.max(2.4, lat - 2));
+          else hr = Math.min(hr, Math.max(2.4, -lat - 2));
+        }
+      }
+      const nx = -dz * hl * m, nz = dx * hl * m, rnx = -dz * hr * m, rnz = dx * hr * m;
       if (i > 0) v += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       const [x, z] = pts[i];
       const yl = ys[i] ?? world.terrain(x + nx, z + nz) + road.lift;
-      const yr = ys[i] ?? world.terrain(x - nx, z - nz) + road.lift;
-      b.p.push(x + nx, yl, z + nz, x - nx, yr, z - nz);
+      const yr = ys[i] ?? world.terrain(x - rnx, z - rnz) + road.lift;
+      b.p.push(x + nx, yl, z + nz, x - rnx, yr, z - rnz);
       b.uv.push(0, v / 12, 1, v / 12);
       // Мост: борта (фасция + парапет) по краям и плита снизу; опоры до земли через ~20 м.
       if (ys[i] != null && i > 0) {
@@ -241,7 +258,8 @@ export function buildRoadChunk(world, runs, mats) {
         if (Math.floor(v / PILLAR_STEP) !== Math.floor((v - Math.hypot(x - px, z - pz)) / PILLAR_STEP)) {
           for (const off of road.w > 12 ? [-0.5, 0.5] : [0]) {
             const qx = x + nx * off, qz = z + nz * off, g = world.terrain(qx, qz);
-            const onRoad = world.nearbyRoadSegments(qx, qz).some((q) => q.ya === undefined && World.closest(q, qx, qz).d < q.w / 2 + 1);
+            const onRoad = world.nearbyRoadSegments(qx, qz).some((q) => q.ya === undefined && World.closest(q, qx, qz).d < q.w / 2 + 1)
+              || world.railsNear(qx, qz).some((q) => World.closest(q, qx, qz).d < 3);
             if (y1 - DECK - g > 2.5 && !onRoad) pillars.push([qx, qz, g - 0.5, y1 - DECK]); // не на дорогу под мостом
           }
         }
