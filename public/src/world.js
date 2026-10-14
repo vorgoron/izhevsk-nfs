@@ -261,16 +261,19 @@ export class World {
   #levelBridgeEnds() {
     const { h, nx, nz, dx, dz, xmin, zmin } = this.mesh, R = 45;
     for (const { pts, y } of this.levelEnds) {
-      for (const [ex, ez] of pts) {
+      for (const [k, [ex, ez]] of pts.entries()) {
+        // Ось моста от этого конца к другому: узлы «под мостом» (t > 1) не трогаем — там русло.
+        const [ox, oz] = pts[1 - k], L = Math.hypot(ox - ex, oz - ez) || 1, ux = (ox - ex) / L, uz = (oz - ez) / L;
         const i0 = Math.max(0, Math.floor((ex - R - xmin) / dx)), i1 = Math.min(nx, Math.ceil((ex + R - xmin) / dx));
         const j0 = Math.max(0, Math.floor((ez - R - zmin) / dz)), j1 = Math.min(nz, Math.ceil((ez + R - zmin) / dz));
         for (let j = j0; j <= j1; j++) {
           for (let i = i0; i <= i1; i++) {
             const d = Math.hypot(xmin + i * dx - ex, zmin + j * dz - ez);
             if (d >= R) continue;
+            const t = (xmin + i * dx - ex) * ux + (zmin + j * dz - ez) * uz;
+            if (t > 1) continue;
             const w = 0.5 + 0.5 * Math.cos((Math.PI * d) / R), n = j * (nx + 1) + i;
-            // Только поднимаем/опускаем берег, русло под мостом не трогаем (оно ниже настила на 2+ м).
-            if (h[n] > y - 2.5) h[n] += (y - h[n]) * w;
+            h[n] += (y - h[n]) * w;
           }
         }
       }
@@ -325,7 +328,7 @@ export class World {
         // без прорезанного оврага), подходы потом подравниваются к нему (#levelBridgeEnds).
         if (road.cx?.some((c) => c[2] === 'w')) {
           y0 = y1 = (this.baseTerrain(...pts[0]) + this.baseTerrain(...pts[pts.length - 1])) / 2;
-          this.levelEnds.push({ pts: [pts[0], pts[pts.length - 1]], y: y0 });
+          this.levelEnds.push({ pts: [pts[0], pts[pts.length - 1]], y: y0, w: road.w });
         }
         ys = acc.map((d) => y0 + (y1 - y0) * (len ? d / len : 0) + lift);
       }

@@ -176,7 +176,7 @@ const ysOnBridge = (y) => y != null;
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
 export function buildRoadChunk(world, runs, mats) {
   const buckets = {};
-  const bp = [], pillars = []; // мостовые плиты и парапеты (треугольники), опоры [x, z, низ, верх]
+  const bp = [], pillars = [], abutments = []; // плиты и парапеты (треугольники), опоры, устои
 
   for (const { road, from, to } of runs) {
     const mk = roadMarking(road);
@@ -265,6 +265,12 @@ export function buildRoadChunk(world, runs, mats) {
         }
       }
       bridgeEdge = { nx, nz };
+      // Береговой устой на концах моста: стенка от настила до земли (и ниже), перекрывает
+      // ступеньку между мостом и берегом.
+      if (ys[i] != null && ((from === 0 && i === 0) || (to === road.n.length - 1 && i === pts.length - 1))) {
+        const g = Math.min(world.terrain(x + nx, z + nz), world.terrain(x - rnx, z - rnz), world.terrain(x, z));
+        abutments.push([x, z, Math.atan2(dx, dz), road.w + 1.2, g - 3, ys[i] - 0.05]);
+      }
       if (i > 0) {
         const a = base + (i - 1) * 2;
         b.idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -291,6 +297,17 @@ export function buildRoadChunk(world, runs, mats) {
     const m = new THREE.Mesh(geo, mats.concrete);
     m.castShadow = m.receiveShadow = true;
     group.add(m);
+  }
+  if (abutments.length) {
+    const im = new THREE.InstancedMesh(mats.pillarGeo, mats.concrete, abutments.length);
+    const mt = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    abutments.forEach(([x, z, a, w, y0, y1], i) => {
+      q.setFromAxisAngle(up, a);
+      im.setMatrixAt(i, mt.compose(new THREE.Vector3(x, y0, z), q, new THREE.Vector3(w / 1.3, y1 - y0, 3 / 1.3)));
+    });
+    im.castShadow = im.receiveShadow = true;
+    im.computeBoundingSphere();
+    group.add(im);
   }
   if (pillars.length) {
     const im = new THREE.InstancedMesh(mats.pillarGeo, mats.concrete, pillars.length);
