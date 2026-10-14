@@ -18,6 +18,7 @@ const M = {
   blue: new THREE.MeshPhongMaterial({ color: '#3f78b5', specular: '#cfe3ff', shininess: 60 }),
   terra: lambert('#a9564a'),
   rose: lambert('#b98585'),
+  pink: lambert('#e3a596'),
   ochre: lambert('#efc98a'),
   domeGreen: lambert('#4f8f73'),
   yellow: lambert('#efe3b0'),
@@ -604,30 +605,60 @@ function column() {
 }
 
 // Башня главного корпуса оружейного завода: ярусы, куранты, золотой шпиль.
+// Башня Ижевского оружейного завода (по фото): над розовым корпусом с серой кровлей — круглый
+// ярус с арками между розовыми пилонами, белые карнизы и два барабана (между ними розовый
+// пологий выступ), золотой венец из военной арматуры, высокий столп, шар в клетке и игла.
 function plantTower() {
   const g = new THREE.Group();
-  const t = 9;
-  g.add(box(t, 22, t, M.cream, 0, -3, 0));
-  for (const [x, z] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) g.add(box(0.8, 22, 0.8, M.white, x * t / 2, -3, z * t / 2));
-  g.add(box(t + 0.8, 0.8, t + 0.8, M.white, 0, 19, 0));
-  // Куранты на четыре стороны.
-  const faceGeo = new THREE.CircleGeometry(1.6, 24);
-  for (let i = 0; i < 4; i++) {
-    const a = (i * Math.PI) / 2;
-    const face = mesh(faceGeo, M.white, Math.sin(a) * (t / 2 + 0.05), 15.5, Math.cos(a) * (t / 2 + 0.05));
-    face.rotation.y = a;
-    g.add(face);
-    const hand = box(0.12, 1.2, 0.05, M.dark, 0, 0, 0);
-    hand.position.set(Math.sin(a) * (t / 2 + 0.12), 15.9, Math.cos(a) * (t / 2 + 0.12));
-    hand.rotation.y = a;
-    g.add(hand);
+  const pink = M.pink, white = M.white;
+  // Корпус завода под башней.
+  g.add(box(16, 15, 14, pink, 0, -3, 0));
+  g.add(box(16.6, 0.6, 14.6, white, 0, 11.4, 0));
+  const roof = mesh(new THREE.CylinderGeometry(0.01, 10.6, 4, 4, 1).rotateY(Math.PI / 4).scale(1, 1, 0.88), M.silver, 0, 14, 0);
+  roof.position.y = 12 + 2;
+  g.add(roof);
+  const y0 = 13.5, R = 4.2;
+  // Ярус с арками: белый барабан, 8 розовых пилонов, тёмные арочные проёмы между ними.
+  g.add(cyl(R + 0.3, 0.6, white, 0, y0 - 0.6, 0, 24));
+  g.add(cyl(R, 7, white, 0, y0, 0, 24));
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2, ap = a + Math.PI / 8;
+    const pil = box(1.3, 6.2, 0.5, pink, Math.cos(a) * (R + 0.1), y0, Math.sin(a) * (R + 0.1));
+    pil.rotation.y = -a + Math.PI / 2;
+    g.add(pil);
+    const op = box(1.4, 3.6, 0.4, M.dark, Math.cos(ap) * (R + 0.05), y0 + 1.6, Math.sin(ap) * (R + 0.05));
+    op.rotation.y = -ap + Math.PI / 2;
+    g.add(op);
+    const arch = mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.4, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(Math.PI / 2), M.dark, 0, 0, 0);
+    arch.position.set(Math.cos(ap) * (R + 0.05), y0 + 5.2, Math.sin(ap) * (R + 0.05));
+    arch.rotation.y = -ap + Math.PI / 2;
+    g.add(arch);
   }
-  g.add(box(t * 0.7, 6, t * 0.7, M.cream, 0, 19.8, 0));
-  g.add(cyl(t * 0.3, 5, M.white, 0, 25.8, 0, 8));
-  g.add(colonnade(8, t * 0.33, 4.4, 0.18, M.white, 0, 25.8, 0));
-  g.add(dome(t * 0.32, M.gold, 0, 30.8, 0, 0.7));
-  g.add(cone(0.6, 15, M.gold, 0, 32.4, 0, 8));
-  g.add(mesh(new THREE.SphereGeometry(0.45, 10, 8), M.gold, 0, 47.6, 0));
+  // Карниз, первый барабан, розовый пологий выступ, второй барабан.
+  g.add(cyl(R + 0.5, 0.7, white, 0, y0 + 7, 0, 24));
+  g.add(cyl(R - 0.3, 3.4, white, 0, y0 + 7.7, 0, 24));
+  g.add(mesh(new THREE.CylinderGeometry(R - 0.5, R + 0.3, 0.7, 24), pink, 0, y0 + 11.45, 0));
+  g.add(cyl(R - 0.5, 3, white, 0, y0 + 11.8, 0, 24));
+  g.add(cyl(R - 0.3, 0.4, M.stone, 0, y0 + 14.8, 0, 24));
+  // Золотой венец: кольцо и зубцы-трофеи по кругу.
+  const yc = y0 + 15.2;
+  g.add(cyl(R - 0.4, 1.4, M.gold, 0, yc, 0, 24));
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2, h = i % 2 ? 1.4 : 2.4;
+    const sp = mesh(new THREE.ConeGeometry(0.35, h, 4), M.gold, Math.cos(a) * (R - 0.4), yc + 1.4 + h / 2, Math.sin(a) * (R - 0.4));
+    g.add(sp);
+  }
+  // Столп, капитель, шар в клетке, игла.
+  const yp = yc + 1.4;
+  g.add(mesh(new THREE.CylinderGeometry(0.85, 1.0, 10, 14), M.concrete, 0, yp + 5, 0));
+  g.add(cyl(1.35, 0.7, M.dark, 0, yp + 10, 0, 16));
+  const yb = yp + 10.7;
+  g.add(mesh(new THREE.SphereGeometry(0.6, 14, 10), M.gold, 0, yb + 0.7, 0));
+  for (const [dx, dz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) g.add(box(0.06, 1.6, 0.06, M.dark, dx * 0.9, yb, dz * 0.9));
+  for (const y of [yb + 0.05, yb + 1.55]) {
+    for (const [w, d] of [[1.86, 0.06], [0.06, 1.86]]) for (const o of [-0.9, 0.9]) g.add(box(w, 0.06, d, M.dark, w > 1 ? 0 : o, y, w > 1 ? o : 0));
+  }
+  g.add(mesh(new THREE.ConeGeometry(0.05, 5, 4), M.dark, 0, yb + 1.6 + 2.5, 0));
   return g;
 }
 
@@ -836,7 +867,7 @@ export function buildLandmarks(world) {
         break;
       case 'plant_tower':
         obj = place(plantTower(), lm.x, world.terrain(lm.x, lm.z), lm.z);
-        world.addCollider(square(lm.x, lm.z, 4.6));
+        world.addCollider(square(lm.x, lm.z, 8));
         break;
       case 'flame':
         obj = place(eternalFlame(), lm.x, world.terrain(lm.x, lm.z), lm.z);
