@@ -9,6 +9,7 @@ export const MARKED_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondar
 // Чем важнее дорога, тем выше её полотно — так она перекрывает второстепенные на перекрёстках.
 const LIFT = { motorway: 0.40, trunk: 0.40, primary: 0.38, secondary: 0.35, tertiary: 0.32, service: 0.24 };
 export const roadLift = (k) => LIFT[k.replace('_link', '')] ?? 0.28;
+const RAMP = 40; // м: подъезд к ровному мосту
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
 export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
 
@@ -32,7 +33,6 @@ export class World {
     this.#carveUnderBridges();
     this.levelEnds = [];
     this.#initRoadIndex();
-    this.#levelBridgeEnds();
     this.#initBuildingIndex();
     this.#initRailIndex();
     this.#initChunks();
@@ -314,35 +314,64 @@ export class World {
     this.roadCell = 25;
     this.roadGrid = new Map();
     this.segments = [];
+    const deckAt = new Map(); // узел конца моста через реку → высота настила (без lift)
+    // Проход 1: мосты. Высота линейно между концами, а не по рельефу (иначе ныряет в пруд/овраг).
+    for (const road of this.roads) {
+      road.lift = roadLift(road.k);
+      if (!road.br) continue;
+      const pts = road.n.map((i) => this.nodes[i]);
+      let len = 0;
+      const acc = [0];
+      for (let i = 1; i < pts.length; i++) acc.push((len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])));
+      let y0 = this.terrain(...pts[0]), y1 = this.terrain(...pts[pts.length - 1]);
+      // Мост через реку — ровный: настил на средней высоте берегов (по исходному рельефу,
+      // без прорезанного оврага); берега и подъезды подводятся к нему.
+      if (road.cx?.some((c) => c[2] === 'w')) {
+        y0 = y1 = (this.baseTerrain(...pts[0]) + this.baseTerrain(...pts[pts.length - 1])) / 2;
+        this.levelEnds.push({ pts: [pts[0], pts[pts.length - 1]], y: y0, w: road.w });
+        deckAt.set(road.n[0], y0);
+        deckAt.set(road.n[road.n.length - 1], y0);
+      }
+      road.y = acc.map((d) => y0 + (y1 - y0) * (len ? d / len : 0) + road.lift);
+    }
+    this.#levelBridgeEnds();
+    // Проход 2: подъезды к ровным мостам — дорога плавно (за RAMP м) поднимается к настилу,
+    // продолжая его, а не упирается в устой. ramp: [{ from: 0|1 (начало/конец), y }].
+    for (const road of this.roads) {
+      if (road.br) continue;
+      const ends = [[0, road.n[0]], [1, road.n[road.n.length - 1]]].filter(([, n]) => deckAt.has(n));
+      if (ends.length) road.ramp = ends.map(([from, n]) => ({ from, y: deckAt.get(n) }));
+    }
     for (const road of this.roads) {
       const pts = road.n.map((i) => this.nodes[i]);
-      const lift = roadLift(road.k);
-      // Мост: высота линейно между концами, а не по рельефу (иначе ныряет в пруд/овраг).
-      let ys;
-      if (road.br) {
-        let len = 0;
-        const acc = [0];
-        for (let i = 1; i < pts.length; i++) acc.push((len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])));
-        let y0 = this.terrain(...pts[0]), y1 = this.terrain(...pts[pts.length - 1]);
-        // Мост через реку — ровный: настил на средней высоте берегов (по исходному рельефу,
-        // без прорезанного оврага), подходы потом подравниваются к нему (#levelBridgeEnds).
-        if (road.cx?.some((c) => c[2] === 'w')) {
-          y0 = y1 = (this.baseTerrain(...pts[0]) + this.baseTerrain(...pts[pts.length - 1])) / 2;
-          this.levelEnds.push({ pts: [pts[0], pts[pts.length - 1]], y: y0, w: road.w });
-        }
-        ys = acc.map((d) => y0 + (y1 - y0) * (len ? d / len : 0) + lift);
-      }
-      road.y = ys; // undefined для обычных дорог
-      road.lift = lift;
+      let acc = 0;
+      road.len = 0;
+      for (let i = 1; i < pts.length; i++) road.len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       for (let i = 1; i < pts.length; i++) {
+        const L = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
         const seg = {
           ax: pts[i - 1][0], az: pts[i - 1][1], bx: pts[i][0], bz: pts[i][1],
-          ya: ys?.[i - 1], yb: ys?.[i], w: road.w, road,
+          ya: road.y?.[i - 1], yb: road.y?.[i], w: road.w, road, s0: acc, len: L,
         };
+        acc += L;
         this.segments.push(seg);
         this.#insert(this.roadGrid, this.roadCell, seg, seg.w / 2 + 2);
       }
     }
+  }
+
+  // Высота полотна подъезда к мосту в точке (x, z) на расстоянии s от начала дороги, или null.
+  rampAt(road, s, x, z) {
+    if (!road.ramp) return null;
+    let y = null;
+    for (const { from, y: deck } of road.ramp) {
+      const d = from === 0 ? s : road.len - s;
+      if (d >= RAMP) continue;
+      const t = this.terrain(x, z) + road.lift, w = 0.5 + 0.5 * Math.cos((Math.PI * d) / RAMP);
+      const v = t + (deck + road.lift - t) * w;
+      y = y === null ? v : Math.max(y, v);
+    }
+    return y;
   }
 
   #insert(grid, cell, s, pad) {
@@ -420,7 +449,8 @@ export class World {
     for (const s of this.nearbyRoadSegments(x, z)) {
       const c = World.closest(s, x, z);
       if (c.d > s.w / 2 + 0.3) continue;
-      y = Math.max(y, s.ya === undefined ? t + s.road.lift : s.ya + (s.yb - s.ya) * c.t);
+      const ramp = s.road.ramp ? this.rampAt(s.road, s.s0 + s.len * c.t, x, z) : null;
+      y = Math.max(y, s.ya !== undefined ? s.ya + (s.yb - s.ya) * c.t : ramp ?? t + s.road.lift);
     }
     return y;
   }

@@ -165,18 +165,18 @@ export function roadMaterials(renderer) {
     owns: (m) => [...cache.values()].includes(m),
     // Мосты: плита, парапеты, опоры.
     concrete: new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }),
+    embank: new THREE.MeshLambertMaterial({ color: '#6f7d4f', side: THREE.DoubleSide }),
     rail: new THREE.MeshPhongMaterial({ color: '#8f9399', specular: '#e8edf2', shininess: 80, side: THREE.DoubleSide }),
     pillarGeo: new THREE.BoxGeometry(1.3, 1, 1.3).translate(0, 0.5, 0),
   };
 }
 
 const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
-const ysOnBridge = (y) => y != null;
 
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
 export function buildRoadChunk(world, runs, mats) {
   const buckets = {};
-  const bp = [], pillars = [], abutments = []; // плиты и парапеты (треугольники), опоры, устои
+  const bp = [], pillars = [], abutments = [], emb = []; // плиты и парапеты (треугольники), опоры, устои
 
   for (const { road, from, to } of runs) {
     const mk = roadMarking(road);
@@ -184,6 +184,13 @@ export function buildRoadChunk(world, runs, mats) {
     // Ресемплинг до 5 м, чтобы полотно повторяло рельеф.
     const src = road.n.slice(from, to + 1).map((i) => world.nodes[i]);
     const ysrc = road.y?.slice(from, to + 1);
+    // Расстояние от начала дороги до узла from + k (для подъездов к мостам).
+    const sAcc = [0];
+    for (let k = 1; k < road.n.length; k++) {
+      const [ax, az] = world.nodes[road.n[k - 1]], [bx, bz] = world.nodes[road.n[k]];
+      sAcc.push(sAcc[k - 1] + Math.hypot(bx - ax, bz - az));
+    }
+    const sOf = (k) => sAcc[from + k];
     const pts = [], ys = [];
     for (let i = 0; i < src.length; i++) {
       if (i > 0) {
@@ -192,16 +199,18 @@ export function buildRoadChunk(world, runs, mats) {
         for (let k = 1; k < n; k++) {
           const t = k / n;
           pts.push([ax + (bx - ax) * t, az + (bz - az) * t]);
-          ys.push(ysrc ? ysrc[i - 1] + (ysrc[i] - ysrc[i - 1]) * t : null);
+          const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
+          ys.push(ysrc ? ysrc[i - 1] + (ysrc[i] - ysrc[i - 1]) * t : world.rampAt(road, sOf(i - 1) + Math.hypot(bx - ax, bz - az) * t, px, pz));
         }
       }
       pts.push(src[i]);
-      ys.push(ysrc ? ysrc[i] : null);
+      ys.push(ysrc ? ysrc[i] : world.rampAt(road, sOf(i), src[i][0], src[i][1]));
     }
     const half = road.w / 2;
     const base = b.p.length / 3;
     // Продольная координата текстуры — от начала дороги, чтобы разметка не сбивалась на стыке квадратов.
     let bridgeEdge = null; // нормаль полотна в предыдущей точке (для бортов моста)
+    let prevEdge = null;   // края полотна в предыдущей точке (для откосов насыпи подъезда)
     let v = 0;
     for (let i = 1; i <= from; i++) {
       const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
@@ -225,7 +234,7 @@ export function buildRoadChunk(world, runs, mats) {
       // Полотно не заходит на трамвайные пути рядом (в OSM ось дороги часто ближе к путям, чем
       // половина её ширины): край с той стороны отступает до 2 м от оси пути.
       let hl = half, hr = half;
-      if (!ysOnBridge(ys[i])) {
+      if (!road.br) {
         const [x0, z0] = pts[i];
         for (const sg of world.railsNear(x0, z0)) {
           if (sg.k !== 'tram') continue;
@@ -244,9 +253,22 @@ export function buildRoadChunk(world, runs, mats) {
       const yl = ys[i] ?? world.terrain(x + nx, z + nz) + road.lift;
       const yr = ys[i] ?? world.terrain(x - rnx, z - rnz) + road.lift;
       b.p.push(x + nx, yl, z + nz, x - rnx, yr, z - rnz);
+      // Подъезд к мосту выше земли — насыпь: откосы от краёв полотна вниз до рельефа.
+      const L_ = [x + nx, yl, z + nz], R_ = [x - rnx, yr, z - rnz];
+      if (!road.br && ys[i] != null && prevEdge) {
+        for (const [p0, p1, sg] of [[prevEdge.L, L_, 1], [prevEdge.R, R_, -1]]) {
+          const o = 2.5; // откос в сторону
+          const q0 = [p0[0] + (sg > 0 ? nx : -rnx) / (sg > 0 ? hl : hr) * o, 0, p0[2] + (sg > 0 ? nz : -rnz) / (sg > 0 ? hl : hr) * o];
+          const q1 = [p1[0] + (sg > 0 ? nx : -rnx) / (sg > 0 ? hl : hr) * o, 0, p1[2] + (sg > 0 ? nz : -rnz) / (sg > 0 ? hl : hr) * o];
+          q0[1] = world.terrain(q0[0], q0[2]) - 0.3;
+          q1[1] = world.terrain(q1[0], q1[2]) - 0.3;
+          if (p0[1] - q0[1] > 0.4 || p1[1] - q1[1] > 0.4) quad(emb, [p0[0], p0[1] - 0.05, p0[2]], [p1[0], p1[1] - 0.05, p1[2]], q1, q0);
+        }
+      }
+      prevEdge = ys[i] != null ? { L: L_, R: R_ } : null;
       b.uv.push(0, v / 12, 1, v / 12);
       // Мост: борта (фасция + парапет) по краям и плита снизу; опоры до земли через ~20 м.
-      if (ys[i] != null && i > 0) {
+      if (road.br && ys[i] != null && i > 0) {
         const [px, pz] = pts[i - 1], pl = bridgeEdge, y0 = ys[i - 1], y1 = ys[i];
         const o = 1 + 0.25 / half; // борт чуть снаружи полотна
         for (const sgn of [1, -1]) {
@@ -267,9 +289,11 @@ export function buildRoadChunk(world, runs, mats) {
       bridgeEdge = { nx, nz };
       // Береговой устой на концах моста: стенка от настила до земли (и ниже), перекрывает
       // ступеньку между мостом и берегом.
-      if (ys[i] != null && ((from === 0 && i === 0) || (to === road.n.length - 1 && i === pts.length - 1))) {
+      if (road.br && ys[i] != null && ((from === 0 && i === 0) || (to === road.n.length - 1 && i === pts.length - 1))) {
+        // Под настилом, чуть внутрь пролёта: сверху не выступает, перекрывает щель до земли.
+        const inward = i === 0 ? 1.6 : -1.6;
         const g = Math.min(world.terrain(x + nx, z + nz), world.terrain(x - rnx, z - rnz), world.terrain(x, z));
-        abutments.push([x, z, Math.atan2(dx, dz), road.w + 1.2, g - 3, ys[i] - 0.05]);
+        abutments.push([x + dx * inward, z + dz * inward, Math.atan2(dx, dz), road.w + 1.2, g - 3, ys[i] - DECK]);
       }
       if (i > 0) {
         const a = base + (i - 1) * 2;
@@ -296,6 +320,14 @@ export function buildRoadChunk(world, runs, mats) {
     geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, mats.concrete);
     m.castShadow = m.receiveShadow = true;
+    group.add(m);
+  }
+  if (emb.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(emb, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mats.embank);
+    m.receiveShadow = true;
     group.add(m);
   }
   if (abutments.length) {
