@@ -109,6 +109,24 @@ export function planFootbridges(world) {
   // Высота настила: над дорогой — с просветом, иначе — по рельефу. Касающиеся друг друга
   // мосты (площадь-мост и дорожки по ней) — на одной высоте.
   const items = list.map((fb) => {
+    // Тротуар вдоль автомобильного моста: оставляем только часть над пролётом — дальше он идёт
+    // по земле (нарисован на подложке), отдельная плита там висела бы над берегом.
+    if (!fb.a) {
+      const dense = [];
+      for (let i = 0; i < fb.p.length; i++) {
+        if (i) {
+          const [ax, az] = fb.p[i - 1], [bx, bz] = fb.p[i], k = Math.ceil(Math.hypot(bx - ax, bz - az) / 2);
+          for (let j = 1; j < k; j++) dense.push([ax + ((bx - ax) * j) / k, az + ((bz - az) * j) / k]);
+        }
+        dense.push(fb.p[i]);
+      }
+      const on = dense.map(([x, z]) => bridgeDeckAt(world, x, z, fb.w / 2 + 3) !== null);
+      if (on.filter(Boolean).length >= on.length * 0.3) {
+        let best = [0, -1], cur = -1;
+        on.forEach((v, i) => { if (v && cur < 0) cur = i; if ((!v || i === on.length - 1) && cur >= 0) { const e = v ? i : i - 1; if (e - cur > best[1] - best[0]) best = [cur, e]; cur = -1; } });
+        if (best[1] - best[0] >= 1) fb = { ...fb, p: dense.slice(best[0], best[1] + 1), clipped: true };
+      }
+    }
     const o = outline(fb);
     const smp = samples(o, fb);
     let ground = -Infinity, road = -Infinity;
@@ -118,7 +136,7 @@ export function planFootbridges(world) {
     }
     // Тротуар автомобильного моста (в OSM — отдельный пешеходный мост рядом): идёт по полотну
     // моста, а не висит на 5.5 м над ним.
-    const along = !fb.a && smp.filter(([x, z]) => bridgeDeckAt(world, x, z, fb.w / 2 + 3) !== null).length >= smp.length * 0.6;
+    const along = !!fb.clipped || (!fb.a && smp.filter(([x, z]) => bridgeDeckAt(world, x, z, fb.w / 2 + 3) !== null).length >= smp.length * 0.6);
     return { fb, o, smp, along, overRoad: !along && road > -Infinity, flat: Math.max(ground + 0.4, road + CLEARANCE), group: null };
   });
   // Габариты — быстрая отсечка: мостов в городе много, точное сравнение только для соседних.
@@ -225,8 +243,15 @@ export function buildFootbridges(world, terrainMaterial) {
     for (let i = 0; i < pts.length; i++) {
       const j = (i + 1) % pts.length;
       const [x1, z1] = pts[i], [x2, z2] = pts[j];
-      sp.push(x1, ys[i], z1, x2, ys[j] - SLAB, z2, x1, ys[i] - SLAB, z1);
-      sp.push(x1, ys[i], z1, x2, ys[j], z2, x2, ys[j] - SLAB, z2);
+      // Тротуар вдоль моста вне пролёта (над берегом, у подъезда) — борт до земли, как подпорная
+      // стенка: иначе между плитой и откосом берега видна щель.
+      const bot = (k) => {
+        const y = ys[k] - SLAB;
+        return y;
+      };
+      const b1 = bot(i), b2 = bot(j);
+      sp.push(x1, ys[i], z1, x2, b2, z2, x1, b1, z1);
+      sp.push(x1, ys[i], z1, x2, ys[j], z2, x2, b2, z2);
 
       const len = Math.hypot(x2 - x1, z2 - z1);
       if (!sd[i] || len < 0.3) continue;
@@ -267,29 +292,6 @@ export function buildFootbridges(world, terrainMaterial) {
   const railMesh = new THREE.Mesh(rail, iron);
   railMesh.castShadow = true;
   group.add(slabMesh, railMesh);
-
-  // Устои у концов тротуаров вдоль мостов: стенка от плиты до земли, чтобы не висели.
-  const abut = [];
-  for (const it of items) {
-    if (!it.along) continue;
-    const p = it.fb.p;
-    for (const [e, o] of [[p[0], p[1]], [p[p.length - 1], p[p.length - 2]]]) {
-      const dx = o[0] - e[0], dz = o[1] - e[1], L = Math.hypot(dx, dz) || 1;
-      const x = e[0] + (dx / L) * 1, z = e[1] + (dz / L) * 1;
-      const top = topAt(it, x, z) - SLAB, g = world.terrain(x, z);
-      if (top - g > 0.3) abut.push([x, z, Math.atan2(dx, dz), it.fb.w + 0.6, g - 2, top + 0.05]);
-    }
-  }
-  if (abut.length) {
-    const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), concrete, abut.length);
-    const mt = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-    abut.forEach(([x, z, a, w, y0, y1], i) => {
-      q.setFromAxisAngle(up, a);
-      im.setMatrixAt(i, mt.compose(new THREE.Vector3(x, y0, z), q, new THREE.Vector3(w, y1 - y0, 2)));
-    });
-    im.castShadow = im.receiveShadow = true;
-    group.add(im);
-  }
 
   for (const it of items) {
     if (it.plateau) group.add(buildPlateau(world, it, terrainMaterial, iron));
