@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { World } from './world.js';
 
 const CLEARANCE = 5.5;   // м над дорогой под мостом
+const WALK_RAMP = 22;   // м: тротуар вдоль моста за пролётом спускается к земле
 const SLAB = 1.1;        // толщина плиты с бортом
 const RAIL_H = 1.1;
 
@@ -124,7 +125,26 @@ export function planFootbridges(world) {
       if (on.filter(Boolean).length >= on.length * 0.3) {
         let best = [0, -1], cur = -1;
         on.forEach((v, i) => { if (v && cur < 0) cur = i; if ((!v || i === on.length - 1) && cur >= 0) { const e = v ? i : i - 1; if (e - cur > best[1] - best[0]) best = [cur, e]; cur = -1; } });
-        if (best[1] - best[0] >= 1) fb = { ...fb, p: dense.slice(best[0], best[1] + 1), clipped: true };
+        if (best[1] - best[0] >= 1) {
+          // Над пролётом — вровень с настилом, за ним — спуск до земли на WALK_RAMP м.
+          const acc = [0];
+          for (let i = 1; i < dense.length; i++) acc.push(acc[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
+          let i0 = best[0], i1 = best[1];
+          while (i0 > 0 && acc[best[0]] - acc[i0 - 1] <= WALK_RAMP) i0--;
+          while (i1 < dense.length - 1 && acc[i1 + 1] - acc[best[1]] <= WALK_RAMP) i1++;
+          const pts = dense.slice(i0, i1 + 1);
+          const top = (k) => roadSurfaceNear(world, ...dense[k]) + 0.25;
+          const hA = top(best[0]), hB = top(best[1]);
+          const centerH = pts.map(([x, z], j) => {
+            const k = j + i0;
+            if (k >= best[0] && k <= best[1]) return top(k);
+            const [d, deck] = k < best[0] ? [acc[best[0]] - acc[k], hA] : [acc[k] - acc[best[1]], hB];
+            const t = world.terrain(x, z) + 0.35, w = 0.5 + 0.5 * Math.cos((Math.PI * Math.min(d, WALK_RAMP)) / WALK_RAMP);
+            return t + (deck - t) * w;
+          });
+          const span = pts.map((_, j) => j + i0 >= best[0] && j + i0 <= best[1]);
+          fb = { ...fb, p: pts, clipped: true, centerH, span };
+        }
       }
     }
     const o = outline(fb);
@@ -207,6 +227,12 @@ export function buildFootbridges(world, terrainMaterial) {
 
   // Дорожка-мост через овраг/воду без дорог: настил по прямой между берегами.
   const topAt = (it, x, z) => {
+    if (it.along && it.fb.centerH) {
+      // Высота ближайшей точки оси тротуара (над пролётом — настил, дальше — спуск к земле).
+      let bi = 0, bd = Infinity;
+      it.fb.p.forEach(([px, pz], k) => { const d = (px - x) ** 2 + (pz - z) ** 2; if (d < bd) { bd = d; bi = k; } });
+      return it.fb.centerH[bi];
+    }
     if (it.along) return roadSurfaceNear(world, x, z) + 0.25;
     // Дорожка поверх моста-площади — чуть ниже её настила, чтобы поверхности не мерцали.
     if (it.group && !it.fb.a && it.group.items.some((q) => q.fb.a)) return it.flat - 0.05;
@@ -245,9 +271,13 @@ export function buildFootbridges(world, terrainMaterial) {
       const [x1, z1] = pts[i], [x2, z2] = pts[j];
       // Тротуар вдоль моста вне пролёта (над берегом, у подъезда) — борт до земли, как подпорная
       // стенка: иначе между плитой и откосом берега видна щель.
+      // Вне пролёта (спуск к земле) — борт до земли, как у насыпи: плита не висит.
       const bot = (k) => {
         const y = ys[k] - SLAB;
-        return y;
+        if (!it.fb.span) return y;
+        let bi = 0, bd = Infinity;
+        it.fb.p.forEach(([px, pz], q) => { const d = (px - pts[k][0]) ** 2 + (pz - pts[k][1]) ** 2; if (d < bd) { bd = d; bi = q; } });
+        return it.fb.span[bi] ? y : Math.min(y, world.terrain(pts[k][0], pts[k][1]) - 0.4);
       };
       const b1 = bot(i), b2 = bot(j);
       sp.push(x1, ys[i], z1, x2, b2, z2, x1, b1, z1);
