@@ -31,6 +31,16 @@ function bridgeDeckAt(world, x, z, pad) {
   return best ? best.y : null;
 }
 
+// Высота полотна ближайшей дороги (мост, подъезд, обычная) — тротуар идёт вровень с ней.
+function roadSurfaceNear(world, x, z) {
+  let best = null;
+  for (const s of world.segmentsNear(x, z, 20)) {
+    const c = World.closest(s, x, z);
+    if (!best || c.d < best.d) best = { d: c.d, px: c.px, pz: c.pz };
+  }
+  return best && best.d < 15 ? world.ground(best.px, best.pz) : world.terrain(x, z) + 0.3;
+}
+
 function pointIn(x, z, p) {
   let ins = false;
   for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
@@ -179,7 +189,7 @@ export function buildFootbridges(world, terrainMaterial) {
 
   // Дорожка-мост через овраг/воду без дорог: настил по прямой между берегами.
   const topAt = (it, x, z) => {
-    if (it.along) return (bridgeDeckAt(world, x, z, 15) ?? it.flat) + 0.25;
+    if (it.along) return roadSurfaceNear(world, x, z) + 0.25;
     // Дорожка поверх моста-площади — чуть ниже её настила, чтобы поверхности не мерцали.
     if (it.group && !it.fb.a && it.group.items.some((q) => q.fb.a)) return it.flat - 0.05;
     if (it.group || it.overRoad || it.fb.a) return it.flat;
@@ -257,6 +267,29 @@ export function buildFootbridges(world, terrainMaterial) {
   const railMesh = new THREE.Mesh(rail, iron);
   railMesh.castShadow = true;
   group.add(slabMesh, railMesh);
+
+  // Устои у концов тротуаров вдоль мостов: стенка от плиты до земли, чтобы не висели.
+  const abut = [];
+  for (const it of items) {
+    if (!it.along) continue;
+    const p = it.fb.p;
+    for (const [e, o] of [[p[0], p[1]], [p[p.length - 1], p[p.length - 2]]]) {
+      const dx = o[0] - e[0], dz = o[1] - e[1], L = Math.hypot(dx, dz) || 1;
+      const x = e[0] + (dx / L) * 1, z = e[1] + (dz / L) * 1;
+      const top = topAt(it, x, z) - SLAB, g = world.terrain(x, z);
+      if (top - g > 0.3) abut.push([x, z, Math.atan2(dx, dz), it.fb.w + 0.6, g - 2, top + 0.05]);
+    }
+  }
+  if (abut.length) {
+    const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), concrete, abut.length);
+    const mt = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    abut.forEach(([x, z, a, w, y0, y1], i) => {
+      q.setFromAxisAngle(up, a);
+      im.setMatrixAt(i, mt.compose(new THREE.Vector3(x, y0, z), q, new THREE.Vector3(w, y1 - y0, 2)));
+    });
+    im.castShadow = im.receiveShadow = true;
+    group.add(im);
+  }
 
   for (const it of items) {
     if (it.plateau) group.add(buildPlateau(world, it, terrainMaterial, iron));
