@@ -38,7 +38,7 @@ export class Garage {
       card.className = 'card';
       card.dataset.key = key;
       const bar = (label, v) => `<div class="stat"><span>${label}</span><i style="--v:${Math.round(v * 100)}%"></i></div>`;
-      card.innerHTML = `<b>${m.name}</b><small>${m.years}</small><p>${m.about}</p>
+      card.innerHTML = `<b>${m.name}</b><small>${m.years}</small><p>${m.about}</p>${m.credit ? `<p class="credit">${m.credit}</p>` : ''}
         ${bar('скорость', m.stats.kmh / MAX.kmh)}${bar('разгон', m.stats.accel / MAX.accel)}${bar('сцепление', m.stats.grip / MAX.grip)}`;
       card.addEventListener('click', () => this.#pick(key, MODELS[key].colors[0]));
       list.append(card);

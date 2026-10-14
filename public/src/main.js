@@ -3,7 +3,7 @@ import { World } from './world.js';
 import { MINIMAP_SCALE } from './build.js';
 import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
-import { MODELS, buildPlayerModel } from './vehicles.js';
+import { MODELS, buildPlayerModel, loadVehicleMeshes } from './vehicles.js';
 import { Garage, loadChoice } from './garage.js';
 import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
@@ -59,6 +59,7 @@ if (flags.has('nohud')) document.documentElement.classList.add('nohud');
 async function main() {
   // Доли этапов на полосе: скачивание — до 55 %, постройка мира — до 70 %, квадраты города — до 95 %.
   progress(0, 'Загружаю карту…');
+  const vehiclesReady = loadVehicleMeshes(); // параллельно с картой
   const MB = 1024 * 1024;
   const city = await fetchJSON('city.json', (got, total) => {
     // Размер неизвестен — полоса ползёт к концу этапа асимптотически.
@@ -108,6 +109,7 @@ async function main() {
   const minimap = new MinimapTiles(world);
 
   // Своя машина: выбор из гаража (localStorage), по умолчанию — «Ода».
+  await vehiclesReady;
   const choice = loadChoice();
   const model = buildPlayerModel(choice.model, choice.color);
   scene.add(model);
