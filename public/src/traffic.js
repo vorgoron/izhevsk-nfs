@@ -192,6 +192,7 @@ export class Traffic {
       if (!v.active || Math.hypot(v.x - px, v.z - pz) > DESPAWN) this.#spawn(v, px, pz, SPAWN_MIN);
       if (v.active) this.#drive(v, dt, car);
     }
+    this.#separate();
     this.#collidePlayer(car);
     this.#sync();
   }
@@ -230,12 +231,12 @@ export class Traffic {
       if (ahead <= 0 || ahead > look + olen / 2) return false;
       const lat = Math.abs(rx * v.dz - rz * v.dx);
       if (lat > 2.3) return false;
-      if (sameDirOnly && odx * v.dx + odz * v.dz < 0.5) return false;
+      if (sameDirOnly && odx * v.dx + odz * v.dz < 0.1) return false; // и вливающихся сбоку
       const gap = ahead - (v.len + olen) / 2;
       limit = Math.min(limit, Math.max(0, (gap - 2.5) * 0.8));
       return true;
     };
-    if (v.ghost <= 0) {
+    {
       for (const o of this.vehicles) {
         if (o !== v && o.active && check(o.x, o.z, o.len, true, o.dx, o.dz)) blockedByTraffic = true;
       }
@@ -265,7 +266,12 @@ export class Traffic {
     v.ghost = Math.max(0, v.ghost - dt);
     if (blockedByTraffic && v.speed < 0.3) v.stuck += dt;
     else v.stuck = 0;
-    if (v.stuck > 20) { v.ghost = 2; v.stuck = 0; } // дольше цикла светофора: очередь на красный не трогаем
+    // Стоит дольше цикла светофора (затор на развилке) — не проезжать сквозь соседей, а тихо
+    // убрать машину вдали от игрока: на её место появится другая в кольце вокруг.
+    if (v.stuck > 20) {
+      v.stuck = 0;
+      if (Math.hypot(v.x - car.pos.x, v.z - car.pos.y) > 90) { v.active = false; return; }
+    }
 
     // Удар от игрока: постоять.
     if (v.hit > 0) { v.hit -= dt; limit = 0; }
@@ -291,6 +297,30 @@ export class Traffic {
     v.heading += dh * Math.min(1, dt * 5);
     v.dx = Math.sin(v.heading);
     v.dz = Math.cos(v.heading);
+  }
+
+  // Страховка: если две попутные машины всё же наехали друг на друга (слияние полос, развилка,
+  // перестроение), задняя откатывается назад вдоль своего ребра и встаёт.
+  #separate() {
+    const vs = this.vehicles.filter((v) => v.active);
+    for (let i = 0; i < vs.length; i++) {
+      const a = vs[i];
+      for (let j = i + 1; j < vs.length; j++) {
+        const b = vs[j];
+        const rx = b.x - a.x, rz = b.z - a.z;
+        if (Math.abs(rx) > 14 || Math.abs(rz) > 14) continue;
+        if (a.dx * b.dx + a.dz * b.dz < -0.3) continue; // встречные — на своих полосах
+        const along = rx * a.dx + rz * a.dz, lat = Math.abs(rx * a.dz - rz * a.dx);
+        const need = (a.len + b.len) / 2 + 0.6;
+        if (lat > 2 || Math.abs(along) >= need) continue;
+        const [rear, gap] = along > 0 ? [a, need - along] : [b, need + along];
+        rear.s = Math.max(0, rear.s - gap);
+        rear.speed = 0;
+        const off = rear.edge.laneOff(rear.lane ?? 0);
+        rear.x = rear.edge.ax + rear.edge.dx * rear.s - rear.edge.dz * off;
+        rear.z = rear.edge.az + rear.edge.dz * rear.s + rear.edge.dx * off;
+      }
+    }
   }
 
   #collidePlayer(car) {
