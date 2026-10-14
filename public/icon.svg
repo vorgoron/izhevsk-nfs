@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#23303d"/><stop offset="1" stop-color="#0f1418"/></linearGradient>
+    <linearGradient id="field" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d23a2f"/><stop offset="1" stop-color="#9e1f1f"/></linearGradient>
+    <clipPath id="shield"><path d="M96 70 H416 V250 C416 360 340 420 256 452 C172 420 96 360 96 250 Z"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Щит в духе геральдики: красное поле, белая глава с солярным знаком (мотив удмуртского флага). -->
+  <g clip-path="url(#shield)">
+    <rect x="80" y="60" width="352" height="410" fill="url(#field)"/>
+    <rect x="80" y="60" width="352" height="118" fill="#f4f1ea"/>
+    <rect x="80" y="172" width="352" height="10" fill="#16181b"/>
+    <path d="M256.0,74.0 L263.7,101.5 L288.5,87.5 L274.5,112.3 L302.0,120.0 L274.5,127.7 L288.5,152.5 L263.7,138.5 L256.0,166.0 L248.3,138.5 L223.5,152.5 L237.5,127.7 L210.0,120.0 L237.5,112.3 L223.5,87.5 L248.3,101.5 Z" fill="#c3262b"/>
+    <circle cx="256" cy="120" r="10" fill="#f4f1ea"/>
+    <!-- «Линии скорости» за машиной. -->
+    <g stroke="#ffd23f" stroke-width="9" stroke-linecap="round" opacity=".9">
+      <line x1="104" y1="262" x2="150" y2="262"/><line x1="96" y1="292" x2="132" y2="292"/><line x1="110" y1="322" x2="140" y2="322"/>
+    </g>
+    <!-- ИЖ-2126 «Ода» в профиль. -->
+    <path d="M138.3,354.6 L373.7,354.6 L374.9,339.5 L369.7,326.8 L311.1,319.8 L145.8,317.5 L137.1,336.0 Z" fill="#f4f1ea"/>
+    <path d="M311.1,321.0 L266.4,291.4 L185.2,290.8 L144.1,316.3 L145.8,319.8 Z" fill="#2b3946"/>
+    <rect x="263.4" y="292.0" width="6" height="29.0" fill="#f4f1ea"/>
+    <rect x="367.4" y="332.6" width="10" height="9" rx="2" fill="#ffd23f"/>
+    <rect x="136.5" y="329.1" width="8" height="10" rx="2" fill="#ff3b30"/>
+    <circle cx="329.1" cy="355.2" r="18.0" fill="#16181b"/><circle cx="329.1" cy="355.2" r="8.1" fill="#b9bdc2"/><circle cx="185.8" cy="355.2" r="18.0" fill="#16181b"/><circle cx="185.8" cy="355.2" r="8.1" fill="#b9bdc2"/>
+    <rect x="80" y="375" width="352" height="6" fill="#16181b" opacity=".35"/>
+  </g>
+  <path d="M96 70 H416 V250 C416 360 340 420 256 452 C172 420 96 360 96 250 Z" fill="none" stroke="#e2b34a" stroke-width="12" stroke-linejoin="round"/>
+</svg>
