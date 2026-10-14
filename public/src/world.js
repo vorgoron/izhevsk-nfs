@@ -30,7 +30,9 @@ export class World {
     this.#initDem(city.dem);
     this.#initMeshGrid();
     this.#carveUnderBridges();
+    this.levelEnds = [];
     this.#initRoadIndex();
+    this.#levelBridgeEnds();
     this.#initBuildingIndex();
     this.#initRailIndex();
     this.#initChunks();
@@ -254,6 +256,27 @@ export class World {
     for (let n = 0; n < h.length; n++) h[n] -= depth[n];
   }
 
+  // Берега у ровного моста: сетку рельефа в 45 м от концов плавно подводим к высоте настила,
+  // чтобы подъезд не был горкой или ямой (рельеф 30 м у воды шумный).
+  #levelBridgeEnds() {
+    const { h, nx, nz, dx, dz, xmin, zmin } = this.mesh, R = 45;
+    for (const { pts, y } of this.levelEnds) {
+      for (const [ex, ez] of pts) {
+        const i0 = Math.max(0, Math.floor((ex - R - xmin) / dx)), i1 = Math.min(nx, Math.ceil((ex + R - xmin) / dx));
+        const j0 = Math.max(0, Math.floor((ez - R - zmin) / dz)), j1 = Math.min(nz, Math.ceil((ez + R - zmin) / dz));
+        for (let j = j0; j <= j1; j++) {
+          for (let i = i0; i <= i1; i++) {
+            const d = Math.hypot(xmin + i * dx - ex, zmin + j * dz - ez);
+            if (d >= R) continue;
+            const w = 0.5 + 0.5 * Math.cos((Math.PI * d) / R), n = j * (nx + 1) + i;
+            // Только поднимаем/опускаем берег, русло под мостом не трогаем (оно ниже настила на 2+ м).
+            if (h[n] > y - 2.5) h[n] += (y - h[n]) * w;
+          }
+        }
+      }
+    }
+  }
+
   // Как PlaneGeometry режет клетку: диагональ из (i, j+1) в (i+1, j).
   meshTerrain(x, z) {
     const { xmin, zmin, nx, nz, dx, dz, h } = this.mesh;
@@ -297,7 +320,13 @@ export class World {
         let len = 0;
         const acc = [0];
         for (let i = 1; i < pts.length; i++) acc.push((len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])));
-        const y0 = this.terrain(...pts[0]), y1 = this.terrain(...pts[pts.length - 1]);
+        let y0 = this.terrain(...pts[0]), y1 = this.terrain(...pts[pts.length - 1]);
+        // Мост через реку — ровный: настил на средней высоте берегов (по исходному рельефу,
+        // без прорезанного оврага), подходы потом подравниваются к нему (#levelBridgeEnds).
+        if (road.cx?.some((c) => c[2] === 'w')) {
+          y0 = y1 = (this.baseTerrain(...pts[0]) + this.baseTerrain(...pts[pts.length - 1])) / 2;
+          this.levelEnds.push({ pts: [pts[0], pts[pts.length - 1]], y: y0 });
+        }
         ys = acc.map((d) => y0 + (y1 - y0) * (len ? d / len : 0) + lift);
       }
       road.y = ys; // undefined для обычных дорог
