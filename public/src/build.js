@@ -316,14 +316,8 @@ export function buildRoadChunk(world, runs, mats) {
     im.castShadow = true;
     im.computeBoundingSphere();
     group.add(im);
-    // Опоры твёрдые; квадрат строится заново при подгрузке — добавляем коллайдер один раз.
-    world.pillarSet ??= new Set();
-    for (const [x, z] of pillars) {
-      const key = `${Math.round(x)},${Math.round(z)}`;
-      if (world.pillarSet.has(key)) continue;
-      world.pillarSet.add(key);
-      world.addCollider([[x - 0.7, z - 0.7], [x + 0.7, z - 0.7], [x + 0.7, z + 0.7], [x - 0.7, z + 0.7]]);
-    }
+    // Без коллайдеров: столкновения плоские (2D), и опора под мостом стала бы невидимой стеной
+    // для машины на самом мосту.
   }
   return group;
 }
