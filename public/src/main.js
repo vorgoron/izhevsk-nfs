@@ -9,6 +9,7 @@ import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
 import { planFootbridges, buildFootbridges } from './footbridges.js';
 import { Sound } from './audio.js';
+import { Radio } from './radio.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
 import { Sky, HORIZON } from './sky.js';
@@ -124,8 +125,33 @@ async function main() {
   game.sound = sound;
   const trams = new Trams(world, scene, sound);
   game.trams = trams;
-  // iOS разрешает звук только из обработчика касания/клика.
-  for (const ev of ['pointerdown', 'touchend', 'click']) addEventListener(ev, () => sound.unlock());
+  // Радио всегда на экране: станция или приглушённое «Радио выкл»; при переключении надпись вспыхивает.
+  let radioName;
+  const radio = new Radio(() => {
+    const el = $('radio');
+    const extra = radio.started && { loading: ' · подключение…', error: ' · нет связи' }[radio.status] || '';
+    el.textContent = radio.name ? `📻 ${radio.name}${extra}` : '📻 Радио выкл';
+    el.classList.toggle('error', !!radio.name && radio.status === 'error');
+    el.classList.toggle('off', !radio.name);
+    if (radio.name !== radioName) {
+      radioName = radio.name;
+      el.classList.remove('flash');
+      void el.offsetWidth; // перезапуск анимации
+      el.classList.add('flash');
+    }
+  });
+  radio.setMuted(sound.muted);
+  game.radio = radio;
+  radioName = radio.name; // первый показ — без вспышки
+  radio.onChange();
+  // Надпись радио — кнопка переключения.
+  $('radio').addEventListener('click', () => actions.radio());
+  // iOS разрешает звук только из обработчика касания/клика. Нажатие на кнопку радио само решит,
+  // что включать, — иначе запомненная станция включится тут и кнопка сразу перещёлкнет на следующую.
+  for (const ev of ['pointerdown', 'touchend', 'click']) addEventListener(ev, (e) => {
+    sound.unlock();
+    if (!e.target.closest?.('[data-act="radio"], #radio')) radio.unlock();
+  });
 
   let camMode = 0; // 0 — за машиной, 1 — из салона, 2 — сверху
 
@@ -137,7 +163,8 @@ async function main() {
       menu.toggle();
       sound.setPaused(menu.isOpen);
     },
-    sound: () => sound.toggleMute(),
+    sound: () => radio.setMuted(sound.toggleMute()),
+    radio: () => radio.next(),
     traffic: () => traffic.setEnabled(!traffic.enabled),
     // Пустой бак — эвакуатор на ближайшую АЗС (прямо к колонкам), иначе — на ближайшую дорогу.
     respawn: () => {
@@ -161,19 +188,20 @@ async function main() {
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
   const menu = new Menu({
     actions,
-    state: () => ({ sound: !sound.muted, traffic: traffic.enabled, camera: camMode, bigMap: $('minimap').classList.contains('big'),
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement }),
   });
   game.menu = menu;
   $('menu-btn').addEventListener('click', actions.menu);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera',
-    KeyM: 'map', KeyF: 'fullscreen' };
+    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen' };
 
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
   addEventListener('keydown', (e) => {
     keys.add(e.code);
     sound.unlock();
+    if (e.code !== 'KeyB') radio.unlock();
     // Esc в гараже закрывает гараж (garage.js гасит событие), а не открывает меню.
     if (!e.repeat && !e.defaultPrevented && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();

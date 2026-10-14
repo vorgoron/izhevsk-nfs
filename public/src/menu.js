@@ -5,7 +5,7 @@
 const CAMERAS = ['сзади', 'из салона', 'сверху'];
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, traffic, camera, bigMap, fullscreen }.
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, bigMap, fullscreen }.
   constructor({ actions, state }) {
     this.actions = actions;
     this.state = state;
@@ -22,6 +22,7 @@ export class Menu {
       <button data-act="garage">Гараж — выбор машины <kbd>G</kbd></button>
       <h3>Настройки</h3>
       <button data-act="sound">Звук <b data-v="sound"></b><kbd>V</kbd></button>
+      <button data-act="radio">Радио <b data-v="radio"></b><kbd>B</kbd></button>
       <button data-act="traffic">Трафик <b data-v="traffic"></b><kbd>T</kbd></button>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
       <button data-act="map">Миникарта <b data-v="bigMap"></b><kbd>M</kbd></button>
@@ -45,6 +46,7 @@ export class Menu {
     const s = this.state();
     const v = {
       sound: s.sound ? 'вкл' : 'выкл',
+      radio: s.radio ?? 'выкл',
       traffic: s.traffic ? 'вкл' : 'выкл',
       camera: CAMERAS[s.camera],
       bigMap: s.bigMap ? 'крупная' : 'обычная',
