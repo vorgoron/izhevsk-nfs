@@ -3,7 +3,9 @@
 import * as THREE from 'three';
 
 // Профили: [z, y] — z вперёд (перед машины при +len/2), y вверх, от земли.
-// body — кузов (краска), cabin — остекление, roof — крыша [z от, z до], pillars — стойки (z).
+// body — кузов, cabin — салон (оба под краску, cabin уже кузова и сужается к крыше).
+// windows — боковые стёкла [z спереди, z сзади] внутри силуэта салона, frame — цвет рамок между
+// ними (нет — стойки под краску); doors — швы дверей (z); trim — зеркала и ручки.
 export const MODELS = {
   oda: {
     name: 'ИЖ-2126 «Ода»', years: '1990–2005',
@@ -11,9 +13,10 @@ export const MODELS = {
     width: 1.65, cabinWidth: 1.42,
     body: [[-2.03, 0.3], [2.03, 0.3], [2.05, 0.56], [1.96, 0.78], [0.95, 0.9], [-1.9, 0.94], [-2.05, 0.62]],
     cabin: [[0.95, 0.88], [0.18, 1.39], [-1.22, 1.4], [-1.93, 0.96], [-1.9, 0.9]],
-    roof: [0.14, -1.24, 1.41], pillars: [-0.45],
+    windows: [[2, -0.1], [-0.24, -1.08]], frame: '#1a1b1d', doors: [0.9, -0.17, -1.15],
     wheels: { r: 0.29, front: 1.26, rear: -1.21, track: 0.7 },
-    bumper: '#3a3c40', grille: '#202225', lights: 'rect',
+    bumper: '#2b2d31', bumperH: 0.24, grille: '#17181b', grilleBars: '#b9bdc2', trim: '#1a1b1d',
+    lights: 'rect', lamp: { w: 0.44, h: 0.19 }, tail: { w: 0.36, h: 0.17, y: 0.76 },
     colors: ['#7c1622', '#e9e9e6', '#1f5e6b', '#2c5aa0', '#8c9196', '#2f6b3a', '#d8641e', '#1e1f22'],
     stats: { kmh: 165, accel: 0.86, grip: 1.0, eco: 1.0 },
   },
@@ -23,9 +26,9 @@ export const MODELS = {
     width: 1.55, cabinWidth: 1.36,
     body: [[-2.06, 0.32], [2.06, 0.32], [2.08, 0.58], [2.02, 0.8], [0.85, 0.87], [-1.1, 0.9], [-2.0, 0.88], [-2.07, 0.62]],
     cabin: [[0.85, 0.86], [0.24, 1.44], [-0.72, 1.46], [-1.15, 0.9]],
-    roof: [0.2, -0.76, 1.47], pillars: [-0.25],
+    windows: [[2, -0.19], [-0.31, -0.98]], doors: [0.82, -0.25, -1.05],
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
-    bumper: '#c8ccd0', grille: '#c8ccd0', lights: 'rect',
+    bumper: '#c8ccd0', bumperH: 0.12, grille: '#c8ccd0', trim: '#c8ccd0', lights: 'rect',
     colors: ['#9fc2d6', '#e8e2c8', '#6b1420', '#3b6e4f', '#f0f0ec', '#c9a227', '#2b3a66', '#5a5f66'],
     stats: { kmh: 155, accel: 0.8, grip: 0.95, eco: 1.15 },
   },
@@ -35,9 +38,9 @@ export const MODELS = {
     width: 1.55, cabinWidth: 1.36,
     body: [[-2.06, 0.32], [2.06, 0.32], [2.08, 0.58], [2.02, 0.8], [0.85, 0.87], [-1.95, 0.92], [-2.07, 0.62]],
     cabin: [[0.85, 0.86], [0.24, 1.44], [-0.95, 1.45], [-1.95, 0.94], [-1.95, 0.9]],
-    roof: [0.2, -0.98, 1.46], pillars: [-0.3],
+    windows: [[2, -0.24], [-0.36, -1.5]], doors: [0.82, -0.3, -1.2],
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
-    bumper: '#c8ccd0', grille: '#c8ccd0', lights: 'rect',
+    bumper: '#c8ccd0', bumperH: 0.12, grille: '#c8ccd0', trim: '#c8ccd0', lights: 'rect',
     colors: ['#c64a1e', '#e8e2c8', '#2e8b8b', '#f2c230', '#6b1420', '#4a6b2f', '#e9e9e6', '#3d4a5c'],
     stats: { kmh: 150, accel: 0.8, grip: 0.95, eco: 1.15 },
   },
@@ -47,10 +50,10 @@ export const MODELS = {
     width: 1.55, cabinWidth: 1.36,
     body: [[-2.04, 0.34], [2.06, 0.34], [2.08, 0.58], [2.02, 0.8], [0.85, 0.87], [-0.42, 0.9], [-2.04, 0.9]],
     cabin: [[0.85, 0.86], [0.24, 1.44], [-0.32, 1.44], [-0.4, 0.9]],
-    roof: [0.2, -0.38, 1.45], pillars: [],
+    windows: [[2, -2]], doors: [0.82, -0.38],
     box: { from: -0.45, to: -2.06, y0: 0.86, y1: 1.98, width: 1.6, color: 'paint' },
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
-    bumper: '#c8ccd0', grille: '#c8ccd0', lights: 'rect',
+    bumper: '#c8ccd0', bumperH: 0.12, grille: '#c8ccd0', trim: '#c8ccd0', lights: 'rect',
     colors: ['#3b6e4f', '#e9e9e6', '#2c5aa0', '#c9a227', '#7a2f2f', '#5a6e8c', '#8c9196', '#d8641e'],
     stats: { kmh: 135, accel: 0.7, grip: 0.9, eco: 1.25 },
   },
@@ -60,10 +63,11 @@ export const MODELS = {
     width: 1.65, cabinWidth: 1.42,
     body: [[-2.03, 0.32], [2.03, 0.32], [2.05, 0.56], [1.96, 0.78], [0.95, 0.9], [-0.5, 0.92], [-2.03, 0.92]],
     cabin: [[0.95, 0.88], [0.18, 1.39], [-0.42, 1.4], [-0.5, 0.92]],
-    roof: [0.14, -0.46, 1.41], pillars: [],
+    windows: [[2, -2]], doors: [0.9, -0.46],
     box: { from: -0.52, to: -2.1, y0: 0.88, y1: 1.92, width: 1.68, color: '#ecebe6' },
     wheels: { r: 0.29, front: 1.26, rear: -1.21, track: 0.7 },
-    bumper: '#3a3c40', grille: '#202225', lights: 'rect',
+    bumper: '#2b2d31', bumperH: 0.24, grille: '#17181b', grilleBars: '#b9bdc2', trim: '#1a1b1d',
+    lights: 'rect', lamp: { w: 0.44, h: 0.19 },
     colors: ['#e9e9e6', '#7c1622', '#2c5aa0', '#2f6b3a', '#8c9196', '#1e1f22', '#c9a227', '#1f5e6b'],
     stats: { kmh: 140, accel: 0.72, grip: 0.9, eco: 1.2 },
   },
@@ -73,9 +77,9 @@ export const MODELS = {
     width: 1.76, cabinWidth: 1.5,
     body: [[-2.2, 0.34], [2.2, 0.34], [2.23, 0.6], [2.12, 0.84], [1.0, 0.99], [-1.62, 1.03], [-2.16, 1.0], [-2.23, 0.64]],
     cabin: [[1.0, 0.98], [0.12, 1.48], [-0.86, 1.5], [-1.66, 1.03]],
-    roof: [0.08, -0.9, 1.51], pillars: [-0.38],
+    windows: [[2, -0.32], [-0.44, -1.22]], frame: '#1a1b1d', doors: [0.98, -0.38, -1.38],
     wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76 },
-    bumper: '#2a2c30', grille: '#1b1c1f', lights: 'xface',
+    bumper: '#2a2c30', bumperH: 0.2, grille: '#1b1c1f', trim: '#1a1b1d', lights: 'xface',
     colors: ['#e9e9e6', '#c63a2a', '#1e1f22', '#8c9196', '#2c5aa0', '#e07a1f', '#5a3a6b', '#3b5f4a'],
     stats: { kmh: 190, accel: 1.0, grip: 1.06, eco: 0.85 },
   },
@@ -85,17 +89,23 @@ export const DEFAULT_MODEL = 'oda';
 // ---------------------------------------------------------------- геометрия
 
 // Профиль (z, y) → призма шириной w по x, по центру.
-function prism(profile, w) {
+export function prism(profile, w) {
   const shape = new THREE.Shape(profile.map(([z, y]) => new THREE.Vector2(z, y)));
   return new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false }).rotateY(-Math.PI / 2).translate(w / 2, 0, 0);
 }
 const box = (w, h, d, x, y, z) => new THREE.BoxGeometry(w, h, d).translate(x, y, z);
 
-function merge(parts) {
+// Части [геометрия, цвет, форма?]: form(x, y, z) → множитель x — скругляет кузов (см. bodyForm).
+function merge(parts, form) {
   const pos = [], nor = [], col = [];
   const c = new THREE.Color();
-  for (const [geo, color] of parts) {
+  for (const [geo, color, shaped = true] of parts) {
     const g = geo.index ? geo.toNonIndexed() : geo;
+    if (form && shaped) {
+      const p = g.attributes.position;
+      // Нормали остаются от прямоугольной формы: пересчитанные выдают диагонали на скрученных гранях.
+      for (let i = 0; i < p.count; i++) p.setX(i, p.getX(i) * form(p.getY(i), p.getZ(i)));
+    }
     pos.push(...g.attributes.position.array);
     nor.push(...g.attributes.normal.array);
     c.set(color);
@@ -108,49 +118,168 @@ function merge(parts) {
   return out;
 }
 
+const clamp01 = (t) => Math.min(1, Math.max(0, t));
+// Призма-выдавливание прямоугольное, у настоящих машин борта заваливаются внутрь: чуть ниже пояса,
+// сильнее — стойки салона к крыше; углы спереди и сзади скруглены в плане.
+function bodyForm(spec, front, rear) {
+  const belt = spec.cabin[0][1], top = Math.max(...spec.cabin.map((p) => p[1]));
+  const k = spec.taper ?? 0.85, R = 0.45, corner = 0.07;
+  return (y, z) => {
+    const side = y < belt ? 1 - 0.03 * clamp01((y - 0.45) / (belt - 0.45)) : 0.97 - (0.97 - k) * clamp01((y - belt) / (top - belt));
+    const end = Math.max(clamp01((z - front + R) / R), clamp01((rear + R - z) / R));
+    return side * (1 - corner * end);
+  };
+}
+
+// Выпуклый многоугольник (z, y), сдвинутый внутрь на m.
+function inset(poly, m) {
+  const n = poly.length;
+  let area = 0;
+  for (let i = 0; i < n; i++) { const [a, b] = poly[i], [c, d] = poly[(i + 1) % n]; area += a * d - c * b; }
+  const lines = poly.map(([z0, y0], i) => {
+    const [z1, y1] = poly[(i + 1) % n], l = Math.hypot(z1 - z0, y1 - y0), dz = (z1 - z0) / l, dy = (y1 - y0) / l;
+    const s = Math.sign(area) * m;
+    return { z: z0 - dy * s, y: y0 + dz * s, dz, dy };
+  });
+  return lines.map((B, i) => {
+    const A = lines[(i + n - 1) % n], den = A.dz * B.dy - A.dy * B.dz;
+    const t = ((B.z - A.z) * B.dy - (B.y - A.y) * B.dz) / den;
+    return [A.z + A.dz * t, A.y + A.dy * t];
+  });
+}
+// Часть многоугольника между z = lo и z = hi.
+function clipZ(poly, lo, hi) {
+  let p = poly;
+  for (const [s, c] of [[1, hi], [-1, lo]]) {
+    const out = [];
+    p.forEach((a, i) => {
+      const b = p[(i + 1) % p.length], ia = s * a[0] <= s * c, ib = s * b[0] <= s * c;
+      if (ia) out.push(a);
+      if (ia !== ib) out.push([c, a[1] + ((c - a[0]) / (b[0] - a[0])) * (b[1] - a[1])]);
+    });
+    p = out;
+  }
+  return p;
+}
+// Пластина на обоих бортах по многоугольнику профиля: толщина по x от x0 до x1.
+const plates = (poly, x0, x1) => [-1, 1].map((s) => prism(poly, x1 - x0).translate((s * (x0 + x1)) / 2, 0, 0));
+// Пластина вдоль отрезка профиля a→b (лобовое, заднее стекло): отступ m с концов, ширина w, выступ t наружу.
+function panel(a, b, w, m, t, cabin) {
+  const l = Math.hypot(b[0] - a[0], b[1] - a[1]), dz = (b[0] - a[0]) / l, dy = (b[1] - a[1]) / l;
+  const cz = cabin.reduce((s, p) => s + p[0], 0) / cabin.length, cy = cabin.reduce((s, p) => s + p[1], 0) / cabin.length;
+  let nz = -dy, ny = dz; // нормаль наружу — от центра салона
+  if (nz * (a[0] - cz) + ny * (a[1] - cy) < 0) { nz = -nz; ny = -ny; }
+  const p = (q, s, o) => [q[0] + dz * s + nz * o, q[1] + dy * s + ny * o];
+  return prism([p(a, m, -0.01), p(b, -m, -0.01), p(b, -m, t), p(a, m, t)], w);
+}
+// Верх/низ кромки многоугольника на данном z.
+function spanAt(poly, z) {
+  const ys = [];
+  poly.forEach((a, i) => {
+    const b = poly[(i + 1) % poly.length];
+    if ((a[0] - z) * (b[0] - z) <= 0 && a[0] !== b[0]) ys.push(a[1] + ((z - a[0]) / (b[0] - a[0])) * (b[1] - a[1]));
+  });
+  return [Math.min(...ys), Math.max(...ys)];
+}
+
+// Профиль кузова с вырезанными арками: нижняя кромка (первые две точки профиля — задний и
+// передний низ) огибает дуги окружностей { z, y, R } — центр дуги и радиус.
+export const ARCH_GAP = 0.06; // зазор арки над колесом
+export function withArches(body, arches) {
+  const [[z0, y0], [z1]] = body;
+  const pts = [];
+  for (const { z, y, R } of [...arches].sort((a, b) => a.z - b.z)) {
+    const t0 = Math.asin(Math.min(1, Math.max(-1, (y0 - y) / R)));
+    for (let i = 0; i <= 10; i++) {
+      const a = Math.PI - t0 - ((Math.PI - 2 * t0) * i) / 10;
+      pts.push([z + R * Math.cos(a), Math.max(y0, y + R * Math.sin(a))]);
+    }
+  }
+  return [[z0, y0], ...pts.filter(([z]) => z > z0 && z < z1), ...body.slice(1)];
+}
+// Арки под колёса: полукруг чуть больше колеса.
+export const wheelArches = (r, zs) => zs.map((z) => ({ z, y: r, R: r + ARCH_GAP }));
+
 // Части модели: paint — под цвет кузова (вершины белые), detail — стекло, бамперы, шины,
 // lights — фары/фонари (рисуются без освещения). wheels — для вращения у машины игрока.
 export function vehicleParts(spec, { wheelsInDetail = false } = {}) {
-  const W = spec.width, front = Math.max(...spec.body.map((p) => p[0])), rear = Math.min(...spec.body.map((p) => p[0]));
+  const W = spec.width, CW = spec.cabinWidth, front = Math.max(...spec.body.map((p) => p[0])), rear = Math.min(...spec.body.map((p) => p[0]));
   const paint = [], detail = [], lights = [];
-  paint.push([prism(spec.body, W), '#fff']);
-  detail.push([prism(spec.cabin, spec.cabinWidth), '#26333f']);
-  const [r0, r1, ry] = spec.roof;
-  paint.push([box(spec.cabinWidth + 0.03, 0.07, r0 - r1, 0, ry, (r0 + r1) / 2), '#fff']);
-  for (const z of spec.pillars) paint.push([box(spec.cabinWidth + 0.04, ry - 0.9, 0.12, 0, (ry + 0.9) / 2, z), '#fff']);
+  const { r, front: wf, rear: wr, track } = spec.wheels, R = r + ARCH_GAP, y0 = spec.body[0][1];
+  const body = withArches(spec.body, wheelArches(r, [wr, wf]));
+  paint.push([prism(body, W), '#fff']);
+  // Ниши колёс: тёмная вставка между колёсами, чтобы сквозь арки не просвечивала улица.
+  for (const z of [wf, wr]) detail.push([box(2 * (track - 0.12), r + R - y0 + 0.01, 2 * R, 0, (y0 + r + R + 0.01) / 2, z), '#111214', false]);
+  // Салон под краску, стёкла — пластинами поверх: стойки и рамки получаются сами.
+  paint.push([prism(spec.cabin, CW), '#fff']);
+  const glass = '#26333f', side = inset(spec.cabin, 0.06);
+  const zs = spec.windows.flat();
+  if (spec.frame) detail.push(...plates(clipZ(side, Math.min(...zs), Math.max(...zs)), CW / 2 - 0.01, CW / 2 + 0.008).map((g) => [g, spec.frame]));
+  for (const [hi, lo] of spec.windows) detail.push(...plates(clipZ(side, lo, hi), CW / 2 - 0.01, CW / 2 + 0.014).map((g) => [g, glass]));
+  const c = spec.cabin;
+  detail.push([panel(c[0], c[1], CW - 0.1, 0.06, 0.012, c), glass]);
+  if (!spec.box) detail.push([panel(c[2], c[3], CW - 0.12, 0.06, 0.012, c), glass]);
   if (spec.box) {
     const b = spec.box;
     const geo = box(b.width, b.y1 - b.y0, b.from - b.to, 0, (b.y0 + b.y1) / 2, (b.from + b.to) / 2);
-    (b.color === 'paint' ? paint : detail).push([geo, b.color === 'paint' ? '#fff' : b.color]);
+    (b.color === 'paint' ? paint : detail).push([geo, b.color === 'paint' ? '#fff' : b.color, false]);
   }
-  // Бамперы, решётка.
-  detail.push([box(W + 0.04, 0.16, 0.14, 0, 0.42, front + 0.02), spec.bumper]);
-  detail.push([box(W + 0.04, 0.16, 0.14, 0, 0.42, rear - 0.02), spec.bumper]);
-  detail.push([box(W * 0.45, 0.16, 0.04, 0, 0.64, front + 0.02), spec.grille]);
+  // Швы дверей и ручки, зеркала.
+  const trim = spec.trim || '#1a1b1d', doors = [...(spec.doors || [])].sort((a, b) => b - a);
+  doors.forEach((z, i) => {
+    let bottom = y0;
+    for (const w of [wf, wr]) if (Math.abs(z - w) < R) bottom = Math.max(bottom, r + Math.sqrt(R * R - (z - w) ** 2));
+    const top = spanAt(body, z)[1];
+    detail.push(...plates([[z - 0.006, bottom + 0.04], [z + 0.006, bottom + 0.04], [z + 0.006, top - 0.03], [z - 0.006, top - 0.03]], W / 2 - 0.01, W / 2 + 0.004).map((g) => [g, '#141518']));
+    if (i > 0 && !spec.box) detail.push(...plates([[z + 0.1, top - 0.13], [z + 0.24, top - 0.13], [z + 0.24, top - 0.1], [z + 0.1, top - 0.1]], W / 2 - 0.01, W / 2 + 0.012).map((g) => [g, trim]));
+  });
+  if (spec.box && doors.length > 1) {
+    const z = doors[1], top = spanAt(body, z)[1];
+    detail.push(...plates([[z + 0.1, top - 0.13], [z + 0.24, top - 0.13], [z + 0.24, top - 0.1], [z + 0.1, top - 0.1]], W / 2 - 0.01, W / 2 + 0.012).map((g) => [g, trim]));
+  }
+  for (const s of [-1, 1]) {
+    const [mz, my] = c[0];
+    detail.push([box(0.06, 0.04, 0.05, s * (CW / 2 + 0.06), my + 0.06, mz - 0.14), trim]);
+    detail.push([box(0.07, 0.11, 0.16, s * (CW / 2 + 0.13), my + 0.1, mz - 0.14), trim]);
+  }
+  // Бамперы с загибом на борта, решётка, номера.
+  const bh = spec.bumperH || 0.16, by = y0 + 0.02 + bh / 2;
+  for (const [z, s] of [[front, 1], [rear, -1]]) {
+    detail.push([box(W + 0.04, bh, 0.14, 0, by, z + s * 0.02), spec.bumper]);
+    for (const x of [-1, 1]) detail.push([box(0.05, bh, 0.34, x * (W / 2 + 0.01), by, z - s * 0.12), spec.bumper]);
+    detail.push([box(0.52, 0.11, 0.02, 0, s > 0 ? by : Math.max(by + bh / 2 + 0.1, 0.6), z + s * (s > 0 ? 0.095 : 0.02)), '#f0f0ea']);
+  }
   // Фары и фонари.
   const fy = 0.66;
   if (spec.lights === 'xface') {
+    detail.push([box(W * 0.45, 0.16, 0.04, 0, 0.64, front + 0.02), spec.grille]);
     for (const s of [-1, 1]) {
       lights.push([box(0.42, 0.11, 0.04, s * (W / 2 - 0.3), fy + 0.08, front - 0.02), '#fff6d8']);
       detail.push([box(0.08, 0.36, 0.05, s * 0.32, fy - 0.05, front + 0.05).rotateZ(s * 0.5), '#c8ccd0']);
       lights.push([box(0.5, 0.1, 0.04, s * (W / 2 - 0.32), 0.86, rear + 0.04), '#ff2a1a']);
     }
   } else {
+    const L = { w: 0.34, h: 0.15, ...spec.lamp }, T = { w: 0.3, h: 0.14, y: 0.72, ...spec.tail };
+    const lx = W / 2 - 0.06 - L.w / 2, gw = 2 * (lx - L.w / 2) - 0.04;
+    detail.push([box(gw, L.h, 0.04, 0, fy, front + 0.01), spec.grille]);
+    if (spec.grilleBars) for (const dy of [-0.035, 0.035]) detail.push([box(gw - 0.04, 0.018, 0.05, 0, fy + dy, front + 0.012), spec.grilleBars]);
     for (const s of [-1, 1]) {
-      lights.push([box(0.34, 0.15, 0.04, s * (W / 2 - 0.27), fy, front + 0.01), '#fff6d8']);
-      lights.push([box(0.3, 0.14, 0.04, s * (W / 2 - 0.25), 0.72, rear - 0.01), '#ff2a1a']);
+      detail.push([box(L.w + 0.03, L.h + 0.03, 0.04, s * lx, fy, front + 0.005), spec.grille]);
+      lights.push([box(L.w, L.h, 0.04, s * lx, fy, front + 0.012), '#fff6d8']);
+      lights.push([box(T.w, T.h, 0.04, s * (W / 2 - 0.06 - T.w / 2), T.y, rear - 0.01), '#ff2a1a']);
     }
   }
   // Колёса.
-  const { r, front: wf, rear: wr, track } = spec.wheels;
   const wheels = [];
   for (const z of [wf, wr]) for (const x of [-track, track]) wheels.push({ x, y: r, z, r, front: z > 0 });
   if (wheelsInDetail) {
     for (const w of wheels) {
-      detail.push([new THREE.CylinderGeometry(w.r, w.r, 0.22, 12).rotateZ(Math.PI / 2).translate(w.x, w.y, w.z), '#151618']);
+      detail.push([new THREE.CylinderGeometry(w.r, w.r, 0.22, 12).rotateZ(Math.PI / 2).translate(w.x, w.y, w.z), '#151618', false]);
+      detail.push([new THREE.CylinderGeometry(w.r * 0.55, w.r * 0.55, 0.23, 8).rotateZ(Math.PI / 2).translate(w.x, w.y, w.z), '#9ea3a8', false]);
     }
   }
-  return { paint: merge(paint), detail: merge(detail), lights: merge(lights), wheels, length: front - rear };
+  const form = bodyForm(spec, front, rear);
+  return { paint: merge(paint, form), detail: merge(detail, form), lights: merge(lights, form), wheels, length: front - rear };
 }
 
 // Модель для машины игрока: краска — материалом, колёса — отдельными узлами (крутятся, рулят).

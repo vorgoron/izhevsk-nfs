@@ -1,7 +1,7 @@
 // Трафик: машины и автобусы по графу улиц вокруг игрока. Правостороннее движение,
 // односторонние улицы, торможение перед впереди идущими и перед игроком, столкновения.
 import * as THREE from 'three';
-import { MODELS, vehicleParts } from './vehicles.js';
+import { MODELS, vehicleParts, prism, withArches, wheelArches, ARCH_GAP } from './vehicles.js';
 
 // Скорость по классу дороги, м/с. Нет в списке — трафика там нет (дворы, проезды).
 const SPEED = {
@@ -22,7 +22,7 @@ function merged(parts) {
   const pos = [], nor = [], col = [];
   const c = new THREE.Color();
   for (const [geo, color, x, y, z] of parts) {
-    const g = geo.toNonIndexed().translate(x, y, z);
+    const g = (geo.index ? geo.toNonIndexed() : geo).translate(x, y, z);
     pos.push(...g.attributes.position.array);
     nor.push(...g.attributes.normal.array);
     c.set(color);
@@ -38,16 +38,26 @@ function merged(parts) {
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 const wheel = (r) => new THREE.CylinderGeometry(r, r, 0.25, 10).rotateZ(Math.PI / 2);
 
+const hub = (r) => new THREE.CylinderGeometry(r, r, 0.26, 8).rotateZ(Math.PI / 2);
+const BUS_WHEEL = { r: 0.5, x: 1.1, zs: [3.8, -3.4] };
+
 function busGeometry() {
+  const { r, x: wx, zs } = BUS_WHEEL, R = r + ARCH_GAP, y0 = 0.45;
+  const body = [[-5.75, y0], [5.75, y0], [5.75, 2.85], [-5.75, 2.85]];
+  const paint = [[prism(withArches(body, wheelArches(r, zs)), 2.5), '#fff', 0, 0, 0]];
   const parts = [
-    [box(2.5, 2.4, 11.5), '#fff', 0, 1.65, 0],
     [box(2.54, 0.9, 10.6), '#22303a', 0, 2.0, -0.2], // окна по бокам
     [box(2.3, 1.1, 0.05), '#22303a', 0, 2.0, 5.76], // лобовое
     [box(2.4, 0.15, 11.2), '#cfd2d6', 0, 2.92, 0],
   ];
   for (const sx of [-0.9, 0.9]) parts.push([box(0.35, 0.2, 0.05), '#fff6d0', sx, 0.8, 5.76], [box(0.35, 0.25, 0.05), '#ff2a1a', sx, 0.9, -5.76]);
-  for (const [x, z] of [[-1.1, 3.8], [1.1, 3.8], [-1.1, -3.4], [1.1, -3.4]]) parts.push([wheel(0.5), '#151618', x, 0.5, z]);
-  return merged(parts);
+  for (const z of zs) {
+    // Ниша между колёсами — чтобы сквозь арки не просвечивала улица.
+    parts.push([box(2 * (wx - 0.14), r + R - y0 + 0.01, 2 * R), '#111214', 0, (y0 + r + R + 0.01) / 2, z]);
+    for (const x of [-wx, wx]) parts.push([wheel(r), '#151618', x, r, z], [hub(r * 0.55), '#9ea3a8', x, r, z]);
+  }
+  // Кузов — под цвет инстанса, остальное своим цветом.
+  return { paint: merged(paint), detail: merged(parts) };
 }
 
 // ---------------------------------------------------------------- трафик
@@ -68,8 +78,9 @@ export class Traffic {
         meshes: [new THREE.InstancedMesh(p.paint, lit, count), new THREE.InstancedMesh(p.detail, lit, count),
           new THREE.InstancedMesh(p.lights, glow, count)] };
     });
+    const bus = busGeometry();
     kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0,
-      meshes: [new THREE.InstancedMesh(busGeometry(), lit, BUSES)] });
+      meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES)] });
     this.meshes = kinds.flatMap((k) => k.meshes);
     const c = new THREE.Color();
     this.vehicles = [];
