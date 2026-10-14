@@ -12,6 +12,8 @@ const REVERSE_MAX = 12;
 const GRIP = 9;           // как быстро гасится боковое скольжение
 const DRIFT_GRIP = 1.4;
 const STEER_RATE = 2.3;   // рад/с на средней скорости
+// Крен кузова в повороте: рад на 1 м/с² бокового ускорения, предел; пружина подвески (жёсткость, демпфер).
+const ROLL_K = 0.005, ROLL_MAX = 0.1, ROLL_STIFF = 70, ROLL_DAMP = 9;
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
 const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
@@ -29,6 +31,8 @@ export class Car {
     this.nitro = 1;
     this.pitch = 0;
     this.roll = 0;
+    this.bodyRoll = 0;      // крен кузова на подвеске (колёса не наклоняются)
+    this.bodyRollV = 0;
     this.wheelSpin = 0;
     this.impact = 0;
     this.sink = 0;          // сколько секунд в воде
@@ -53,6 +57,7 @@ export class Car {
     this.sink = 0;
     this.drowned = false;
     this.pitch = 0;
+    this.bodyRoll = this.bodyRollV = 0;
     this.heading = heading;
     this.y = this.world.ground(x, z);
   }
@@ -113,7 +118,8 @@ export class Car {
     this.steer += (target - this.steer) * Math.min(1, dt * 8);
     const speedFactor = Math.min(1, Math.abs(vf) / 6) / (1 + Math.abs(vf) / 45);
     const driftBoost = input.brake ? 1.5 : 1;
-    this.heading -= this.steer * STEER_RATE * speedFactor * driftBoost * Math.sign(vf || 1) * dt;
+    const yawRate = this.steer * STEER_RATE * speedFactor * driftBoost * Math.sign(vf || 1);
+    this.heading -= yawRate * dt;
 
     vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip * (1 - (1 - OFF_GRIP) * off)) * dt);
     const f2 = this.forward, r2 = this.right;
@@ -137,9 +143,13 @@ export class Car {
     const hr = g.ground(this.pos.x + r2.x * 0.9, this.pos.y + r2.y * 0.9, y0);
     const k = Math.min(1, dt * 10);
     this.pitch += (-Math.atan2(hf - hb, 3.2) - this.pitch) * k;
-    // Крен от рельефа плюс немного от поворота — для ощущения скорости.
-    const lean = this.steer * Math.min(1, Math.abs(vf) / 30) * 0.05;
-    this.roll += (Math.atan2(hl - hr, 1.8) - lean - this.roll) * k;
+    this.roll += (Math.atan2(hl - hr, 1.8) - this.roll) * k; // от рельефа — вся машина
+    // Кузов кренится наружу поворота от бокового ускорения (скорость × угловая скорость) и
+    // покачивается на подвеске — пружина с демпфером, после поворота чуть перекачивается обратно.
+    const rollTarget = Math.max(-ROLL_MAX, Math.min(ROLL_MAX, -yawRate * vf * ROLL_K));
+    const sdt = Math.min(dt, 1 / 30);
+    this.bodyRollV += ((rollTarget - this.bodyRoll) * ROLL_STIFF - this.bodyRollV * ROLL_DAMP) * sdt;
+    this.bodyRoll += this.bodyRollV * sdt;
     // Кочки на грунте: мелкая тряска кузова, сильнее на скорости.
     if (off > 0.05) {
       const b = off * Math.min(1, Math.abs(vf) / 12) * 0.025;
@@ -209,6 +219,7 @@ export class Car {
     m.position.set(this.pos.x, this.y, this.pos.y);
     m.rotation.order = 'YXZ';
     m.rotation.set(this.pitch, this.heading, this.roll);
+    if (m.userData.body) m.userData.body.rotation.z = this.bodyRoll;
     this.wheelSpin += (vf / 0.34) * dt;
     for (const { pivot, w, front } of m.userData.wheels) {
       w.rotation.x = this.wheelSpin;

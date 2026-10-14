@@ -373,7 +373,13 @@ export function buildPlayerModel(key, color) {
     new THREE.Mesh(parts.detail, new THREE.MeshLambertMaterial({ vertexColors: true })),
     new THREE.Mesh(parts.lights, new THREE.MeshBasicMaterial({ vertexColors: true })),
   ];
-  g.add(...meshes);
+  // Кузов — в своей группе с осью крена на высоте центра крена (колёса не кренятся, см. Car.bodyRoll).
+  const body = new THREE.Group(), ROLL_CENTER = 0.45;
+  body.position.y = ROLL_CENTER;
+  for (const mesh of meshes) mesh.position.y = -ROLL_CENTER;
+  body.add(...meshes);
+  g.add(body);
+  g.userData.body = body;
   g.userData.wheels = [];
   const wheelGeo = wheelGeometry(spec, 14);
   for (const w of parts.wheels) {
