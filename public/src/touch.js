@@ -1,5 +1,5 @@
 // Сенсорное управление: слева — руль (тянуть влево/вправо от точки касания),
-// справа — педали, сверху — меню (все настройки там, menu.js) и «на дорогу». Включается только на сенсорных устройствах.
+// справа — педали, сверху — меню (все настройки там, menu.js), «на дорогу» и полный экран. Включается только на сенсорных устройствах.
 
 export const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
@@ -24,9 +24,11 @@ export function setupTouch({ keys, analog, actions }) {
     </div>
     <div id="tbar">
       <button data-act="respawn" title="На дорогу">↺</button>
+      <button data-act="fullscreen" title="Во весь экран">⛶</button>
       <button data-act="menu" title="Меню">☰</button>
     </div>`;
   document.body.append(ui);
+  if (!document.fullscreenEnabled) ui.querySelector('[data-act=fullscreen]').remove(); // iPhone не умеет
 
   // Педали: держим, пока палец на кнопке. Каждая кнопка ловит свой палец — мультитач работает.
   for (const b of ui.querySelectorAll('[data-key]')) {

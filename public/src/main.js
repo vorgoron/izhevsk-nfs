@@ -22,6 +22,11 @@ import { Menu } from './menu.js';
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
 const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+// Отладочные ключи в адресе (белый экран на Android): ?lite — проще графика, ?nohud — без HTML
+// поверх канваса, ?lowpower — слабый GPU, ?noaa / ?aa — сглаживание.
+const flags = new URLSearchParams(location.search);
+const lite = flags.has('lite');
+if (flags.has('nohud')) document.documentElement.classList.add('nohud');
 
 async function main() {
   status('Загружаю карту…');
@@ -30,10 +35,13 @@ async function main() {
   await frame();
 
   // На телефоне экономим: без MSAA, плотность пикселей не выше 1.5, тени мельче.
-  const renderer = new THREE.WebGLRenderer({ antialias: !isTouch });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
+  const renderer = new THREE.WebGLRenderer({
+    antialias: flags.has('aa') || (!isTouch && !flags.has('noaa')),
+    powerPreference: flags.has('lowpower') ? 'low-power' : 'default',
+  });
+  renderer.setPixelRatio(lite ? 1 : Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
   renderer.setSize(innerWidth, innerHeight);
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !lite;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.body.prepend(renderer.domElement);
 
@@ -56,7 +64,7 @@ async function main() {
   planFootbridges(world); // насыпи у мостов меняют рельеф — до постройки мешей
   world.buildGraph();
   // Город строится квадратами вокруг игрока (chunks.js); на телефоне — ближе и проще.
-  const chunks = new ChunkManager(world, scene, renderer, isTouch ? { radius: 1300, texSize: 512 } : { radius: 1800, texSize: 1024 });
+  const chunks = new ChunkManager(world, scene, renderer, lite ? { radius: 800, texSize: 256 } : isTouch ? { radius: 1300, texSize: 512 } : { radius: 1800, texSize: 1024 });
   scene.add(buildFootbridges(world, new THREE.MeshLambertMaterial({ color: '#9a968e' })));
   const landmarks = buildLandmarks(world);
   scene.add(landmarks.group);
