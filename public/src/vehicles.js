@@ -12,6 +12,7 @@ export const MODELS = {
   oda: {
     name: 'ИЖ-2126 «Ода»', years: '1990–2005',
     about: 'Пятидверный хэтчбек — первая собственная легковая модель Ижмаша.',
+    glb: 'models/oda.glb', // tools/models/oda.mjs; не загрузилась — процедурная по полям ниже
     width: 1.65, cabinWidth: 1.42,
     body: [[-2.03, 0.3], [2.03, 0.3], [2.05, 0.56], [1.96, 0.78], [0.95, 0.9], [-1.9, 0.94], [-2.05, 0.62]],
     cabin: [[0.95, 0.88], [0.18, 1.39], [-1.22, 1.4], [-1.93, 0.96], [-1.9, 0.9]],
@@ -76,7 +77,7 @@ export const MODELS = {
   vesta: {
     name: 'LADA Vesta', years: 'с 2015',
     about: 'Собирается на «ИжАвто» — главный ижевский автомобиль сегодня.',
-    // Готовая модель (tools/vesta/build.mjs); не загрузилась — рисуется процедурная по полям ниже.
+    // Готовая модель (tools/models/vesta.mjs); не загрузилась — рисуется процедурная по полям ниже.
     glb: 'models/vesta.glb',
     credit: 'Модель: «Lada Vesta», tiunov.se (Sketchfab), CC BY 4.0',
     width: 1.76, cabinWidth: 1.5,
@@ -227,19 +228,38 @@ export async function loadVehicleMeshes() {
         g.computeVertexNormals();
         mesh[o.name] = g;
       });
-      const { wheels, length } = gltf.scene.userData;
+      const { wheels, length, hub } = gltf.scene.userData;
       Object.assign(spec.wheels, wheels);
-      spec.mesh = { ...mesh, length };
+      spec.mesh = { ...mesh, length, hub, wheelL: hub && mirrorX(mesh.wheel) };
     } catch (e) {
       console.warn(`Модель ${spec.name} не загрузилась, рисую процедурную`, e);
     }
   }));
 }
 
-// Колесо вокруг своего центра одной геометрией с вершинными цветами.
-function wheelGeometry(spec, seg) {
-  if (!spec.mesh) return merge(wheelParts(spec.wheels, seg));
-  return mergeGeometries([spec.mesh.wheel.clone(), merge(wheelParts(spec.wheels, seg).slice(1))]); // шина — своя
+// Зеркало по x (колесо левого борта): с переворотом обхода треугольников, иначе грани смотрят внутрь.
+function mirrorX(geo) {
+  const g = geo.clone().scale(-1, 1, 1);
+  for (const a of Object.values(g.attributes)) {
+    for (let i = 0; i < a.count; i += 3) {
+      for (let k = 0; k < a.itemSize; k++) {
+        const t = a.array[(i + 1) * a.itemSize + k];
+        a.array[(i + 1) * a.itemSize + k] = a.array[(i + 2) * a.itemSize + k];
+        a.array[(i + 2) * a.itemSize + k] = t;
+      }
+    }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+// Колесо вокруг своего центра одной геометрией с вершинными цветами. left — для левого борта (x < 0):
+// у колеса с диском из модели (hub) диск снаружи, его отражаем.
+function wheelGeometry(spec, seg, left = false) {
+  const m = spec.mesh;
+  if (!m) return merge(wheelParts(spec.wheels, seg));
+  if (m.hub) return (left ? m.wheelL : m.wheel).clone();
+  return mergeGeometries([m.wheel.clone(), merge(wheelParts(spec.wheels, seg).slice(1))]); // шина — своя
 }
 
 function meshParts(spec, wheelsInDetail) {
@@ -248,8 +268,7 @@ function meshParts(spec, wheelsInDetail) {
   for (const z of [wf, wr]) for (const x of [-track, track]) wheels.push({ x, y: r, z, r, front: z > 0 });
   let detail = m.detail.clone();
   if (wheelsInDetail) {
-    const w = wheelGeometry(spec, 12);
-    detail = mergeGeometries([detail, ...wheels.map((p) => w.clone().translate(p.x, p.y, p.z))]);
+    detail = mergeGeometries([detail, ...wheels.map((p) => wheelGeometry(spec, 12, p.x < 0).translate(p.x, p.y, p.z))]);
   }
   return { paint: m.paint.clone(), detail, lights: m.lights.clone(), wheels, length: m.length };
 }
@@ -381,12 +400,12 @@ export function buildPlayerModel(key, color) {
   g.add(body);
   g.userData.body = body;
   g.userData.wheels = [];
-  const wheelGeo = wheelGeometry(spec, 14);
+  const wheelGeo = [wheelGeometry(spec, 14), wheelGeometry(spec, 14, true)];
   for (const w of parts.wheels) {
     const pivot = new THREE.Group();
     pivot.position.set(w.x, w.y, w.z);
     const wheel = new THREE.Group();
-    wheel.add(new THREE.Mesh(wheelGeo, wheelMat));
+    wheel.add(new THREE.Mesh(wheelGeo[w.x < 0 ? 1 : 0], wheelMat));
     pivot.add(wheel);
     g.add(pivot);
     g.userData.wheels.push({ pivot, w: wheel, front: w.front });

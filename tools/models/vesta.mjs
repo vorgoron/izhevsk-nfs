@@ -4,11 +4,11 @@
 // (одно колесо вокруг своего центра, ось — x). Координаты — как у процедурных машин: +z вперёд,
 // y вверх от земли, x — поперёк. Размеры колёс пишутся в extras сцены.
 //
-//   cd tools/vesta && npm install && node build.mjs ~/Downloads/lada_vesta/scene.gltf
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+//   cd tools/models && npm install && node vesta.mjs ~/Downloads/lada_vesta/scene.gltf
+import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MeshoptSimplifier } from 'meshoptimizer';
+import { bbox, hex, simplify, writeGlb } from './lib.mjs';
 
 const src = resolve(process.argv[2] || join(process.env.HOME, 'Downloads/lada_vesta/scene.gltf'));
 const out = resolve(dirname(fileURLToPath(import.meta.url)), '../../public/models/vesta.glb');
@@ -85,13 +85,6 @@ const prims = [];
 
 // ---------------------------------------------------------------- оси игры
 
-const bbox = (list) => {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const { pos } of list) for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) {
-    lo[k] = Math.min(lo[k], pos[i + k]); hi[k] = Math.max(hi[k], pos[i + k]);
-  }
-  return { lo, hi, size: hi.map((h, k) => h - lo[k]), mid: hi.map((h, k) => (h + lo[k]) / 2) };
-};
 const all = bbox(prims), body = bbox(prims.filter((p) => !p.wheel));
 // Вверх — самая короткая ось, вперёд — самая длинная, в сторону фар.
 const axes = [0, 1, 2].sort((a, b) => all.size[a] - all.size[b]);
@@ -110,39 +103,8 @@ for (const p of prims) {
 }
 console.log('оси: вверх', 'xyz'[up], 'вперёд', (fs > 0 ? '+' : '-') + 'xyz'[fwd], '| габариты (без колёс)', body.size.map((v) => v.toFixed(2)).join(' × '));
 
-// ---------------------------------------------------------------- упрощение
-
-await MeshoptSimplifier.ready;
-// Сварить вершины по положению (UV и нормали исходника не нужны — нормали плоские, считаются в игре).
-function weld(list) {
-  const map = new Map(), pos = [], idx = [];
-  for (const p of list) {
-    for (const i of p.idx) {
-      const x = p.pos[i * 3], y = p.pos[i * 3 + 1], z = p.pos[i * 3 + 2];
-      const key = `${Math.round(x * 2000)},${Math.round(y * 2000)},${Math.round(z * 2000)}`;
-      let v = map.get(key);
-      if (v === undefined) { v = pos.length / 3; map.set(key, v); pos.push(x, y, z); }
-      idx.push(v);
-    }
-  }
-  return { pos: new Float32Array(pos), idx: new Uint32Array(idx) };
-}
-function simplify(list, keep) {
-  const { pos, idx } = weld(list);
-  if (keep >= 1) return { pos, idx };
-  const target = Math.max(12, Math.floor((idx.length / 3) * keep) * 3);
-  // Допустимую ошибку поднимаем, пока не дойдём до цели (мелкие детали упираются в порог раньше).
-  let res = idx;
-  for (const err of [0.01, 0.03, 0.08, 0.2, 0.5]) {
-    [res] = MeshoptSimplifier.simplify(idx, pos, 3, target, err);
-    if (res.length <= target * 1.3) break;
-  }
-  return { pos, idx: res };
-}
-
 // Часть игры: набор цветных групп → одна геометрия (позиции, цвета, индексы).
 const parts = { paint: [], detail: [], lights: [], wheel: [] };
-const hex = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16) / 255);
 const stat = {};
 for (const [mat, role] of Object.entries(ROLES)) {
   if (!role) continue;
@@ -179,58 +141,5 @@ const dims = bbox(prims.filter((p) => !p.wheel));
 console.table(stat);
 console.log('колёса', wheels, '| длина', dims.size[2].toFixed(2), 'ширина', dims.size[0].toFixed(2), 'высота', dims.hi[1].toFixed(2));
 
-// ---------------------------------------------------------------- запись GLB
-
-// Вершины без общих индексов между группами: группа = свой цвет.
-function pack(groups) {
-  const pos = [], col = [], idx = [];
-  for (const g of groups) {
-    const used = new Map();
-    for (const i of g.idx) {
-      let v = used.get(i);
-      if (v === undefined) {
-        v = pos.length / 3; used.set(i, v);
-        pos.push(g.pos[i * 3], g.pos[i * 3 + 1], g.pos[i * 3 + 2]); col.push(...g.color);
-      }
-      idx.push(v);
-    }
-  }
-  return { pos: new Float32Array(pos), col: new Float32Array(col), idx: new Uint32Array(idx) };
-}
-const chunks = [], views = [], accessors = [], meshes = [], nodes = [];
-let offset = 0;
-function view(arr, target) {
-  const bytes = Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength);
-  const pad = (4 - (bytes.length % 4)) % 4;
-  chunks.push(bytes, Buffer.alloc(pad));
-  views.push({ buffer: 0, byteOffset: offset, byteLength: bytes.length, target });
-  offset += bytes.length + pad;
-  return views.length - 1;
-}
-for (const [name, groups] of Object.entries(parts)) {
-  const { pos, col, idx } = pack(groups);
-  const lo = [0, 1, 2].map((k) => Math.min(...pos.filter((_, i) => i % 3 === k)));
-  const hi = [0, 1, 2].map((k) => Math.max(...pos.filter((_, i) => i % 3 === k)));
-  accessors.push({ bufferView: view(pos, 34962), componentType: 5126, count: pos.length / 3, type: 'VEC3', min: lo, max: hi });
-  accessors.push({ bufferView: view(col, 34962), componentType: 5126, count: col.length / 3, type: 'VEC3' });
-  accessors.push({ bufferView: view(idx, 34963), componentType: 5125, count: idx.length, type: 'SCALAR' });
-  const a = accessors.length - 3;
-  meshes.push({ name, primitives: [{ attributes: { POSITION: a, COLOR_0: a + 1 }, indices: a + 2 }] });
-  nodes.push({ name, mesh: meshes.length - 1 });
-  console.log(name.padEnd(7), (idx.length / 3).toString().padStart(6), 'треуг.');
-}
 const credit = 'This work is based on "Lada Vesta" (https://sketchfab.com/3d-models/lada-vesta-3c333139feb744ae9d36767c0e9cabfd) by tiunov.se (https://sketchfab.com/tiunov.se) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)';
-const doc = {
-  asset: { version: '2.0', generator: 'tools/vesta/build.mjs', copyright: credit },
-  scene: 0, scenes: [{ nodes: nodes.map((_, i) => i), extras: { wheels, length: +dims.size[2].toFixed(3), width: +dims.size[0].toFixed(3) } }],
-  nodes, meshes, accessors, bufferViews: views, buffers: [{ byteLength: offset }],
-};
-let json = Buffer.from(JSON.stringify(doc));
-json = Buffer.concat([json, Buffer.alloc((4 - (json.length % 4)) % 4, 0x20)]);
-const binChunk = Buffer.concat(chunks);
-const head = Buffer.alloc(12);
-head.writeUInt32LE(0x46546c67, 0); head.writeUInt32LE(2, 4); head.writeUInt32LE(12 + 8 + json.length + 8 + binChunk.length, 8);
-const ch = (len, type) => { const b = Buffer.alloc(8); b.writeUInt32LE(len, 0); b.writeUInt32LE(type, 4); return b; };
-mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, Buffer.concat([head, ch(json.length, 0x4e4f534a), json, ch(binChunk.length, 0x004e4942), binChunk]));
-console.log('→', out, (12 + 16 + json.length + binChunk.length) / 1024 | 0, 'КБ');
+writeGlb(out, parts, { copyright: credit, extras: { wheels, length: +dims.size[2].toFixed(3), width: +dims.size[0].toFixed(3) } });

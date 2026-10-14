@@ -80,8 +80,8 @@ AREA=center python3 tools/fetch_city.py  # только центр — быст�
   из OSM (список и OSM id — `LANDMARKS` в `tools/fetch_city.py`).
 - `public/src/vehicles.js` — машины ижевского автопрома: «Ода», Москвич-412, «Комби», «Каблучок»,
   фургон «Ода», LADA Vesta. Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
-  Веста — готовая модель `public/models/vesta.glb` (`loadVehicleMeshes` грузит её на старте; не загрузилась —
-  рисуется процедурная).
+  «Ода» и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
+  рисуется процедурная). Собираются `tools/models` (`oda.mjs` из STL, `vesta.mjs` из glTF; общее — `lib.mjs`).
 - `public/src/garage.js` — гараж: выбор машины и цвета, хранится в localStorage; смена машины перезапускает гонку.
 - `public/src/car.js` — аркадная физика (боковое сцепление, ручник, нитро, отскок от стен); вне дороги
   (трава, лес, пустырь — `World.surfaceAt`) скорость ×0.45, разгон ×0.5, хуже сцепление, тряска и пыль.
@@ -116,4 +116,6 @@ GitHub Pages через Actions: `.github/workflows/pages.yml` выкладыв�
 - Three.js (MIT) грузится с jsDelivr.
 - Модель LADA Vesta (`public/models/vesta.glb`) упрощена из «[Lada Vesta](https://sketchfab.com/3d-models/lada-vesta-3c333139feb744ae9d36767c0e9cabfd)»
   автора [tiunov.se](https://sketchfab.com/tiunov.se), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
-  Пересборка: скачать glTF со Sketchfab, затем `cd tools/vesta && npm install && node build.mjs путь/к/scene.gltf`.
+  Пересборка: скачать glTF со Sketchfab, затем `cd tools/models && npm install && node vesta.mjs путь/к/scene.gltf`.
+- Модель ИЖ-2126 «Ода» (`public/models/oda.glb`) собрана из STL-модели `tools/models/oda.mjs`
+  (`node oda.mjs путь/к/модели.stl`). Источник и лицензия: _уточняются_.

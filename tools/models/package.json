@@ -1,7 +1,7 @@
 {
-  "name": "izhevsk-nfs-vesta-build",
+  "name": "izhevsk-nfs-models",
   "private": true,
   "type": "module",
-  "description": "Сборка public/models/vesta.glb из модели Sketchfab (см. build.mjs)",
+  "description": "Сборка моделей машин public/models/*.glb (vesta.mjs, oda.mjs)",
   "dependencies": { "meshoptimizer": "0.21.0" }
 }
