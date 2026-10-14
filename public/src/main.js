@@ -17,6 +17,7 @@ import { Queues } from './queues.js';
 import { Trams } from './trams.js';
 import { NitroFX, DustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
+import { Menu } from './menu.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
@@ -118,12 +119,21 @@ async function main() {
   // iOS разрешает звук только из обработчика касания/клика.
   for (const ev of ['pointerdown', 'touchend', 'click']) addEventListener(ev, () => sound.unlock());
 
-  // Действия общие для клавиатуры и сенсорных кнопок.
+  let camMode = 0; // 0 — за машиной, 1 — из салона, 2 — сверху
+
+  // Действия общие для клавиатуры, меню и сенсорных кнопок. Действия «в игру» (гонка, на дорогу,
+  // гараж) закрывают меню, настройки переключаются на месте.
   const actions = {
+    menu: () => {
+      if (garage.isOpen) garage.close();
+      menu.toggle();
+      sound.setPaused(menu.isOpen);
+    },
     sound: () => sound.toggleMute(),
-    traffic: () => { traffic.setEnabled(!traffic.enabled); return traffic.enabled; },
+    traffic: () => traffic.setEnabled(!traffic.enabled),
     // Пустой бак — эвакуатор на ближайшую АЗС (прямо к колонкам), иначе — на ближайшую дорогу.
     respawn: () => {
+      resume();
       const n = car.fuel <= 0 && fuel.nearest(car.pos.x, car.pos.y);
       if (n) {
         const [x, z] = fuel.spot(n.station);
@@ -132,20 +142,32 @@ async function main() {
       }
       else respawnAt(car.pos.x, car.pos.y);
     },
-    race: () => race.start(car.pos.x, car.pos.y),
+    race: () => { resume(); race.start(car.pos.x, car.pos.y); },
     camera: () => { camMode = (camMode + 1) % 3; },
-    garage: () => garage.toggle(),
+    garage: () => { resume(); garage.toggle(); },
     map: () => $('minimap').classList.toggle('big'),
     fullscreen: toggleFullscreen,
   };
-  const KEY_ACTIONS = { KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyM: 'map' };
+  const resume = () => { menu.close(); sound.setPaused(false); };
+  // После любого действия (клавишей, кнопкой) меню показывает актуальные значения.
+  for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
+  const menu = new Menu({
+    actions,
+    state: () => ({ sound: !sound.muted, traffic: traffic.enabled, camera: camMode, bigMap: $('minimap').classList.contains('big'),
+      fullscreen: !!document.fullscreenElement }),
+  });
+  game.menu = menu;
+  $('menu-btn').addEventListener('click', actions.menu);
+  const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera',
+    KeyM: 'map', KeyF: 'fullscreen' };
 
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
   addEventListener('keydown', (e) => {
     keys.add(e.code);
     sound.unlock();
-    if (!e.repeat && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
+    // Esc в гараже закрывает гараж (garage.js гасит событие), а не открывает меню.
+    if (!e.repeat && !e.defaultPrevented && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
   });
   setupTouch({ keys, analog, actions });
@@ -170,7 +192,6 @@ async function main() {
 
   // ---------------------------------------------------------------- камера
 
-  let camMode = 0;
   let orbit = 0;
   let lag = 0; // отставание камеры при разгоне, м
   const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
@@ -185,7 +206,7 @@ async function main() {
   cv.style.cursor = 'grab';
   cv.style.touchAction = 'none';
   cv.addEventListener('pointerdown', (e) => {
-    if (dragId !== null || garage.isOpen) return;
+    if (dragId !== null || garage.isOpen || menu.isOpen) return;
     dragId = e.pointerId;
     dragX = e.clientX;
     dragY = e.clientY;
@@ -447,6 +468,12 @@ async function main() {
   let acc = 0;
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.1);
+    // Меню — пауза: мир стоит, только перерисовываем кадр.
+    if (menu.isOpen) {
+      acc = 0;
+      renderer.render(scene, camera);
+      return;
+    }
     acc += dt;
     const inp = race.state === 'countdown' || garage.isOpen ? {} : input();
     while (acc >= STEP) {

@@ -22,14 +22,24 @@ export class Sound {
   toggleMute() {
     this.muted = !this.muted;
     try { localStorage.setItem('muted', this.muted ? '1' : '0'); } catch {}
-    if (this.ctx) this.master.gain.setTargetAtTime(this.muted ? 0 : 0.8, this.ctx.currentTime, 0.05);
+    this.#applyGain();
     return this.muted;
+  }
+
+  // Пауза (меню): глушим всё, настройку «звук» не трогаем.
+  setPaused(on) {
+    this.paused = on;
+    this.#applyGain();
+  }
+
+  #applyGain() {
+    if (this.ctx) this.master.gain.setTargetAtTime(this.muted || this.paused ? 0 : 0.8, this.ctx.currentTime, 0.05);
   }
 
   #init() {
     const ctx = (this.ctx = new AudioContext());
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.8;
+    this.master.gain.value = this.muted || this.paused ? 0 : 0.8;
     const comp = ctx.createDynamicsCompressor();
     this.master.connect(comp).connect(ctx.destination);
 

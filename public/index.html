@@ -61,8 +61,13 @@
       background: #c62d2d; border: 2px solid rgba(255,255,255,.9); box-sizing: border-box; color: #fff; font: 700 14px/22px sans-serif;
       text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
     body.in-garage #north { display: none; }
-    #help { right: 24px; top: 20px; font-size: 13px; opacity: .85; text-align: right; line-height: 1.6; }
-    #help kbd { background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 5px; font-family: inherit; }
+    #menu-btn { position: fixed; right: 24px; top: 20px; font: inherit; font-size: 15px; font-weight: 600; color: #fff; cursor: pointer;
+      background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.3); border-radius: 8px; padding: 6px 12px; }
+    #menu-btn:hover { background: rgba(0,0,0,.55); }
+    #menu-btn kbd, #menu kbd { background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 5px; font-family: inherit;
+      font-size: 12px; font-weight: 600; }
+    #menu-btn kbd { margin-left: 6px; opacity: .7; }
+    body.in-garage #menu-btn, body.in-menu #menu-btn { display: none; }
     #attr { position: fixed; right: 8px; bottom: 4px; font-size: 11px; opacity: .7; }
     #attr a { color: inherit; }
 
@@ -96,9 +101,33 @@
     body.touch #garage h2 { font-size: 18px; margin-bottom: 8px; }
     body.touch #garage .card p { display: none; }
 
+    /* ---------- меню-пауза (menu.js) ---------- */
+    #menu { position: fixed; inset: 0; z-index: 16; display: none; place-items: center; background: rgba(10,12,14,.55); backdrop-filter: blur(4px); }
+    #menu.open { display: grid; }
+    #menu .box { width: min(92vw, 380px); max-height: calc(100vh - 24px); overflow-y: auto; box-sizing: border-box; display: flex; flex-direction: column;
+      gap: 6px; padding: 18px 16px; border-radius: 14px; background: rgba(16,19,22,.92); }
+    #menu h2 { margin: 0 0 6px; font-size: 26px; font-style: italic; }
+    #menu h3 { margin: 10px 0 2px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; opacity: .55; }
+    #menu button { display: flex; align-items: center; gap: 8px; text-align: left; font: inherit; font-size: 15px; color: #fff; cursor: pointer;
+      background: rgba(255,255,255,.06); border: 0; border-radius: 9px; padding: 10px 12px; }
+    #menu button:hover { background: rgba(255,255,255,.12); }
+    #menu button b { margin-left: auto; color: #ffd23f; font-weight: 700; }
+    #menu button b.off { color: rgba(255,255,255,.45); }
+    #menu button kbd { margin-left: auto; opacity: .6; }
+    #menu button b ~ kbd { margin-left: 0; }
+    #menu .go { font-weight: 800; font-size: 17px; background: #ffd23f; color: #15181b; }
+    #menu .go:hover { background: #ffdc5c; }
+    #menu .go kbd { color: #15181b; border-color: rgba(0,0,0,.3); background: rgba(0,0,0,.08); }
+    #menu .keys { margin-top: 10px; font-size: 12.5px; line-height: 1.8; opacity: .7; }
+    body.touch #menu kbd, body.touch #menu .keys { display: none; }
+    body.touch #menu .box { padding: calc(10px + env(safe-area-inset-top)) 14px 12px; gap: 4px; }
+    body.touch #menu button { padding: 8px 12px; }
+    body.touch #menu h2 { font-size: 20px; }
+
     /* ---------- сенсорное управление (body.touch ставит touch.js) ---------- */
     body.touch { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-    body.touch #help { display: none; }
+    body.touch #menu-btn { display: none; }
+    body.in-menu #touch, body.in-menu #north, body.in-menu #fuelptr { display: none; }
     #touch button { font-family: inherit; color: #fff; border: 2px solid rgba(255,255,255,.55); background: rgba(20,24,28,.38);
       -webkit-tap-highlight-color: transparent; touch-action: none; }
     #steer-zone { position: fixed; left: 0; bottom: 0; width: 45vw; height: 62vh; touch-action: none; }
@@ -118,7 +147,6 @@
     .pedal.on { filter: brightness(1.8); transform: scale(.96); }
     #tbar { position: fixed; right: calc(10px + env(safe-area-inset-right)); top: calc(8px + env(safe-area-inset-top)); display: flex; gap: 6px; }
     #tbar button { width: 40px; height: 40px; border-radius: 10px; font-size: 18px; padding: 0; }
-    #tbar button.off { opacity: .45; }
     /* Миникарта — слева сверху; таймер, улица и подсказки — правее неё. */
     body.touch #minimap { left: calc(12px + env(safe-area-inset-left)); right: auto; top: calc(10px + env(safe-area-inset-top)); bottom: auto;
       width: 118px; height: 118px; }
@@ -159,12 +187,7 @@
     <div><span class="lbl">ВРЕМЯ</span><b id="time">0:00.00</b></div>
     <div><span class="lbl">ЧЕКПОИНТ</span><span id="cp">–</span> · <span id="dist"></span></div>
   </div>
-  <div id="help" class="hud">
-    <kbd>W A S D</kbd> / стрелки — ехать<br>
-    <kbd>Пробел</kbd> ручник/занос · <kbd>Shift</kbd> нитро<br>
-    <kbd>R</kbd> на дорогу · <kbd>N</kbd> новая гонка<br>
-    <kbd>C</kbd> камера · <kbd>M</kbd> карта · <kbd>V</kbd> звук · <kbd>T</kbd> трафик<br><kbd>G</kbd> гараж — выбор машины<br>мышь — повернуть камеру
-  </div>
+  <button id="menu-btn">☰ Меню<kbd>Esc</kbd></button>
   <div id="banner" class="hud"></div>
   <canvas id="minimap" width="440" height="440"></canvas>
   <div id="north">N</div>

@@ -1,5 +1,5 @@
 // Сенсорное управление: слева — руль (тянуть влево/вправо от точки касания),
-// справа — педали, сверху — кнопки действий. Включается только на сенсорных устройствах.
+// справа — педали, сверху — меню (все настройки там, menu.js) и «на дорогу». Включается только на сенсорных устройствах.
 
 export const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
@@ -23,17 +23,10 @@ export function setupTouch({ keys, analog, actions }) {
       <button data-key="KeyW" class="pedal gas">газ</button>
     </div>
     <div id="tbar">
-      <button data-act="garage" title="Гараж">🚘</button>
-      <button data-act="camera" title="Камера">📷</button>
-      <button data-act="map" title="Карта">🗺</button>
-      <button data-act="race" title="Новая гонка">🏁</button>
       <button data-act="respawn" title="На дорогу">↺</button>
-      <button data-act="traffic" title="Трафик">🚗</button>
-      <button data-act="sound" title="Звук">🔊</button>
-      <button data-act="fullscreen" title="Во весь экран">⛶</button>
+      <button data-act="menu" title="Меню">☰</button>
     </div>`;
   document.body.append(ui);
-  if (!document.fullscreenEnabled) ui.querySelector('[data-act=fullscreen]').remove(); // iPhone не умеет
 
   // Педали: держим, пока палец на кнопке. Каждая кнопка ловит свой палец — мультитач работает.
   for (const b of ui.querySelectorAll('[data-key]')) {
@@ -51,9 +44,7 @@ export function setupTouch({ keys, analog, actions }) {
   for (const b of ui.querySelectorAll('[data-act]')) {
     b.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      const r = actions[b.dataset.act]?.();
-      if (b.dataset.act === 'sound') b.textContent = r ? '🔇' : '🔊';
-      if (b.dataset.act === 'traffic') b.classList.toggle('off', r === false);
+      actions[b.dataset.act]();
     });
   }
 
