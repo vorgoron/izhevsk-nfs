@@ -22,7 +22,34 @@ import { Menu } from './menu.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
-const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+// Полоса загрузки: доля 0…1 и, если есть, подпись этапа.
+const progress = (p, t) => {
+  $('loading-fill').style.width = `${(p * 100).toFixed(1)}%`;
+  if (t) status(t);
+};
+// Дать браузеру нарисовать кадр: продолжение после rAF + setTimeout идёт уже после отрисовки
+// (сразу в колбэке rAF тяжёлая работа задержала бы и сам кадр с новой подписью).
+const frame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+
+// city.json (~13 МБ) читаем потоком, чтобы показывать скачанное. Под gzip Content-Length — сжатый
+// размер, а поток отдаёт распакованные байты, поэтому тогда размер неизвестен (total = 0).
+async function fetchJSON(url, onBytes) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  if (!res.body) return res.json();
+  const total = res.headers.get('content-encoding') ? 0 : Number(res.headers.get('content-length')) || 0;
+  const reader = res.body.getReader();
+  const parts = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    got += value.length;
+    onBytes(got, total);
+  }
+  return JSON.parse(await new Blob(parts).text());
+}
 // Отладочные ключи в адресе (белый экран на Android): ?lite — проще графика, ?nohud — без HTML
 // поверх канваса, ?lowpower — слабый GPU, ?noaa / ?aa — сглаживание.
 const flags = new URLSearchParams(location.search);
@@ -30,9 +57,16 @@ const lite = flags.has('lite');
 if (flags.has('nohud')) document.documentElement.classList.add('nohud');
 
 async function main() {
-  status('Загружаю карту…');
-  const city = await (await fetch('city.json')).json();
-  status('Строю рельеф и дороги…');
+  // Доли этапов на полосе: скачивание — до 55 %, постройка мира — до 70 %, квадраты города — до 95 %.
+  progress(0, 'Загружаю карту…');
+  const MB = 1024 * 1024;
+  const city = await fetchJSON('city.json', (got, total) => {
+    // Размер неизвестен — полоса ползёт к концу этапа асимптотически.
+    const f = total ? got / total : 1 - Math.exp(-got / (6 * MB));
+    const mb = total ? `${(got / MB).toFixed(1)} / ${(total / MB).toFixed(1)} МБ` : `${(got / MB).toFixed(1)} МБ`;
+    progress(0.55 * f, `Загружаю карту… ${mb}`);
+  });
+  progress(0.58, 'Строю рельеф и дороги…');
   await frame();
 
   // На телефоне экономим: без MSAA, плотность пикселей не выше 1.5, тени мельче.
@@ -64,6 +98,8 @@ async function main() {
   const world = new World(city);
   planFootbridges(world); // насыпи у мостов меняют рельеф — до постройки мешей
   world.buildGraph();
+  progress(0.66, 'Ставлю мосты и достопримечательности…');
+  await frame();
   // Город строится квадратами вокруг игрока (chunks.js); на телефоне — ближе и проще.
   const chunks = new ChunkManager(world, scene, renderer, lite ? { radius: 800, texSize: 256 } : isTouch ? { radius: 1300, texSize: 512 } : { radius: 1800, texSize: 1024 });
   scene.add(buildFootbridges(world, new THREE.MeshLambertMaterial({ color: '#9a968e' })));
@@ -100,9 +136,11 @@ async function main() {
   };
   respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0);
   race.start(car.pos.x, car.pos.y);
-  status('Строю город вокруг…');
+  progress(0.7, 'Строю город вокруг…');
   await frame();
-  chunks.preload(car.pos.x, car.pos.y, 900);
+  await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
+  progress(0.95, 'Трафик, заправки, светофоры…');
+  await frame();
   const skyDome = new Sky(scene, world.baseTerrain(0, 0));
   const fuel = new Fuel(world, scene);
   const queues = new Queues(world, fuel, scene);
@@ -498,6 +536,11 @@ async function main() {
 
   // ---------------------------------------------------------------- цикл
 
+  // Шейдеры компилируем заранее, иначе первый кадр после заставки подвисает.
+  progress(0.98, 'Готовлю графику…');
+  await frame();
+  renderer.compile(scene, camera);
+  progress(1);
   $('loading').remove();
   const clock = new THREE.Clock();
   const STEP = 1 / 120;
@@ -547,5 +590,6 @@ async function main() {
 
 main().catch((e) => {
   console.error(e);
+  $('loading')?.classList.add('error');
   status(`Ошибка: ${e.message}`);
 });

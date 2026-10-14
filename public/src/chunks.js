@@ -83,9 +83,19 @@ export class ChunkManager {
     for (const [key, group] of this.loaded) if (!keep.has(key)) this.#unload(key, group);
   }
 
-  // Перед стартом: всё в радиусе сразу.
-  preload(px, pz, radius = this.radius) {
-    for (const { i, j } of this.#wanted(px, pz, radius)) if (!this.loaded.has(this.#key(i, j))) this.#build(i, j);
+  // Перед стартом: всё в радиусе сразу. Между квадратами отдаём кадр, чтобы полоса загрузки
+  // успевала перерисоваться; onProgress получает долю построенного.
+  async preload(px, pz, radius = this.radius, onProgress) {
+    const todo = this.#wanted(px, pz, radius).filter(({ i, j }) => !this.loaded.has(this.#key(i, j)));
+    let t = performance.now();
+    for (let n = 0; n < todo.length; n++) {
+      this.#build(todo[n].i, todo[n].j);
+      onProgress?.((n + 1) / todo.length);
+      if (performance.now() - t > 50) {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+        t = performance.now();
+      }
+    }
   }
 }
 

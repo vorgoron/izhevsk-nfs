@@ -14,7 +14,14 @@
     html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color: #fff; }
     canvas { display: block; }
     html.nohud body > :not(canvas:first-child) { display: none !important; }
-    #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #15181b; font-size: 20px; z-index: 10; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #15181b; font-size: 20px; z-index: 19; }
+    #loading .box { width: min(80vw, 420px); text-align: center; }
+    #loading h1 { margin: 0 0 18px; font-size: 30px; font-style: italic; font-weight: 900; color: #ffd23f; }
+    #loading-bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,.15); overflow: hidden; }
+    #loading-fill { height: 100%; width: 0; border-radius: 4px; background: linear-gradient(90deg, #ff8a2a, #ffd23f); transition: width .2s; }
+    #loading-text { margin-top: 12px; font-size: 15px; opacity: .75; min-height: 1.4em; }
+    #loading.error #loading-fill { background: #ff3b30; }
+    #loading.error #loading-text { color: #ff9d8a; opacity: 1; }
     .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
     #speedo { right: 28px; bottom: 24px; text-align: right; }
     #speed { font-size: 72px; font-weight: 800; font-style: italic; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -192,7 +199,7 @@
   </script>
 </head>
 <body>
-  <div id="loading"><span id="loading-text">Загрузка…</span></div>
+  <div id="loading"><div class="box"><h1>Ижевск: уличные гонки</h1><div id="loading-bar"><div id="loading-fill"></div></div><div id="loading-text">Загрузка…</div></div></div>
   <div id="street" class="hud"></div>
   <div id="landmark" class="hud"></div>
   <div id="race" class="hud">
