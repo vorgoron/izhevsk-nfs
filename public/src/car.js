@@ -127,12 +127,14 @@ export class Car {
 
     // Высота и наклон кузова по поверхности.
     const g = this.world;
-    const ground = g.ground(this.pos.x, this.pos.y);
+    // От текущей высоты: под мостом настил над головой не считается поверхностью.
+    const y0 = this.y;
+    const ground = g.ground(this.pos.x, this.pos.y, y0);
     this.y += (ground - this.y) * Math.min(1, dt * 15);
-    const hf = g.ground(this.pos.x + f2.x * 1.6, this.pos.y + f2.y * 1.6);
-    const hb = g.ground(this.pos.x - f2.x * 1.6, this.pos.y - f2.y * 1.6);
-    const hl = g.ground(this.pos.x - r2.x * 0.9, this.pos.y - r2.y * 0.9);
-    const hr = g.ground(this.pos.x + r2.x * 0.9, this.pos.y + r2.y * 0.9);
+    const hf = g.ground(this.pos.x + f2.x * 1.6, this.pos.y + f2.y * 1.6, y0);
+    const hb = g.ground(this.pos.x - f2.x * 1.6, this.pos.y - f2.y * 1.6, y0);
+    const hl = g.ground(this.pos.x - r2.x * 0.9, this.pos.y - r2.y * 0.9, y0);
+    const hr = g.ground(this.pos.x + r2.x * 0.9, this.pos.y + r2.y * 0.9, y0);
     const k = Math.min(1, dt * 10);
     this.pitch += (-Math.atan2(hf - hb, 3.2) - this.pitch) * k;
     // Крен от рельефа плюс немного от поворота — для ощущения скорости.

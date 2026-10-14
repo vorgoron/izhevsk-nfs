@@ -133,14 +133,15 @@ export function planFootbridges(world) {
           while (i0 > 0 && acc[best[0]] - acc[i0 - 1] <= WALK_RAMP) i0--;
           while (i1 < dense.length - 1 && acc[i1 + 1] - acc[best[1]] <= WALK_RAMP) i1++;
           const pts = dense.slice(i0, i1 + 1);
-          const top = (k) => roadSurfaceNear(world, ...dense[k]) + 0.25;
+          // Над пролётом — по настилу: ближайшей дорогой там может оказаться улица под мостом.
+          const top = (k) => (bridgeDeckAt(world, ...dense[k], fb.w / 2 + 3) ?? roadSurfaceNear(world, ...dense[k])) + 0.25;
           const hA = top(best[0]), hB = top(best[1]);
           const centerH = pts.map(([x, z], j) => {
             const k = j + i0;
             if (k >= best[0] && k <= best[1]) return top(k);
             const [d, deck] = k < best[0] ? [acc[best[0]] - acc[k], hA] : [acc[k] - acc[best[1]], hB];
             const t = world.terrain(x, z) + 0.35, w = 0.5 + 0.5 * Math.cos((Math.PI * Math.min(d, WALK_RAMP)) / WALK_RAMP);
-            return t + (deck - t) * w;
+            return Math.max(t + (deck - t) * w, roadSurfaceNear(world, x, z) + 0.25); // не ниже подъезда-насыпи
           });
           const span = pts.map((_, j) => j + i0 >= best[0] && j + i0 <= best[1]);
           fb = { ...fb, p: pts, clipped: true, centerH, span };

@@ -206,7 +206,7 @@ export class Trams {
         m.userData.ref = t.r.ref;
         for (const s of m.userData.signs) s.material = this.#signMat(t.r.ref);
       }
-      const hf = w.ground(t.x + t.dx * 5, t.z + t.dz * 5), hb = w.ground(t.x - t.dx * 5, t.z - t.dz * 5);
+      const hf = w.railGround(t.x + t.dx * 5, t.z + t.dz * 5, t.dx, t.dz), hb = w.railGround(t.x - t.dx * 5, t.z - t.dz * 5, t.dx, t.dz);
       m.position.set(t.x, (hf + hb) / 2, t.z);
       m.rotation.set(0, 0, 0);
       m.rotation.order = 'YXZ';

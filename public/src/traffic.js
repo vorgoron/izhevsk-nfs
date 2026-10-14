@@ -365,9 +365,11 @@ export class Traffic {
       if (!v.active) { for (const m of v.meshes) m.setMatrixAt(v.idx, this.hidden); continue; }
       // Наклон по поверхности, как у машины игрока: тангаж по осям колёс, крен по бокам.
       const fx = v.dx, fz = v.dz, rx = -fz, rz = fx, a = v.len * 0.32, b = v.bus ? 1.1 : 0.85;
-      const hf = w.ground(v.x + fx * a, v.z + fz * a), hb = w.ground(v.x - fx * a, v.z - fz * a);
-      const hl = w.ground(v.x - rx * b, v.z - rz * b), hr = w.ground(v.x + rx * b, v.z + rz * b);
-      p.set(v.x, Math.max(w.ground(v.x, v.z), (hf + hb) / 2), v.z);
+      // Высота от своей дороги: под мостом — по нижней улице, а не по настилу над ней.
+      const y = w.roadY(v.edge.road, v.x, v.z) ?? Infinity;
+      const hf = w.ground(v.x + fx * a, v.z + fz * a, y), hb = w.ground(v.x - fx * a, v.z - fz * a, y);
+      const hl = w.ground(v.x - rx * b, v.z - rz * b, y), hr = w.ground(v.x + rx * b, v.z + rz * b, y);
+      p.set(v.x, Math.max(w.ground(v.x, v.z, y), (hf + hb) / 2), v.z);
       e.set(-Math.atan2(hf - hb, 2 * a), v.heading, Math.atan2(hl - hr, 2 * b));
       this.quat.setFromEuler(e);
       this.mat4.compose(p, this.quat, one);

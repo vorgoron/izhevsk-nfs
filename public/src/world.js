@@ -10,6 +10,12 @@ export const MARKED_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondar
 const LIFT = { motorway: 0.40, trunk: 0.40, primary: 0.38, secondary: 0.35, tertiary: 0.32, service: 0.24 };
 export const roadLift = (k) => LIFT[k.replace('_link', '')] ?? 0.28;
 const RAMP = 40; // м: подъезд к ровному мосту
+// Путепровод (мост над дорогой/рельсами): настил над нижней землёй на CLEAR м, уклон до GRADE,
+// концы приподнимаются не выше END_MAX м (дальше — подъезды насыпью).
+const CLEAR = 6.5, GRADE = 0.07, END_MAX = 6;
+const GRADE_MAX = 0.12; // подъезд короче нужного (дальше перекрёсток) — сжимается до такого уклона
+const RAIL_ALONG = 9; // м от края полотна путепровода: пути вдоль него идут на его уровне
+const STEP = 2; // м: на сколько выше машины поверхность ещё «под колёсами» (ground)
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
 export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
 
@@ -30,6 +36,7 @@ export class World {
     this.patches = [];
     this.#initDem(city.dem);
     this.#initMeshGrid();
+    this.#planOverpasses();
     this.#carveUnderBridges();
     this.levelEnds = [];
     this.#initRoadIndex();
@@ -196,6 +203,104 @@ export class World {
     this.mesh = { xmin, zmin, W, H, nx, nz, dx: W / nx, dz: H / nz, h };
   }
 
+  // Путепроводы: мост только над дорогами/рельсами идёт горбом — нижняя дорога остаётся на земле,
+  // настил поднимается синусом на высоту проезда. Если пересечение близко к концу моста и горбу
+  // не хватает высоты с уклоном до GRADE, концы моста приподняты на E, а подъезды заходят на них
+  // насыпью (ramp в #initRoadIndex). Чего не хватило и так — добирается выемкой в #carveUnderBridges.
+  // Полотно дробится узлами через ~10 м, чтобы отрезки (машины, ленты) повторяли горб.
+  #planOverpasses() {
+    const c = this.city, nodes = c.roadNodes;
+    const at = this.#endsMap();
+    const lenOf = (r) => this.#roadLen(r);
+    // Длина подъезда от конца моста: дорога и её продолжение через узлы без развилок
+    // (улица в OSM часто порезана на короткие куски).
+    const appLen = (node, bridge) => Math.max(0, ...(at.get(node) || []).filter((q) => q !== bridge && !q.br).map((q) => {
+      let L = 0;
+      for (const step of this.#chain(q, node, at)) L += lenOf(step.road);
+      return L;
+    }));
+    const plans = [];
+    for (const r of this.roads) {
+      if (!r.br || !r.cx?.length || r.cx.some((x) => x[2] === 'w')) continue;
+      const n = [r.n[0]];
+      for (let i = 1; i < r.n.length; i++) {
+        const [ax, az] = nodes[r.n[i - 1]], [bx, bz] = nodes[r.n[i]], k = Math.ceil(Math.hypot(bx - ax, bz - az) / 10);
+        for (let j = 1; j < k; j++) n.push(nodes.push([ax + ((bx - ax) * j) / k, az + ((bz - az) * j) / k]) - 1);
+        n.push(r.n[i]);
+      }
+      r.n = n;
+      const pts = n.map((i) => nodes[i]), acc = [0];
+      for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      const L = acc[acc.length - 1];
+      const y0 = this.meshTerrain(...pts[0]), y1 = this.meshTerrain(...pts[pts.length - 1]);
+      const sAt = (x, z) => { // расстояние вдоль моста до проекции точки
+        let best = { d: Infinity, s: 0 };
+        for (let i = 1; i < pts.length; i++) {
+          const q = World.closest({ ax: pts[i - 1][0], az: pts[i - 1][1], bx: pts[i][0], bz: pts[i][1] }, x, z);
+          if (q.d < best.d) best = { d: q.d, s: acc[i - 1] + (acc[i] - acc[i - 1]) * q.t };
+        }
+        return best.s;
+      };
+      const lin = (s) => y0 + ((y1 - y0) * s) / L;
+      // Сколько не хватает настилу (без горба) до высоты проезда над точкой пересечения.
+      const need = r.cx.map(([x, z]) => { const s = sAt(x, z); return { s, sin: Math.sin((Math.PI * s) / L), v: CLEAR + this.meshTerrain(x, z) - lin(s) }; });
+      const Rmax = (GRADE * L) / Math.PI;
+      // Подъезд насыпью (2E/GRADE, в тесноте — до уклона GRADE_MAX) должен уместиться с обеих сторон.
+      const Ecap = Math.min(END_MAX, ...[r.n[0], r.n[r.n.length - 1]].map((e) => (GRADE_MAX * appLen(e, r)) / 2));
+      const E = Math.min(Ecap, Math.max(0, ...need.map((q) => q.v - Rmax * q.sin)));
+      plans.push({ r, pts, acc, L, sAt, lin, need, Rmax, Ecap, E });
+    }
+    // Парные мосты (две проезжие части рядом, концы рядом) — одной высоты: между ними трамвайные
+    // пути и полоса, которые идут вровень с дорогой.
+    const ends = (p) => [p.pts[0], p.pts[p.pts.length - 1]];
+    for (const a of plans) {
+      for (const b of plans) {
+        if (a === b || !ends(a).every(([x, z]) => ends(b).some(([u, v]) => Math.hypot(u - x, v - z) < 40))) continue;
+        a.E = b.E = Math.min(Math.max(a.E, b.E), a.Ecap, b.Ecap);
+      }
+    }
+    for (const { r, acc, L, sAt, lin, need, Rmax, E: e } of plans) {
+      const E = e < 0.3 ? 0 : e;
+      const R = E > 0 ? Rmax : Math.min(Rmax, Math.max(0, ...need.map((q) => q.v / q.sin)));
+      const hump = (s) => E + R * Math.sin((Math.PI * s) / L);
+      r.hump = { E, ramp: (2 * E) / GRADE, y: acc.map((s) => lin(s) + hump(s)), short: (x, z) => { const s = sAt(x, z); return CLEAR + this.meshTerrain(x, z) - lin(s) - hump(s); } };
+    }
+  }
+
+  #roadLen(r) {
+    let L = 0;
+    for (let i = 1; i < r.n.length; i++) L += Math.hypot(this.nodes[r.n[i]][0] - this.nodes[r.n[i - 1]][0], this.nodes[r.n[i]][1] - this.nodes[r.n[i - 1]][1]);
+    return L;
+  }
+
+  // Узел → дороги, которые в нём начинаются или кончаются.
+  #endsMap() {
+    const at = new Map();
+    for (const r of this.roads) {
+      for (const n of [r.n[0], r.n[r.n.length - 1]]) {
+        if (!at.has(n)) at.set(n, []);
+        at.get(n).push(r);
+      }
+    }
+    return at;
+  }
+
+  // Дорога road от узла node и её продолжение дальше через узлы, где сходятся ровно две дороги
+  // (не мосты). [{ road, from: 0|1 — каким концом к началу цепочки, off — длина до неё }].
+  #chain(road, node, at, maxLen = 400) {
+    const out = [];
+    let off = 0;
+    for (;;) {
+      const from = road.n[0] === node ? 0 : 1;
+      out.push({ road, from, off });
+      off += this.#roadLen(road);
+      node = from === 0 ? road.n[road.n.length - 1] : road.n[0];
+      const next = (at.get(node) || []).filter((q) => q !== road);
+      if (off >= maxLen || next.length !== 1 || next[0].br || out.some((o) => o.road === next[0])) return out;
+      road = next[0];
+    }
+  }
+
   // Под мостами — то, что они пересекают (сетка рельефа 30 м и сглаживание овраги съедают):
   // над водотоком — овраг вдоль русла, над дорогой/рельсами — нижняя дорога уходит в выемку.
   // Правится сетка меша, так что рельеф, дороги, дома и машины видят одно и то же.
@@ -228,7 +333,9 @@ export class World {
           }
         }
         if (!segs.length) continue;
-        const D = k === 'w' ? Math.min(12, Math.max(3, L * 0.15)) : 6.5;
+        // Над путепроводом с горбом — выемка только на то, чего горбу не хватило.
+        const D = k === 'w' ? Math.min(12, Math.max(3, L * 0.15)) : r.hump ? r.hump.short(cx, cz) : 6.5;
+        if (D < 0.3) continue;
         const along = k === 'w' ? Math.max(60, L) : 90;
         const halfW = (w) => (k === 'w' ? Math.max(8, L / 2 - 3) : w / 2 + 10);
         const R = along + 40;
@@ -281,8 +388,8 @@ export class World {
   }
 
   // Как PlaneGeometry режет клетку: диагональ из (i, j+1) в (i+1, j).
-  meshTerrain(x, z) {
-    const { xmin, zmin, nx, nz, dx, dz, h } = this.mesh;
+  meshTerrain(x, z, h = this.mesh.h) {
+    const { xmin, zmin, nx, nz, dx, dz } = this.mesh;
     let fx = (x - xmin) / dx, fz = (z - zmin) / dz;
     fx = Math.min(Math.max(fx, 0), nx - 1e-6);
     fz = Math.min(Math.max(fz, 0), nz - 1e-6);
@@ -314,7 +421,7 @@ export class World {
     this.roadCell = 25;
     this.roadGrid = new Map();
     this.segments = [];
-    const deckAt = new Map(); // узел конца моста через реку → высота настила (без lift)
+    const deckAt = new Map(); // узел конца моста → { y: высота настила (без lift), len: длина подъезда, quad }
     // Проход 1: мосты. Высота линейно между концами, а не по рельефу (иначе ныряет в пруд/овраг).
     for (const road of this.roads) {
       road.lift = roadLift(road.k);
@@ -329,18 +436,36 @@ export class World {
       if (road.cx?.some((c) => c[2] === 'w')) {
         y0 = y1 = (this.baseTerrain(...pts[0]) + this.baseTerrain(...pts[pts.length - 1])) / 2;
         this.levelEnds.push({ pts: [pts[0], pts[pts.length - 1]], y: y0, w: road.w });
-        deckAt.set(road.n[0], y0);
-        deckAt.set(road.n[road.n.length - 1], y0);
+        deckAt.set(road.n[0], { y: y0, len: RAMP });
+        deckAt.set(road.n[road.n.length - 1], { y: y0, len: RAMP });
+      }
+      if (road.hump) {
+        const { y, E, ramp } = road.hump;
+        road.y = y.map((v) => v + road.lift);
+        // Приподнятые концы: подъезд продолжает уклон настила и сходит на нет к земле.
+        if (E > 0) {
+          deckAt.set(road.n[0], { y: y[0], len: ramp, quad: true });
+          deckAt.set(road.n[road.n.length - 1], { y: y[y.length - 1], len: ramp, quad: true });
+        }
+        continue;
       }
       road.y = acc.map((d) => y0 + (y1 - y0) * (len ? d / len : 0) + road.lift);
     }
     this.#levelBridgeEnds();
-    // Проход 2: подъезды к ровным мостам — дорога плавно (за RAMP м) поднимается к настилу,
-    // продолжая его, а не упирается в устой. ramp: [{ from: 0|1 (начало/конец), y }].
-    for (const road of this.roads) {
-      if (road.br) continue;
-      const ends = [[0, road.n[0]], [1, road.n[road.n.length - 1]]].filter(([, n]) => deckAt.has(n));
-      if (ends.length) road.ramp = ends.map(([from, n]) => ({ from, y: deckAt.get(n) }));
+    // Проход 2: подъезды к ровным мостам и приподнятым путепроводам — дорога плавно поднимается
+    // к настилу, продолжая его, а не упирается в устой. ramp: [{ from: 0|1 (начало/конец), y, len, quad }].
+    // Подъезд к путепроводу продолжается по цепочке кусков улицы (off — длина до куска), пока не
+    // сойдёт к земле.
+    const at = this.#endsMap();
+    for (const [n, deck] of deckAt) {
+      for (const road of at.get(n) || []) {
+        if (road.br) continue;
+        const steps = deck.quad ? this.#chain(road, n, at, deck.len) : [{ road, from: road.n[0] === n ? 0 : 1, off: 0 }];
+        // Цепочка короче нужного (перекрёсток) — подъезд сжимается до её длины, круче.
+        const last = steps[steps.length - 1], total = last.off + this.#roadLen(last.road);
+        const len = deck.quad ? Math.min(deck.len, total) : deck.len;
+        for (const { road: q, from, off } of steps) (q.ramp ??= []).push({ ...deck, len, from, off });
+      }
     }
     for (const road of this.roads) {
       const pts = road.n.map((i) => this.nodes[i]);
@@ -358,17 +483,73 @@ export class World {
         this.#insert(this.roadGrid, this.roadCell, seg, seg.w / 2 + 2);
       }
     }
+    this.#raiseRampEmbankments();
+  }
+
+  // Насыпь под подъездами к путепроводам — настоящий рельеф, а не только откосы-картинка: между
+  // проезжими частями двухпутной улицы иначе остаётся яма до земли, и машина в неё падает.
+  // Узлы сетки в EMB_FLAT м от края полотна поднимаются под самое полотно (полоса и трамвайные пути
+  // между проезжими частями — вровень), дальше — откос до EMB_FALL.
+  #raiseRampEmbankments() {
+    const EMB_FLAT = 7, EMB_FALL = 19;
+    const { h, nx, nz, dx, dz, xmin, zmin } = this.mesh;
+    const h0 = (this.mesh.h0 = h.slice());
+    for (const road of this.roads) {
+      if (!road.ramp?.some((r) => r.quad)) continue;
+      const pts = road.n.map((i) => this.nodes[i]), acc = [0];
+      // Концы, которыми дорога примыкает к мосту: за них (под пролёт) насыпь не заходит — там
+      // нижняя дорога или рельсы.
+      const stops = road.ramp.filter((r) => r.quad && !r.off).map(({ from }) => {
+        const [a, b] = from === 0 ? [pts[0], pts[1]] : [pts[pts.length - 1], pts[pts.length - 2]];
+        const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        return { x: a[0], z: a[1], ux: (b[0] - a[0]) / l, uz: (b[1] - a[1]) / l };
+      });
+      for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      const R = road.w / 2 + EMB_FALL;
+      let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+      for (const [x, z] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      const i0 = Math.max(0, Math.floor((x0 - R - xmin) / dx)), i1 = Math.min(nx, Math.ceil((x1 + R - xmin) / dx));
+      const j0 = Math.max(0, Math.floor((z0 - R - zmin) / dz)), j1 = Math.min(nz, Math.ceil((z1 + R - zmin) / dz));
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const x = xmin + i * dx, z = zmin + j * dz;
+          if (stops.some((e) => (x - e.x) * e.ux + (z - e.z) * e.uz < 0)) continue;
+          let best = null;
+          for (let k = 1; k < pts.length; k++) {
+            const q = World.closest({ ax: pts[k - 1][0], az: pts[k - 1][1], bx: pts[k][0], bz: pts[k][1] }, x, z);
+            if (!best || q.d < best.d) best = { ...q, s: acc[k - 1] + (acc[k] - acc[k - 1]) * q.t };
+          }
+          const lat = best.d - road.w / 2;
+          if (lat >= EMB_FALL) continue;
+          const y = this.rampAt(road, best.s, best.px, best.pz);
+          if (y === null) continue;
+          // Высота насыпи над исходной землёй у оси (на 0.3 м ниже полотна, чтобы не проступала).
+          const rise = y - road.lift - 0.3 - this.meshTerrain(best.px, best.pz, h0);
+          if (rise <= 0) continue;
+          const wt = lat <= EMB_FLAT ? 1 : 1 - (lat - EMB_FLAT) / (EMB_FALL - EMB_FLAT);
+          const n = j * (nx + 1) + i;
+          h[n] = Math.max(h[n], h0[n] + rise * wt);
+        }
+      }
+    }
+    this.embDone = true;
   }
 
   // Высота полотна подъезда к мосту в точке (x, z) на расстоянии s от начала дороги, или null.
   rampAt(road, s, x, z) {
     if (!road.ramp) return null;
     let y = null;
-    for (const { from, y: deck } of road.ramp) {
-      const d = from === 0 ? s : road.len - s;
-      if (d >= RAMP) continue;
-      const t = this.terrain(x, z) + road.lift, w = 0.5 + 0.5 * Math.cos((Math.PI * d) / RAMP);
-      const v = t + (deck + road.lift - t) * w;
+    for (const { from, y: deck, len: Lr, quad, off = 0 } of road.ramp) {
+      const d = off + (from === 0 ? s : road.len - s);
+      // Подъезд к путепроводу: парабола, у моста её уклон равен уклону настила (без излома).
+      if (d >= Lr) continue;
+      // Подъезд к путепроводу считается от рельефа до насыпи (h0), иначе насыпь поднимала бы сама себя.
+      const g = quad && this.mesh.h0 ? this.terrain(x, z) - this.meshTerrain(x, z) + this.meshTerrain(x, z, this.mesh.h0) : this.terrain(x, z);
+      const t = g + road.lift, w = quad ? (1 - d / Lr) ** 2 : 0.5 + 0.5 * Math.cos((Math.PI * d) / Lr);
+      let v = t + (deck + road.lift - t) * w;
+      // Насыпь соседней дороги (парный мост с другой высотой, примыкание) может быть выше —
+      // полотно не уходит под неё.
+      if (quad && this.embDone) v = Math.max(v, this.terrain(x, z) + road.lift);
       y = y === null ? v : Math.max(y, v);
     }
     return y;
@@ -442,17 +623,56 @@ export class World {
   }
 
   // Высота поверхности, по которой едет машина: рельеф, на дороге — её полотно (оно чуть
-  // приподнято над рельефом), на мосту — настил моста.
-  ground(x, z) {
-    const t = this.terrain(x, z);
+  // приподнято над рельефом), на мосту — настил моста. ref — текущая высота машины: поверхности
+  // выше неё больше чем на STEP (настил над головой) не считаются, иначе под мостом машину
+  // выбрасывает наверх. Без ref — самая высокая поверхность.
+  ground(x, z, ref = Infinity) {
+    const t = this.terrain(x, z), lim = ref + STEP;
     let y = t;
     for (const s of this.nearbyRoadSegments(x, z)) {
       const c = World.closest(s, x, z);
       if (c.d > s.w / 2 + 0.3) continue;
-      const ramp = s.road.ramp ? this.rampAt(s.road, s.s0 + s.len * c.t, x, z) : null;
-      y = Math.max(y, s.ya !== undefined ? s.ya + (s.yb - s.ya) * c.t : ramp ?? t + s.road.lift);
+      const v = this.#segY(s, c, x, z, t);
+      if (v <= lim) y = Math.max(y, v);
     }
     return y;
+  }
+
+  // Высота под рельсами: как ground, но путепроводы (мосты над дорогами/рельсами) пропускаются —
+  // пути идут под ними. По мосту через реку рельсы идут по настилу.
+  // Пути вдоль путепровода (dx, dz — направление пути), между его проезжими частями или рядом,
+  // идут вровень с ближайшим полотном моста или подъезда: в OSM у трамвая свой мост, а флага
+  // «мост» у рельсов в данных нет.
+  railGround(x, z, dx = 0, dz = 0) {
+    const t = this.terrain(x, z);
+    let y = t, along = null;
+    for (const s of this.segmentsNear(x, z, RAIL_ALONG + 15)) {
+      const c = World.closest(s, x, z);
+      const lifted = s.road.hump || s.road.ramp?.some((r) => r.quad);
+      if (lifted && c.d <= s.w / 2 + RAIL_ALONG && Math.abs(((s.bx - s.ax) * dx + (s.bz - s.az) * dz) / (s.len || 1)) > 0.9) {
+        if (!along || c.d < along.d) along = { d: c.d, y: this.#segY(s, c, x, z, t) };
+        continue;
+      }
+      if (s.road.hump) continue;
+      if (c.d <= s.w / 2 + 0.3) y = Math.max(y, this.#segY(s, c, x, z, t));
+    }
+    return along ? Math.max(y, along.y) : y;
+  }
+
+  // Высота полотна дороги road в точке (ближайший её отрезок рядом) или null.
+  roadY(road, x, z) {
+    let best = null;
+    for (const s of this.nearbyRoadSegments(x, z)) {
+      if (s.road !== road) continue;
+      const c = World.closest(s, x, z);
+      if (!best || c.d < best.c.d) best = { s, c };
+    }
+    return best && this.#segY(best.s, best.c, x, z, this.terrain(x, z));
+  }
+
+  #segY(s, c, x, z, t) {
+    if (s.ya !== undefined) return s.ya + (s.yb - s.ya) * c.t;
+    return (s.road.ramp ? this.rampAt(s.road, s.s0 + s.len * c.t, x, z) : null) ?? t + s.road.lift;
   }
 
   // Ближайшая дорога (для названия улицы на HUD и респауна).

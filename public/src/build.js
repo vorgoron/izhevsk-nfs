@@ -361,12 +361,13 @@ function quad(arr, a, b, c, d) {
 // ---------------------------------------------------------------- рельсы
 
 const GAUGE = 1.524; // м, русская колея
+const RAIL_DECK = 4.4; // м: ширина плиты под путём, поднятым вдоль путепровода
 
 // Рельсы квадрата: две стальные полосы на каждом пути (трамвай и железная дорога), над землёй
 // или полотном дороги. Отрезки, середина которых в квадрате.
-export function buildRailChunk(world, info, mat) {
+export function buildRailChunk(world, info, mat, deckMat) {
   const { x0, z0, x1, z1, data } = info;
-  const pos = [];
+  const pos = [], deck = [];
   for (const r of data.rails) {
     const p = r.p;
     for (let i = 1; i < p.length; i++) {
@@ -376,12 +377,23 @@ export function buildRailChunk(world, info, mat) {
       const L = Math.hypot(bx - ax, bz - az);
       if (L < 0.05) continue;
       const n = Math.ceil(L / 4), dx = (bx - ax) / L, dz = (bz - az) / L;
+      // Путь поднят вдоль путепровода — под ним плита на ширину пути (соседние пути смыкаются),
+      // на насыпи подъезда плита уходит в рельеф.
+      for (let k = 0; k < n; k++) {
+        const sx = ax + ((bx - ax) * k) / n, sz = az + ((bz - az) * k) / n, ex = ax + ((bx - ax) * (k + 1)) / n, ez = az + ((bz - az) * (k + 1)) / n;
+        const sy = world.railGround(sx, sz, dx, dz), ey = world.railGround(ex, ez, dx, dz);
+        if (sy - world.terrain(sx, sz) < 1 && ey - world.terrain(ex, ez) < 1) continue;
+        const hx = -dz * RAIL_DECK / 2, hz = dx * RAIL_DECK / 2;
+        quad(deck, [sx + hx, sy, sz + hz], [ex + hx, ey, ez + hz], [ex - hx, ey, ez - hz], [sx - hx, sy, sz - hz]);
+        for (const sg of [1, -1]) quad(deck, [sx + hx * sg, sy, sz + hz * sg], [ex + hx * sg, ey, ez + hz * sg], [ex + hx * sg, ey - DECK, ez + hz * sg], [sx + hx * sg, sy - DECK, sz + hz * sg]);
+        quad(deck, [sx + hx, sy - DECK, sz + hz], [ex + hx, ey - DECK, ez + hz], [ex - hx, ey - DECK, ez - hz], [sx - hx, sy - DECK, sz - hz]);
+      }
       for (const side of [-1, 1]) {
         const ox = -dz * (GAUGE / 2) * side, oz = dx * (GAUGE / 2) * side;
         for (let k = 0; k < n; k++) {
           const t0 = (k / n) * L, t1 = ((k + 1) / n) * L;
           const sx = ax + dx * t0 + ox, sz = az + dz * t0 + oz, ex = ax + dx * t1 + ox, ez = az + dz * t1 + oz;
-          const sy = world.ground(sx, sz) + 0.06, ey = world.ground(ex, ez) + 0.06;
+          const sy = world.railGround(sx, sz, dx, dz) + 0.06, ey = world.railGround(ex, ez, dx, dz) + 0.06;
           const wx = -dz * 0.045, wz = dx * 0.045;
           // Верх рельса и две боковины (низкий брусок).
           pos.push(sx - wx, sy, sz - wz, ex - wx, ey, ez - wz, ex + wx, ey, ez + wz, sx - wx, sy, sz - wz, ex + wx, ey, ez + wz, sx + wx, sy, sz + wz);
@@ -399,7 +411,15 @@ export function buildRailChunk(world, info, mat) {
   geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, mat);
   m.receiveShadow = true;
-  return m;
+  if (!deck.length || !deckMat) return m;
+  const g = new THREE.Group();
+  const dg = new THREE.BufferGeometry();
+  dg.setAttribute('position', new THREE.Float32BufferAttribute(deck, 3));
+  dg.computeVertexNormals();
+  const dm = new THREE.Mesh(dg, deckMat);
+  dm.castShadow = dm.receiveShadow = true;
+  g.add(m, dm);
+  return g;
 }
 
 // ---------------------------------------------------------------- здания

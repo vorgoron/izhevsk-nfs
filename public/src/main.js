@@ -325,7 +325,7 @@ async function main() {
     // Наклон: поднимаем камеру по дуге вокруг машины.
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
     const want = new THREE.Vector3(car.pos.x - f.x * back * cp, car.y + up + back * sp, car.pos.y - f.y * back * cp);
-    want.y = Math.max(want.y, world.ground(want.x, want.z) + 1.2);
+    want.y = Math.max(want.y, world.ground(want.x, want.z, want.y) + 1.2);
     const look = new THREE.Vector3(car.pos.x + f.x * 6, car.y + 1.3, car.pos.y + f.y * 6);
     const k = camMode === 1 ? 1 : 1 - Math.exp(-dt * 7);
     // Сглаживаем смещение камеры относительно машины, а не точку в мире: иначе на скорости
@@ -337,7 +337,7 @@ async function main() {
     camPos.lerp(want, k);
     camLook.lerp(look, k);
     camera.position.copy(camPos).add(carP);
-    camera.position.y = Math.max(camera.position.y, world.ground(camera.position.x, camera.position.z) + 1);
+    camera.position.y = Math.max(camera.position.y, world.ground(camera.position.x, camera.position.z, camera.position.y) + 1);
     const lookAt = camLook.clone().add(carP);
     const shake = car.impact * 0.6 + (car.nitroOn ? 0.07 : 0) + (car.offroad ?? 0) * Math.min(1, speed / 20) * 0.07;
     if (shake > 0) {
