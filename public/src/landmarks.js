@@ -1,11 +1,12 @@
 // Достопримечательности: процедурные модели «по мотивам», вписанные в контуры из OSM.
 // Пропорции приблизительные — узнаваемый силуэт, а не обмер.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { World } from './world.js';
 
 const lambert = (color, extra = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
 const M = {
-  brick: lambert('#9a3f2c'),
+  brick: lambert('#a8452f'),
   white: lambert('#f2eee4'),
   cream: lambert('#ecd9a0'),
   stone: lambert('#b9b3a6'),
@@ -24,6 +25,8 @@ const M = {
   yellow: lambert('#efe3b0'),
   roofGreen: lambert('#2f8a50'),
   glass: lambert('#33424f'),
+  tin: new THREE.MeshPhongMaterial({ color: '#c4cdd4', specular: '#ffffff', shininess: 40 }),
+  icon: lambert('#4f6f9c'),
   gold: new THREE.MeshPhongMaterial({ color: '#d2a53a', specular: '#fff1b8', shininess: 90, emissive: '#2a1d00' }),
 };
 
@@ -167,50 +170,244 @@ function place(group, x, y, z, angle = 0) {
 
 // ---------------------------------------------------------------- модели
 
-// Свято-Михайловский собор: красный кирпич, белый декор, шатровая колокольня на западе,
-// центральный шатёр с большой главой и четыре малые главы.
+// Свято-Михайловский собор (по фото): на гранитном стилобате — восьмигранная галерея-аркада
+// с серыми скатами и восемью шпилями по углам; над ней крестообразный объём, концы рукавов —
+// щипцы-кокошники. В центре — высокий круглый барабан, корона кокошников с иконами и серебряный
+// шатёр с золотыми рёбрами, глава с крестом (~67 м). По осям — четыре шатровые башенки
+// (четверик, восьмерик со звоном, шатёр), по диагоналям — четыре золотые главы на барабанах.
+// Всё в одной системе: +x — восток, вход с запада; построено под контур радиусом ~21 м.
 function mikhailovsky({ L, W }) {
   const g = new THREE.Group();
-  const s = Math.min(W, L * 0.5) * 0.95; // основной четверик
-  const cx = L * 0.12;
-  g.add(box(s, 20, s, M.brick, cx, -3, 0));
-  g.add(box(s + 0.8, 0.7, s + 0.8, M.white, cx, 16.5, 0)); // карниз
-  g.add(box(s + 0.2, 1.5, s + 0.2, M.roof, cx, 17.2, 0));
-  g.add(pilasters(s, s, 20, cx, -3, 0));
-  g.add(windowBand(3, s, s, 6, cx, 0));
-  const turned = windowBand(3, s, s, 6, 0, 0);
-  turned.rotation.y = Math.PI / 2;
-  turned.position.x = cx;
-  g.add(turned);
-  // Апсида на востоке.
-  const apse = mesh(new THREE.CylinderGeometry(s * 0.3, s * 0.3, 14, 20, 1, false, 0, Math.PI), M.brick, cx + s / 2, 4, 0);
-  g.add(apse);
-  g.add(dome(s * 0.3, M.roof, cx + s / 2, 11, 0, 0.5));
-  // Центральный барабан, шатёр и большая глава.
-  const dr = s * 0.2;
-  g.add(cyl(dr, 9, M.brick, cx, 18.5, 0, 8));
-  g.add(cyl(dr + 0.4, 0.6, M.white, cx, 27.3, 0, 8));
-  g.add(cone(dr * 1.05, 16, M.brick, cx, 27.8, 0, 8));
-  g.add(onion(dr * 0.55, 5, cx, 42.5, 0));
-  // Малые главы по углам.
-  for (const [dx, dz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
-    const x = cx + dx * s * 0.33, z = dz * s * 0.33;
-    g.add(cyl(dr * 0.42, 5, M.brick, x, 18.5, z, 8));
-    g.add(onion(dr * 0.45, 3.6, x, 23.5, z));
+  const C8 = Math.cos(Math.PI / 8);
+  // Восьмигранная призма с гранями по осям: a0, a1 — апофемы низа и верха.
+  const oct = (a0, a1, h, mat, y0) => mesh(new THREE.CylinderGeometry(a1 / C8, a0 / C8, h, 8).rotateY(Math.PI / 8), mat, 0, y0 + h / 2, 0);
+  // Элемент фасада на радиусе r в направлении a (локальная +x элемента смотрит наружу).
+  const out = (obj, a, r, y = 0, x0 = 0, z0 = 0) => {
+    obj.position.set(x0 + Math.cos(a) * r, y, z0 + Math.sin(a) * r);
+    obj.rotation.y = -a;
+    return obj;
+  };
+
+  // --- стилобат, лестница с запада
+  g.add(oct(21, 21, 4.5, M.granite, -3));
+  for (let i = 0; i < 6; i++) g.add(box(0.6 + 0.6 * i, 1.5 - i * 0.6 + 3, 12, M.stone, -21 - 0.3 - 0.3 * i, -3, 0));
+
+  // --- галерея-аркада
+  const Ra = 18.5;
+  g.add(oct(Ra, Ra, 6.5, M.brick, 1.5));
+  g.add(oct(Ra + 0.35, Ra + 0.35, 0.6, M.white, 7.5));
+  g.add(oct(Ra + 0.7, Ra - 4.5, 2.6, M.tin, 8.1));
+  const face = 2 * Ra * Math.tan(Math.PI / 8);
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4, n = 4, w = face / n;
+    for (let i = 0; i < n; i++) {
+      const t = -face / 2 + w * (i + 0.5);
+      const front = k === 4 && (i === 1 || i === 2);
+      if (front && i === 2) continue;
+      const ww = front ? w * 2 : w;
+      const tt = front ? 0 : t;
+      const arch = archOpening(ww - 1.1, front ? 4.6 : 3.6, front);
+      arch.position.z = tt;
+      const holder = out(new THREE.Group(), a, Ra + 0.02, 2.2);
+      holder.add(arch);
+      g.add(holder);
+    }
+    // Белые парные колонки между арками.
+    for (let i = 0; i <= n; i++) {
+      const t = -face / 2 + w * i;
+      if (k === 4 && i === 2) continue;
+      const holder = out(new THREE.Group(), a, Ra + 0.25, 1.5);
+      for (const dz of [-0.32, 0.32]) holder.add(cyl(0.26, 6, M.white, 0, 0, t + dz, 8));
+      g.add(holder);
+    }
   }
-  // Трапезная и колокольня.
-  const t = Math.min(10, W * 0.42);
-  const tx = -L / 2 + t / 2;
-  const refStart = tx + t / 2, refEnd = cx - s / 2;
-  if (refEnd > refStart) g.add(box(refEnd - refStart, 13, W * 0.62, M.brick, (refStart + refEnd) / 2, -3, 0));
-  g.add(box(t, 29, t, M.brick, tx, -3, 0));
-  g.add(pilasters(t, t, 29, tx, -3, 0));
-  g.add(windowBand(2, t, t, 14, tx, 0));
-  g.add(box(t + 0.6, 0.7, t + 0.6, M.white, tx, 24, 0));
-  g.add(cyl(t * 0.42, 9, M.brick, tx, 26, 0, 8));
-  g.add(colonnade(8, t * 0.42, 6, 0.25, M.white, tx, 27.5, 0)); // звон
-  g.add(cone(t * 0.46, 19, M.brick, tx, 35, 0, 8));
-  g.add(onion(t * 0.17, 3.5, tx, 54, 0));
+  // Шпили по углам галереи.
+  for (let k = 0; k < 8; k++) {
+    const a = Math.PI / 8 + (k * Math.PI) / 4, r = Ra / C8 - 1.6;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    g.add(box(1.5, 1.6, 1.5, M.white, x, 9, z));
+    g.add(cone(0.85, 5.5, M.tin, x, 10.6, z, 8));
+    g.add(ribs(8, 0.85, 0.05, 10.6, 16.1, x, z, 0.12));
+    g.add(onion(0.35, 0.9, x, 15.8, z, false));
+  }
+
+  // --- четверик и рукава креста
+  const C = 12.5, A = 15, B = 7.5, Ht = 19;
+  g.add(box(2 * C, 17.5, 2 * C, M.brick, 0, -1.5, 0));
+  g.add(box(2 * C + 0.6, 0.6, 2 * C + 0.6, M.white, 0, 15.6, 0));
+  g.add(box(2 * C, 0.6, 2 * C, M.tin, 0, 16.2, 0));
+  for (let k = 0; k < 4; k++) {
+    const a = (k * Math.PI) / 2;
+    const arm = out(new THREE.Group(), a, 0);
+    arm.add(box(A, Ht - 1.5, 2 * B, M.brick, A / 2, 1.5, 0));
+    arm.add(box(A + 0.3, 0.6, 2 * B + 0.6, M.white, A / 2 + 0.15, Ht - 0.6, 0));
+    arm.add(gableRoof(A - 0.4, B + 0.4, 4.6, M.tin, 0, Ht));
+    // Щипец-кокошник: белая кайма и кирпичное поле.
+    arm.add(kokoshnik(2 * B + 0.8, 6.6, 0.5, M.white, A + 0.2, Ht - 0.4, 0));
+    arm.add(kokoshnik(2 * B - 1.4, 5.2, 0.5, M.brick, A + 0.35, Ht - 0.4, 0));
+    arm.add(archWindow(1.7, 3.2, A + 0.45, Ht + 0.4, 0));
+    // Белые лопатки на углах рукава и окна фасада.
+    for (const s of [-1, 1]) arm.add(box(0.6, Ht - 9.5, 0.9, M.white, A + 0.1, 9.5, s * (B - 0.3)));
+    for (const z of [-4.2, 0, 4.2]) arm.add(archWindow(1.6, z ? 4 : 5, A + 0.05, 11.3, z));
+    g.add(arm);
+  }
+  // Окна и лопатки на гранях четверика за рукавами.
+  for (let k = 0; k < 4; k++) {
+    const a = (k * Math.PI) / 2;
+    const side = out(new THREE.Group(), a, 0);
+    for (const s of [-1, 1]) {
+      side.add(archWindow(1.5, 3.4, C + 0.05, 11, s * 10));
+      side.add(box(0.6, 6.6, 0.9, M.white, C + 0.1, 9.5, s * (C - 0.3)));
+    }
+    g.add(side);
+  }
+
+  // --- центральный барабан, корона кокошников, шатёр
+  const Rd = 7.4;
+  g.add(cyl(Rd, 21, M.brick, 0, 16, 0, 24));
+  g.add(cyl(Rd + 0.3, 0.6, M.white, 0, 20.6, 0, 24));
+  g.add(cyl(Rd + 0.3, 0.6, M.white, 0, 29.4, 0, 24));
+  for (let i = 0; i < 12; i++) {
+    const a = ((i + 0.5) * Math.PI * 2) / 12;
+    g.add(out(archWindow(1.7, 5.4, 0, 0, 0), a, Rd + 0.02, 22.6));
+    g.add(out(box(0.5, 8.8, 0.7, M.white, 0, 0, 0), a + Math.PI / 12, Rd + 0.1, 21.2));
+  }
+  for (let i = 0; i < 16; i++) g.add(out(kokoshnik(2.6, 2.4, 0.4, M.white, 0, 0, 0), (i * Math.PI * 2) / 16, Rd + 0.05, 30.4));
+  g.add(cyl(Rd + 0.5, 0.7, M.white, 0, 35.6, 0, 24));
+  for (let i = 0; i < 12; i++) {
+    const a = (i * Math.PI * 2) / 12;
+    g.add(out(kokoshnik(3.6, 4.6, 0.5, M.white, 0, 0, 0), a, Rd + 0.45, 36.2));
+    g.add(out(kokoshnik(2.2, 3.1, 0.5, M.icon, 0, 0, 0), a, Rd + 0.6, 36.6));
+    g.add(out(cone(0.3, 2.2, M.white, 0, 0, 0, 6), a + Math.PI / 12, Rd + 0.4, 36.3));
+  }
+  const tY = 37.6, tH = 19.5, tr0 = Rd + 0.2, tr1 = 1.1;
+  g.add(cyl(tr0, tH, M.tin, 0, tY, 0, 16, tr1));
+  g.add(ribs(16, tr0, tr1, tY, tY + tH, 0, 0, 0.22));
+  for (const [y, r] of [[tY + 0.1, tr0 + 0.15], [tY + tH * 0.5, (tr0 + tr1) / 2 + 0.1]]) g.add(cyl(r, 0.35, M.gold, 0, y, 0, 16, r - 0.05));
+  const top = tY + tH;
+  g.add(cyl(1.5, 0.5, M.gold, 0, top - 0.2, 0, 12));
+  g.add(cyl(1.0, 2.2, M.tin, 0, top + 0.3, 0, 12));
+  g.add(cyl(1.6, 0.7, M.gold, 0, top + 2.5, 0, 12));
+  g.add(onion(2.3, 4.6, 0, top + 3.2, 0));
+
+  // --- шатровые башенки по осям
+  const Dt = 11.6, sq = 5.4;
+  for (let k = 0; k < 4; k++) {
+    const a = (k * Math.PI) / 2;
+    const x = Math.cos(a) * Dt, z = Math.sin(a) * Dt;
+    g.add(box(sq, 27, sq, M.brick, x, 1.5, z));
+    g.add(pilasters(sq, sq, 27, x, 1.5, z));
+    g.add(box(sq + 0.5, 0.6, sq + 0.5, M.white, x, 28.2, z));
+    for (let j = 0; j < 4; j++) g.add(out(archWindow(1.3, 2.8, 0, 0, 0), (j * Math.PI) / 2, sq / 2 + 0.02, 24.6, x, z));
+    const r8 = sq / 2 * 0.95;
+    g.add(cyl(r8, 7.4, M.brick, x, 28.8, z, 8));
+    g.add(cyl(r8 + 0.3, 0.5, M.white, x, 36.2, z, 8));
+    for (let j = 0; j < 8; j++) {
+      const b = (j * Math.PI) / 4 + Math.PI / 8;
+      g.add(out(archOpening(1.2, 3, false), b, r8 * Math.cos(Math.PI / 8) + 0.02, 30.6, x, z));
+      g.add(out(kokoshnik(1.7, 1.6, 0.3, M.white, 0, 0, 0), b, r8 * Math.cos(Math.PI / 8) + 0.1, 36.6, x, z));
+    }
+    g.add(cyl(r8 * 0.9, 9.5, M.tin, x, 36.7, z, 8, 0.35));
+    g.add(ribs(8, r8 * 0.9, 0.35, 36.7, 46.2, x, z, 0.16));
+    g.add(cyl(0.55, 0.9, M.gold, x, 46.1, z, 8));
+    g.add(onion(0.9, 2.1, x, 46.9, z));
+  }
+
+  // --- золотые главы по диагоналям
+  const Dg = 12.6;
+  for (let k = 0; k < 4; k++) {
+    const a = Math.PI / 4 + (k * Math.PI) / 2;
+    const x = Math.cos(a) * Dg, z = Math.sin(a) * Dg, rd = 3.4;
+    g.add(cyl(rd, 11.4, M.brick, x, 16, z, 16));
+    g.add(cyl(rd + 0.25, 0.5, M.white, x, 18.4, z, 16));
+    g.add(colonnade(8, rd + 0.1, 5.8, 0.2, M.white, x, 18.9, z));
+    for (let j = 0; j < 8; j++) g.add(out(archWindow(0.9, 3, 0, 0, 0), (j + 0.5) * Math.PI / 4, rd + 0.02, 20, x, z));
+    for (let j = 0; j < 12; j++) g.add(out(kokoshnik(1.7, 1.5, 0.3, M.white, 0, 0, 0), (j * Math.PI) / 6, rd + 0.05, 24.8, x, z));
+    g.add(cyl(rd + 0.4, 0.6, M.white, x, 26.6, z, 16));
+    g.add(onion(rd * 1.22, 7.4, x, 27.2, z));
+  }
+
+  const k = Math.min(L, W) / 2 / 21;
+  g.scale.setScalar(k);
+  return mergeByMaterial(g);
+}
+
+// Арочный проём (тёмный) в белой раме; фасад смотрит в +x, низ проёма на y = 0.
+function archOpening(w, h, big) {
+  const g = new THREE.Group();
+  const r = w / 2;
+  g.add(box(0.2, h - r + 0.3, w + 0.5, M.white, -0.05, 0, 0));
+  g.add(mesh(new THREE.CylinderGeometry(r + 0.25, r + 0.25, 0.2, 14, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.white, -0.05, h - r, 0));
+  g.add(box(0.3, h - r, w, M.dark, 0.02, 0, 0));
+  g.add(mesh(new THREE.CylinderGeometry(r, r, 0.3, 14, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.dark, 0.02, h - r, 0));
+  if (big) g.add(kokoshnik(w + 1.6, 2.6, 0.4, M.white, 0.95, h + 0.4, 0));
+  return g;
+}
+
+// Арочное окно: белый наличник с «гирькой», тёмное стекло. Фасад в +x, низ окна на y.
+function archWindow(w, h, x, y, z) {
+  const g = new THREE.Group();
+  const r = w / 2;
+  g.add(box(0.2, h + 0.3, w + 0.6, M.white, 0, -0.3, 0));
+  g.add(mesh(new THREE.CylinderGeometry(r + 0.3, r + 0.3, 0.2, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.white, 0, h - r, 0));
+  g.add(box(0.2, h - r, w, M.glass, 0.08, 0, 0));
+  g.add(mesh(new THREE.CylinderGeometry(r, r, 0.2, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.glass, 0.08, h - r, 0));
+  g.add(box(0.35, 0.35, w + 0.9, M.white, 0.05, -0.55, 0));
+  g.position.set(x, y, z);
+  return g;
+}
+
+// Кокошник (килевидная арка) шириной w, высотой h, толщиной d; фасад в +x, основание на y.
+function kokoshnik(w, h, d, mat, x, y, z) {
+  const hw = w / 2, s = new THREE.Shape();
+  s.moveTo(-hw, 0);
+  s.lineTo(-hw, h * 0.3);
+  s.bezierCurveTo(-hw, h * 0.78, -hw * 0.15, h * 0.62, 0, h);
+  s.bezierCurveTo(hw * 0.15, h * 0.62, hw, h * 0.78, hw, h * 0.3);
+  s.lineTo(hw, 0);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: d, bevelEnabled: false, curveSegments: 6 }).translate(0, 0, -d / 2).rotateY(Math.PI / 2);
+  return mesh(geo, mat, x, y, z);
+}
+
+// Двускатная крыша над рукавом: от x0 на длину len, полуширина b, высота h, конёк вдоль x.
+function gableRoof(len, b, h, mat, x0, y0) {
+  const s = new THREE.Shape([new THREE.Vector2(-b, 0), new THREE.Vector2(b, 0), new THREE.Vector2(0, h)]);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: len, bevelEnabled: false }).rotateY(Math.PI / 2);
+  return mesh(geo, mat, x0, y0, 0);
+}
+
+// Золотые рёбра шатра: n рёбер по рёбрам CylinderGeometry(r1, r0, …, n) от (r0, y0) до (r1, y1).
+function ribs(n, r0, r1, y0, y1, x, z, t) {
+  const g = new THREE.Group();
+  const up = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < n; i++) {
+    const th = (i * Math.PI * 2) / n, sx = Math.sin(th), sz = Math.cos(th);
+    const p0 = new THREE.Vector3(sx * (r0 + t * 0.4), y0, sz * (r0 + t * 0.4));
+    const p1 = new THREE.Vector3(sx * (r1 + t * 0.4), y1, sz * (r1 + t * 0.4));
+    const dir = p1.clone().sub(p0);
+    const m = mesh(new THREE.BoxGeometry(t, dir.length(), t), M.gold);
+    m.position.copy(p0).add(p1).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(up, dir.normalize());
+    g.add(m);
+  }
+  g.position.set(x, 0, z);
+  return g;
+}
+
+// Сотни деталей — в несколько мешей, по одному на материал (иначе сотни вызовов отрисовки).
+function mergeByMaterial(root) {
+  root.updateMatrixWorld(true);
+  const byMat = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    let geo = o.geometry.clone().applyMatrix4(o.matrixWorld);
+    if (geo.index) geo = geo.toNonIndexed();
+    for (const k of Object.keys(geo.attributes)) if (!['position', 'normal'].includes(k)) geo.deleteAttribute(k);
+    if (!byMat.has(o.material)) byMat.set(o.material, []);
+    byMat.get(o.material).push(geo);
+  });
+  const g = new THREE.Group();
+  for (const [mat, geos] of byMat) g.add(mesh(mergeGeometries(geos), mat));
   return g;
 }
 
