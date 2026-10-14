@@ -16,7 +16,7 @@ import { Sky, HORIZON } from './sky.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
 import { Trams } from './trams.js';
-import { NitroFX, DustFX } from './effects.js';
+import { NitroFX, DustFX, ExhaustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
 
@@ -121,10 +121,13 @@ async function main() {
     scene.add(m);
     car.setModel(m, MODELS[key].stats);
     nitroFx.attach(m);
+    exhaustFx.attach(m);
     car.update(0, {}); // поставить новую модель на место старой
   };
   const nitroFx = new NitroFX(scene);
   const dustFx = new DustFX(scene);
+  const exhaustFx = new ExhaustFX(scene);
+  exhaustFx.attach(car.model);
   nitroFx.attach(car.model);
   const race = new Race(world, scene);
 
@@ -579,6 +582,7 @@ async function main() {
     traffic.update(dt, car);
     nitroFx.update(dt, car);
     dustFx.update(dt, car);
+    exhaustFx.update(dt, car);
     sound.update(dt, car, inp, race);
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);

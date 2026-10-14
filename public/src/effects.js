@@ -200,3 +200,93 @@ export class DustFX {
     this.points.geometry.attributes.color.needsUpdate = true;
   }
 }
+
+// Выхлоп из трубы: клубы растут, поднимаются, сносятся назад и тают. На холостых — редкие светлые
+// облачка, под газом — чаще и гуще; заглох (пустой бак, вода) — нет. Точки разного размера:
+// PointsMaterial с атрибутом aSize (туман и прозрачность остаются от штатного материала).
+const SMOKE = 240, SMOKE_LIFE = 1.4;
+
+export class ExhaustFX {
+  constructor(scene) {
+    this.pos = new Float32Array(SMOKE * 3);
+    this.col = new Float32Array(SMOKE * 4);
+    this.size = new Float32Array(SMOKE);
+    this.vel = new Float32Array(SMOKE * 3);
+    this.life = new Float32Array(SMOKE);
+    this.max = new Float32Array(SMOKE); // своя длительность жизни у клуба
+    this.dark = new Float32Array(SMOKE);
+    this.thin = new Float32Array(SMOKE);
+    this.size0 = new Float32Array(SMOKE);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
+    const mat = new THREE.PointsMaterial({ size: 1, map: glowDot(), vertexColors: true, transparent: true, depthWrite: false });
+    mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('void main() {', 'attribute float aSize;\nvoid main() {')
+        .replace('gl_PointSize = size;', 'gl_PointSize = size * aSize;');
+    };
+    this.points = new THREE.Points(geo, mat);
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+    this.next = 0;
+    this.carry = 0;
+    this.exhaust = new THREE.Vector3();
+  }
+
+  // Труба — там же, где пламя нитро: слева сзади, под бампером.
+  attach(model) {
+    this.exhaust.set(-0.45, 0.33, -(model.userData.length ?? 4.2) / 2 - 0.1);
+  }
+
+  update(dt, car) {
+    const speed = Math.abs(car.speed);
+    const running = car.fuel > 0 && car.sink === 0;
+    const throttle = Math.min(1, Math.max(0, (car.accel_ ?? 0) / 5));
+    // На ходу клубы чаще (иначе за машиной цепочка точек), но прозрачнее — дым размазан по пути.
+    const spread = 1 + Math.min(speed, 30) / 12;
+    const rate = running ? Math.min(150, (6 + 34 * throttle) * spread) : 0;
+    this.carry += rate * dt;
+    const m = car.model.matrixWorld, p = new THREE.Vector3(), back = new THREE.Vector3(0, 0, -1).transformDirection(m);
+    while (this.carry >= 1) {
+      this.carry--;
+      const i = this.next;
+      this.next = (this.next + 1) % SMOKE;
+      p.copy(this.exhaust).applyMatrix4(m);
+      // Случайная точка на отрезке, пройденном за кадр, — иначе на скорости дым идёт пятнами.
+      const back1 = Math.random() * dt;
+      this.pos.set([p.x - car.vel.x * back1, p.y, p.z - car.vel.y * back1], i * 3);
+      const s = 1.2 + throttle * 2.5;
+      this.vel.set([
+        car.vel.x * 0.15 + back.x * s + (Math.random() - 0.5) * 0.6, // почти не увлекается машиной — висит в воздухе
+        0.25 + Math.random() * 0.35,
+        car.vel.y * 0.15 + back.z * s + (Math.random() - 0.5) * 0.6,
+      ], i * 3);
+      this.max[i] = this.life[i] = SMOKE_LIFE * (0.7 + Math.random() * 0.6);
+      this.dark[i] = throttle;
+      this.thin[i] = 1 / spread;
+      this.size0[i] = 0.35 + Math.min(speed, 30) * 0.03; // на скорости клуб сразу растянут потоком
+    }
+    for (let i = 0; i < SMOKE; i++) {
+      const j = i * 3, c = i * 4;
+      if (this.life[i] <= 0) { this.col[c + 3] = 0; this.size[i] = 0; continue; }
+      this.life[i] -= dt;
+      const drag = Math.exp(-2.2 * dt);
+      this.vel[j] *= drag;
+      this.vel[j + 2] *= drag;
+      this.pos[j] += this.vel[j] * dt;
+      this.pos[j + 1] += this.vel[j + 1] * dt;
+      this.pos[j + 2] += this.vel[j + 2] * dt;
+      const age = 1 - Math.max(0, this.life[i] / this.max[i]); // 0 → 1
+      this.size[i] = this.size0[i] + 1.9 * Math.sqrt(age);
+      const g = 0.82 - 0.3 * this.dark[i];
+      // Быстро проявляется у трубы, медленно тает.
+      this.col.set([g, g, g * 1.02, (0.22 + 0.2 * this.dark[i]) * (0.4 + 0.6 * this.thin[i]) * Math.min(1, age * 8) * (1 - age)], c);
+    }
+    const geo = this.points.geometry;
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+    geo.attributes.aSize.needsUpdate = true;
+  }
+}
