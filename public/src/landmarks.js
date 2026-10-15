@@ -27,6 +27,7 @@ const M = {
   glass: lambert('#33424f'),
   tin: new THREE.MeshPhongMaterial({ color: '#c4cdd4', specular: '#ffffff', shininess: 40 }),
   icon: lambert('#4f6f9c'),
+  band: lambert('#4766b0'),
   gold: new THREE.MeshPhongMaterial({ color: '#d2a53a', specular: '#fff1b8', shininess: 90, emissive: '#2a1d00' }),
 };
 
@@ -509,6 +510,178 @@ function troitsky({ L, W }) {
   g.add(cone(t * 0.06, 9, M.gold, tx, 31.3 + t * 0.5, 0, 8));
   g.add(cross(2.4, tx, 40.5 + t * 0.5, 0));
   return g;
+}
+
+// Храм Казанской иконы Божией Матери (Карла Маркса, 220; по фото): красный кирпич в «русском стиле».
+// Высокий цоколь-терраса с оградой и лестницей с запада; на нём двухэтажный объём — арочные окна
+// в белых наличниках, парные окна под кокошником, квадратные ниши, синий пояс, ступенчатый карниз,
+// щипцы над западным фасадом, низкая вальмовая крыша. Над входом с запада — колокольня: четверик,
+// восьмерик звона, золотой шатёр со слухами и главкой. Над серединой — четверик-постамент,
+// барабан с короной кокошников и большая золотая луковица. На востоке — апсида.
+// +x — восток; построено под контур 28 × 15 м и растянуто под фактический.
+function kazansky({ L, W }) {
+  const g = new THREE.Group();
+  const C8 = Math.cos(Math.PI / 8);
+  const oct = (a0, a1, h, mat, x, y0) => mesh(new THREE.CylinderGeometry(a1 / C8, a0 / C8, h, 8).rotateY(Math.PI / 8), mat, x, y0 + h / 2, 0);
+  const out = (obj, a, r, y = 0, x0 = 0, z0 = 0) => {
+    obj.position.set(x0 + Math.cos(a) * r, y, z0 + Math.sin(a) * r);
+    obj.rotation.y = -a;
+    return obj;
+  };
+  // Квадратная ниша: белая рамка с кирпичным полем; фасад в +x.
+  const niche = (s, y, z) => {
+    const n = new THREE.Group();
+    n.add(box(0.12, s, s, M.white, 0.02, y, z));
+    n.add(box(0.14, s - 0.24, s - 0.24, M.brick, 0.05, y + 0.12, z));
+    return n;
+  };
+  // Треугольный щипец шириной w, высотой h; фасад в +x, основание на y.
+  const gable = (w, h, d, mat, x, y, z) => {
+    const s = new THREE.Shape([new THREE.Vector2(-w / 2, 0), new THREE.Vector2(w / 2, 0), new THREE.Vector2(0, h)]);
+    return mesh(new THREE.ExtrudeGeometry(s, { depth: d, bevelEnabled: false }).translate(0, 0, -d / 2).rotateY(Math.PI / 2), mat, x, y, z);
+  };
+
+  const P = 2.4; // верх цоколя-террасы
+  const bx0 = -12.6, bx1 = 9.2, bz = 6.2, H = P + 11.2; // основной объём и его карниз
+  const bcx = (bx0 + bx1) / 2, bl = bx1 - bx0;
+
+  // --- цоколь-терраса, ограда, лестница с запада
+  g.add(box(28, P + 3 - 0.1, 15, M.brick, 0, -3, 0)); // верх под плитой террасы, иначе мерцает
+  g.add(box(28.2, 0.3, 15.2, M.white, 0, P - 0.3, 0));
+  for (const [a, r, len] of [[Math.PI, 14, 15], [Math.PI / 2, 7.5, 28], [-Math.PI / 2, 7.5, 28]]) {
+    const side = out(new THREE.Group(), a, r);
+    for (let i = 0; i < Math.floor(len / 2.4); i++) side.add(box(0.15, 1.4, 1.1, M.dark, 0.05, -0.2, -len / 2 + 1.2 + i * 2.4));
+    g.add(side);
+  }
+  for (const [a, r, len] of [[Math.PI, 13.9, 15], [Math.PI / 2, 7.4, 28], [-Math.PI / 2, 7.4, 28], [0, 13.9, 15]]) {
+    const rail = out(new THREE.Group(), a, r, P);
+    const gap = a === Math.PI ? 1.9 : 0; // проход к лестнице
+    for (const [z0, z1] of gap ? [[-len / 2, -gap], [gap, len / 2]] : [[-len / 2, len / 2]]) {
+      rail.add(box(0.07, 0.07, z1 - z0, M.dark, 0, 1.0, (z0 + z1) / 2));
+      rail.add(box(0.05, 0.05, z1 - z0, M.dark, 0, 0.15, (z0 + z1) / 2));
+      for (let z = z0; z <= z1 + 1e-6; z += 0.45) rail.add(box(0.05, 1.0, 0.05, M.dark, 0, 0.1, z));
+    }
+    g.add(rail);
+  }
+  const steps = 6;
+  for (let i = 0; i < steps; i++) {
+    const len = 0.55 * (steps - i);
+    g.add(box(len, 3 + ((i + 1) * P) / steps - 0.02, 3.6, M.stone, -14 - len / 2, -3, 0));
+  }
+  for (const s of [-1, 1]) g.add(box(0.55 * steps, 3 + P + 0.4, 0.5, M.brick, -14 - (0.55 * steps) / 2, -3, s * 2.05));
+
+  // --- основной объём: пояса и карниз
+  g.add(box(bl, H - P, 2 * bz, M.brick, bcx, P, 0));
+  g.add(box(bl + 0.2, 0.4, 2 * bz + 0.2, M.white, bcx, P, 0));
+  g.add(box(bl + 0.15, 0.4, 2 * bz + 0.15, M.band, bcx, P + 5.3, 0));
+  g.add(box(bl + 0.3, 0.45, 2 * bz + 0.3, M.white, bcx, H - 0.9, 0));
+  g.add(box(bl + 0.7, 0.5, 2 * bz + 0.7, M.brick, bcx, H - 0.45, 0));
+  g.add(box(bl + 0.9, 0.15, 2 * bz + 0.9, M.white, bcx, H + 0.08 - 0.15, 0)); // чуть выше кирпича — без мерцания
+  const roof = hipRoof(bl + 0.6, 2 * bz + 0.6, 2.4, H, M.tin);
+  roof.position.x = bcx;
+  g.add(roof);
+
+  // Фасад с окнами: bays — оси проёмов по фасаду (локальная z), фасад смотрит в +x.
+  const facade = (len, bays, portal) => {
+    const f = new THREE.Group();
+    for (const t of bays) {
+      if (portal && t === 0) {
+        f.add(archOpening(2.6, 3.5, false).translateY(P + 0.3).translateZ(t));
+        f.add(box(0.25, 0.8, 3.8, M.white, 0.1, P + 4.1, t)); // табличка над порталом
+      } else {
+        f.add(archWindow(1.2, 2.4, 0.02, P + 1.6, t));
+      }
+      for (const dz of [-0.8, 0.8]) f.add(archWindow(1.0, 2.4, 0.02, P + 6.3, t + dz));
+      f.add(kokoshnik(3.6, 1.3, 0.2, M.white, 0.08, P + 8.95, t));
+    }
+    // Ниши между осями и у краёв.
+    const edges = [-len / 2 + 0.9, ...bays.slice(1).map((t, i) => (t + bays[i]) / 2), len / 2 - 0.9]
+      .filter((t) => Math.min(...bays.map((b) => Math.abs(t - b))) > 1.95);
+    for (const t of edges) for (const y of [P + 1.3, P + 2.6, P + 3.9, P + 6.3, P + 7.6, P + 8.9]) f.add(niche(0.8, y, t));
+    return f;
+  };
+  const xs = [-9.2, -3.6, 1.8, 6.2]; // оси боковых фасадов (по x)
+  g.add(out(facade(bl, xs.map((x) => -(x - bcx))), Math.PI / 2, bz, 0, bcx, 0));
+  g.add(out(facade(bl, xs.map((x) => x - bcx)), -Math.PI / 2, bz, 0, bcx, 0));
+  g.add(out(facade(2 * bz, [-4, 0, 4], true), Math.PI, -bx0));
+  // Щипцы над западным фасадом по сторонам колокольни и над западными осями боковых фасадов.
+  for (const s of [-1, 1]) {
+    g.add(gable(3.2, 2.2, 0.5, M.white, bx0 - 0.1, H, s * 4.6));
+    g.add(gable(2.5, 1.6, 0.5, M.brick, bx0 - 0.3, H + 0.15, s * 4.6));
+    const sideG = out(new THREE.Group(), (s * Math.PI) / 2, bz + 0.1, 0, -9.2, 0);
+    sideG.add(gable(4.4, 2.4, 0.5, M.white, 0, H, 0));
+    sideG.add(gable(3.6, 1.8, 0.5, M.brick, 0.2, H + 0.15, 0));
+    g.add(sideG);
+  }
+
+  // --- апсида на востоке
+  const ra = 4.4, ha = 8.6;
+  g.add(mesh(new THREE.CylinderGeometry(ra, ra, ha, 20, 1, false, 0, Math.PI), M.brick, bx1, P + ha / 2, 0));
+  g.add(mesh(new THREE.CylinderGeometry(ra + 0.2, ra + 0.2, 0.4, 20, 1, false, 0, Math.PI), M.band, bx1, P + 5.5, 0));
+  g.add(mesh(new THREE.CylinderGeometry(ra + 0.35, ra + 0.35, 0.5, 20, 1, false, 0, Math.PI), M.white, bx1, P + ha - 0.25, 0));
+  g.add(dome(ra + 0.3, M.tin, bx1, P + ha, 0, 0.5));
+  for (const a of [-Math.PI / 4, 0, Math.PI / 4]) {
+    g.add(out(archWindow(1.1, 2.4, 0, 0, 0), a, ra + 0.02, P + 1.6, bx1));
+    g.add(out(archWindow(1.0, 2.2, 0, 0, 0), a, ra + 0.02, P + 6.0, bx1));
+  }
+
+  // --- колокольня над входом: четверик, восьмерик звона, шатёр
+  const tx = -9.2, ts = 6, T1 = H + 6.2; // окна четверика — выше ската крыши
+  g.add(box(ts, T1 - P, ts, M.brick, tx, P, 0));
+  for (let k = 0; k < 4; k++) {
+    const face = out(new THREE.Group(), (k * Math.PI) / 2, ts / 2, 0, tx, 0);
+    for (const dz of [-0.75, 0.75]) face.add(archWindow(0.9, 2.3, 0.02, H + 2.0, dz));
+    face.add(kokoshnik(3.0, 1.1, 0.2, M.white, 0.08, H + 4.45, 0));
+    for (const s of [-1, 1]) face.add(box(0.2, T1 - H - 0.4, 0.6, M.white, 0.05, H + 0.4, s * (ts / 2 - 0.3)));
+    g.add(face);
+  }
+  g.add(box(ts + 0.4, 0.4, ts + 0.4, M.white, tx, T1 - 0.6, 0));
+  g.add(box(ts + 0.8, 0.5, ts + 0.8, M.brick, tx, T1 - 0.2, 0));
+  const a8 = 2.6, B0 = T1 + 0.6, B1 = B0 + 5;
+  g.add(oct(a8 + 0.3, a8 + 0.3, 0.3, M.white, tx, T1 + 0.3));
+  g.add(oct(a8, a8, B1 - B0, M.brick, tx, B0));
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4;
+    g.add(out(archOpening(1.3, 3.2, false), a, a8 + 0.02, B0 + 0.8, tx));
+    g.add(out(cyl(0.16, B1 - B0, M.white, 0, 0, 0, 6), a + Math.PI / 8, a8 / C8 - 0.05, B0, tx));
+    g.add(out(kokoshnik(1.6, 1.0, 0.25, M.white, 0, 0, 0), a, a8 + 0.1, B1 + 0.3, tx));
+  }
+  g.add(oct(a8 + 0.3, a8 + 0.3, 0.4, M.white, tx, B1 - 0.1));
+  const sY = B1 + 0.3, sH = 8.4;
+  g.add(oct(a8 + 0.05, 0.25, sH, M.gold, tx, sY));
+  for (let k = 0; k < 4; k++) { // слухи
+    const a = (k * Math.PI) / 2, y = sY + 1.6, r = (a8 + 0.05) * (1 - 1.6 / sH) + 0.1;
+    const d = out(new THREE.Group(), a, r, y, tx);
+    d.add(box(0.7, 1.3, 0.9, M.gold, 0, 0, 0));
+    d.add(archWindow(0.45, 0.8, 0.36, 0.25, 0));
+    d.add(kokoshnik(1.0, 0.7, 0.75, M.gold, 0, 1.3, 0));
+    g.add(d);
+  }
+  g.add(cyl(0.35, 0.8, M.gold, tx, sY + sH - 0.3, 0, 8));
+  g.add(onion(0.85, 1.9, tx, sY + sH + 0.4, 0));
+
+  // --- средний четверик, барабан с короной кокошников, большая глава
+  const dx = 2.2, ps = 7.4, P1 = H + 3.2, rd = 3.0, D1 = P1 + 4; // постамент выше конька
+  g.add(box(ps, P1 - H + 1, ps, M.brick, dx, H - 1, 0));
+  g.add(box(ps + 0.4, 0.45, ps + 0.4, M.white, dx, P1 - 0.4, 0));
+  for (let k = 0; k < 4; k++) g.add(out(kokoshnik(3.2, 1.4, 0.3, M.white, 0, 0, 0), (k * Math.PI) / 2, ps / 2 - 0.1, P1, dx));
+  g.add(cyl(rd, D1 - P1, M.brick, dx, P1, 0, 16));
+  g.add(cyl(rd + 0.2, 0.35, M.white, dx, P1 + 0.3, 0, 16));
+  for (let i = 0; i < 8; i++) {
+    const a = ((i + 0.5) * Math.PI) / 4;
+    g.add(out(archWindow(0.9, 2.2, 0, 0, 0), a, rd + 0.02, P1 + 1.1, dx));
+    g.add(out(cyl(0.14, D1 - P1 - 0.6, M.white, 0, 0, 0, 6), a + Math.PI / 8, rd + 0.1, P1 + 0.6, dx));
+  }
+  g.add(cyl(rd + 0.3, 0.4, M.white, dx, D1 - 0.2, 0, 16));
+  for (let i = 0; i < 12; i++) g.add(out(kokoshnik(1.5, 1.2, 0.25, M.white, 0, 0, 0), (i * Math.PI) / 6, rd + 0.1, D1 + 0.2, dx));
+  g.add(cyl(rd + 0.1, 1.2, M.brick, dx, D1 + 0.2, 0, 16));
+  g.add(cyl(rd * 0.85, 0.6, M.white, dx, D1 + 1.4, 0, 16));
+  g.add(onion(rd * 1.2, 6, dx, D1 + 1.9, 0));
+
+  const merged = mergeByMaterial(g);
+  merged.add(sign('Храм Казанской иконы', 3.4, 0.45, 0, P + 4.27, 0, 1).rotateY(-Math.PI / 2).translateZ(-bx0 + 0.3));
+  merged.scale.set(L / 28, (L / 28 + W / 15) / 2, W / 15);
+  return merged;
 }
 
 // Дом дружбы народов (улица Орджоникидзе): неоклассика — терракотовый нижний этаж, жёлтые верхние с
@@ -1004,6 +1177,14 @@ export function buildLandmarks(world) {
         const f = fit(p, 0); // храмы ориентированы алтарём на восток
         const model = { nevsky, mikhailovsky, troitsky }[lm.key];
         obj = place(model(f), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'kazansky': {
+        // Контур — повёрнутый прямоугольник: ось модели по длинной стороне, алтарём на восток.
+        let a = longestEdgeAngle(p);
+        if (Math.cos(a) < 0) a += Math.PI;
+        const f = fit(p, a);
+        obj = place(kazansky(f), f.cx, baseY(world, p), f.cz, a);
         break;
       }
       case 'residence': {
