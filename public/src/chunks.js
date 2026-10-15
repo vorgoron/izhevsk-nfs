@@ -40,13 +40,14 @@ export class ChunkManager {
   #build(ci, cj) {
     const w = this.world, info = w.chunkInfo(ci, cj);
     const group = new THREE.Group();
-    group.add(buildTerrainChunk(w, info, this.texSize, this.renderer));
-    if (info.data.runs.length) group.add(buildRoadChunk(w, info.data.runs, this.mats.roads));
-    if (info.data.buildings.length) group.add(buildBuildingChunk(w, info.data.buildings, this.mats.buildings));
+    const tag = (o, label) => ((o.userData.perf = label), o); // разбивка треугольников в `?perf`
+    group.add(tag(buildTerrainChunk(w, info, this.texSize, this.renderer), 'рельеф'));
+    if (info.data.runs.length) group.add(tag(buildRoadChunk(w, info.data.runs, this.mats.roads), 'дороги'));
+    if (info.data.buildings.length) group.add(tag(buildBuildingChunk(w, info.data.buildings, this.mats.buildings), 'дома'));
     const rails = info.data.rails.length ? buildRailChunk(w, info, this.mats.roads.rail, this.mats.roads.concrete) : null;
-    if (rails) group.add(rails);
+    if (rails) group.add(tag(rails, 'рельсы'));
     const trees = buildTreeChunk(w, info, this.mats.trees);
-    if (trees.length) group.add(...trees);
+    if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
     this.scene.add(group);
     this.loaded.set(this.#key(ci, cj), group);
   }

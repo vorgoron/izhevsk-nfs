@@ -104,8 +104,17 @@ async function main() {
   await frame();
   // Город строится квадратами вокруг игрока (chunks.js); на телефоне — ближе и проще.
   const chunks = new ChunkManager(world, scene, renderer, lite ? { radius: 800, texSize: 256 } : isTouch ? { radius: 1300, texSize: 512 } : { radius: 1800, texSize: 1024 });
-  scene.add(buildFootbridges(world, new THREE.MeshLambertMaterial({ color: '#9a968e' })));
+  // Подписи для разбивки треугольников в `?perf`: всё, что добавила в сцену make(), — под label.
+  const owned = (label, make) => {
+    const n = scene.children.length, r = make();
+    for (const o of scene.children.slice(n)) o.userData.perf = label;
+    return r;
+  };
+  const footbridges = buildFootbridges(world, new THREE.MeshLambertMaterial({ color: '#9a968e' }));
+  footbridges.userData.perf = 'мосты';
+  scene.add(footbridges);
   const landmarks = buildLandmarks(world);
+  landmarks.group.userData.perf = 'достопримечательности';
   scene.add(landmarks.group);
   const minimap = new MinimapTiles(world);
 
@@ -113,21 +122,23 @@ async function main() {
   await vehiclesReady;
   const choice = loadChoice();
   const model = buildPlayerModel(choice.model, choice.color);
+  model.userData.perf = 'машина игрока';
   scene.add(model);
   const car = new Car(world, model, MODELS[choice.model].stats);
   const setVehicle = (key, color) => {
     scene.remove(car.model);
     car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
     const m = buildPlayerModel(key, color);
+    m.userData.perf = 'машина игрока';
     scene.add(m);
     car.setModel(m, MODELS[key].stats);
     nitroFx.attach(m);
     exhaustFx.attach(m);
     car.update(0, {}); // поставить новую модель на место старой
   };
-  const nitroFx = new NitroFX(scene);
-  const dustFx = new DustFX(scene);
-  const exhaustFx = new ExhaustFX(scene);
+  const nitroFx = owned('эффекты', () => new NitroFX(scene));
+  const dustFx = owned('эффекты', () => new DustFX(scene));
+  const exhaustFx = owned('эффекты', () => new ExhaustFX(scene));
   exhaustFx.attach(car.model);
   nitroFx.attach(car.model);
   const race = new Race(world, scene);
@@ -147,11 +158,11 @@ async function main() {
   await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
   progress(0.95, 'Трафик, заправки, светофоры…');
   await frame();
-  const skyDome = new Sky(scene, world.baseTerrain(0, 0));
-  const fuel = new Fuel(world, scene);
-  const queues = new Queues(world, fuel, scene);
-  const traffic = new Traffic(world, scene);
-  const signals = new Signals(world, traffic, scene);
+  const skyDome = owned('небо', () => new Sky(scene, world.baseTerrain(0, 0)));
+  const fuel = owned('заправки', () => new Fuel(world, scene));
+  const queues = owned('очереди', () => new Queues(world, fuel, scene));
+  const traffic = owned('трафик', () => new Traffic(world, scene));
+  const signals = owned('светофоры', () => new Signals(world, traffic, scene));
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — сразу в гараж.
   const garage = new Garage(choice, {
@@ -167,7 +178,7 @@ async function main() {
 
   const sound = new Sound();
   game.sound = sound;
-  const trams = new Trams(world, scene, sound);
+  const trams = owned('трамваи', () => new Trams(world, scene, sound));
   game.trams = trams;
   // Радио всегда на экране: станция или приглушённое «Радио выкл»; при переключении надпись вспыхивает.
   let radioName;
@@ -551,7 +562,7 @@ async function main() {
   const clock = new THREE.Clock();
   const STEP = 1 / 120;
   let acc = 0;
-  const perf = flags.has('perf') ? createPerf(renderer) : null;
+  const perf = flags.has('perf') ? createPerf(renderer, scene, camera, sun) : null;
   renderer.setAnimationLoop(() => {
     perf?.begin();
     const dt = Math.min(clock.getDelta(), 0.1);

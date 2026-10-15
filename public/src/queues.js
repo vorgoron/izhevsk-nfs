@@ -58,7 +58,6 @@ export class Queues {
     this.q = new THREE.Quaternion();
     this.p = new THREE.Vector3();
     this.one = new THREE.Vector3(1, 1, 1);
-    this.zero = new THREE.Matrix4().makeScale(0, 0, 0);
   }
 
   #onStreet({ x, z }) {
@@ -195,8 +194,12 @@ export class Queues {
       });
     }
     for (const [key, meshes] of Object.entries(this.kinds)) {
-      for (let i = (used[key] ?? -1) + 1; i < meshes[0].count; i++) for (const m of meshes) m.setMatrixAt(i, this.zero);
-      for (const m of meshes) m.instanceMatrix.needsUpdate = true;
+      // Рисуем только занятые места: сжатые в точку пустые инстансы видеокарта всё равно
+      // обсчитывает — 208 машин по ~7 тыс. треугольников, дважды (кадр и тени).
+      for (const m of meshes) {
+        m.count = (used[key] ?? -1) + 1;
+        m.instanceMatrix.needsUpdate = true;
+      }
       meshes[0].instanceColor.needsUpdate = true;
     }
   }
