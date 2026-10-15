@@ -2,7 +2,6 @@
 // односторонние улицы, торможение перед впереди идущими и перед игроком, столкновения.
 import * as THREE from 'three';
 import { MODELS, vehicleParts, prism, withArches, wheelArches, ARCH_GAP } from './vehicles.js';
-import { stepRoll } from './car.js';
 import { ExhaustFX } from './effects.js';
 
 // Скорость по классу дороги, м/с. Нет в списке — трафика там нет (дворы, проезды).
@@ -15,6 +14,7 @@ const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, odavan: 4, vesta: 13 };
 const BUSES = 6;
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
 const GRID = 100; // м: клетка сетки рёбер
+const CORNER = 9; // м: столько до узла и после него поворот идёт по кривой, а не углом
 const BUS_PALETTE = ['#f2c230', '#e8e8e8', '#3d8f4f', '#d9442f'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
 
@@ -53,14 +53,13 @@ function busGeometry() {
     [box(2.4, 0.15, 11.2), '#cfd2d6', 0, 2.92, 0],
   ];
   for (const sx of [-0.9, 0.9]) parts.push([box(0.35, 0.2, 0.05), '#fff6d0', sx, 0.8, 5.76], [box(0.35, 0.25, 0.05), '#ff2a1a', sx, 0.9, -5.76]);
-  const wheels = [];
   for (const z of zs) {
     // Ниша между колёсами — чтобы сквозь арки не просвечивала улица.
     parts.push([box(2 * (wx - 0.14), r + R - y0 + 0.01, 2 * R), '#111214', 0, (y0 + r + R + 0.01) / 2, z]);
-    for (const x of [-wx, wx]) wheels.push([wheel(r), '#151618', x, r, z], [hub(r * 0.55), '#9ea3a8', x, r, z]);
+    for (const x of [-wx, wx]) parts.push([wheel(r), '#151618', x, r, z], [hub(r * 0.55), '#9ea3a8', x, r, z]);
   }
-  // Кузов — под цвет инстанса, остальное своим цветом; колёса отдельно (кузов кренится, они нет).
-  return { paint: merged(paint), detail: merged(parts), wheels: merged(wheels) };
+  // Кузов — под цвет инстанса, остальное своим цветом.
+  return { paint: merged(paint), detail: merged(parts) };
 }
 
 // ---------------------------------------------------------------- трафик
@@ -72,20 +71,18 @@ export class Traffic {
     this.signals = null; // выставляет Signals
     this.#buildGraph();
 
-    // Каждый тип — набор InstancedMesh с общими индексами: кузов (цвет от инстанса), детали, фары
-    // и последним — колёса. body — сколько первых мешей кренится вместе с кузовом.
+    // Каждый тип — набор InstancedMesh с общими индексами: кузов (цвет от инстанса), детали, фары.
     const lit = new THREE.MeshLambertMaterial({ vertexColors: true });
     const glow = new THREE.MeshBasicMaterial({ vertexColors: true });
     const kinds = Object.entries(MIX).map(([key, count]) => {
-      const p = vehicleParts(MODELS[key], { wheelsApart: true });
-      return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0, body: 3,
+      const p = vehicleParts(MODELS[key], { wheelsInDetail: true });
+      return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0,
         meshes: [new THREE.InstancedMesh(p.paint, lit, count), new THREE.InstancedMesh(p.detail, lit, count),
-          new THREE.InstancedMesh(p.lights, glow, count), new THREE.InstancedMesh(p.wheelGeo, lit, count)] };
+          new THREE.InstancedMesh(p.lights, glow, count)] };
     });
     const bus = busGeometry();
-    kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0, body: 2,
-      meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES),
-        new THREE.InstancedMesh(bus.wheels, lit, BUSES)] });
+    kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0,
+      meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES)] });
     this.meshes = kinds.flatMap((k) => k.meshes);
     const c = new THREE.Color();
     this.vehicles = [];
@@ -95,10 +92,10 @@ export class Traffic {
       for (let idx = 0; idx < kind.count; idx++, n++) {
         kind.meshes[kind.paint].setColorAt(idx, c.set(kind.colors[(idx * 3 + n) % kind.colors.length]));
         this.vehicles.push({
-          meshes: kind.meshes, body: kind.body, idx, bus, kind: kind.key,
+          meshes: kind.meshes, idx, bus, kind: kind.key,
           len: kind.len,
-          // Крен кузова (как у игрока, car.js), центр крена; выхлопная труба слева сзади; ускорение — для дыма.
-          roll: 0, rollV: 0, rollY: bus ? 0.9 : 0.45, acc: 0, smoke: { carry: Math.random() },
+          // Выхлопная труба слева сзади; ускорение — для густоты дыма.
+          acc: 0, smoke: { carry: Math.random() },
           pipe: new THREE.Vector3(bus ? -0.9 : -0.45, bus ? 0.45 : 0.33, -kind.len / 2 - 0.1),
           r: bus ? 1.3 : 1.1,
           circles: bus ? [-4.5, -1.5, 1.5, 4.5] : [-1.2, 1.2], // коллайдеры вдоль кузова
@@ -121,8 +118,6 @@ export class Traffic {
     this.quat = new THREE.Quaternion();
     this.up = new THREE.Vector3(0, 1, 0);
     this.hidden = new THREE.Matrix4().makeScale(0, 0, 0);
-    this.bodyM = new THREE.Matrix4();
-    this.tmpM = new THREE.Matrix4();
     this.smoke = new ExhaustFX(scene, 400);
   }
 
@@ -189,7 +184,7 @@ export class Traffic {
       const d = Math.hypot(x - px, z - pz);
       if (d < minD || d > SPAWN_MAX) continue;
       if (this.vehicles.some((o) => o.active && Math.hypot(o.x - x, o.z - z) < 14)) continue;
-      Object.assign(v, { edge: e, next: this.#choose(e), s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), roll: 0, rollV: 0, acc: 0,
+      Object.assign(v, { edge: e, next: this.#choose(e), prev: null, off, sk: 1, s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), acc: 0,
         lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true });
       return;
     }
@@ -302,27 +297,86 @@ export class Traffic {
     const speed0 = v.speed;
     v.speed += Math.max(-9 * dt, Math.min(2.8 * dt, limit - v.speed));
     if (dt > 0) v.acc += ((v.speed - speed0) / dt - v.acc) * Math.min(1, dt * 5);
-    v.s += v.speed * dt;
+    v.s += v.speed * dt * v.sk; // на кривой поворота путь по полосе длиннее или короче оси дороги
     while (v.s > v.edge.len) {
       v.s -= v.edge.len;
       if (!v.next) { v.active = false; return; }
+      v.prev = v.edge;
       v.edge = v.next;
       v.next = this.#choose(v.edge);
     }
 
-    // Целевая точка на полосе; визуально догоняем плавно, чтобы на углах не дёргалось.
-    const ce = v.edge;
-    const off = ce.laneOff(v.lane ?? 0); // полоса; если на новом ребре полос меньше — крайняя доступная
-    const tx = ce.ax + ce.dx * v.s - ce.dz * off, tz = ce.az + ce.dz * v.s + ce.dx * off;
-    const k = Math.min(1, dt * 6);
-    v.x += (tx - v.x) * k;
-    v.z += (tz - v.z) * k;
-    let dh = Math.atan2(ce.dx, ce.dz) - v.heading;
+    // Сдвиг от оси дороги плавно идёт к своей полосе (перестроение, на новом ребре полос меньше —
+    // крайняя доступная).
+    const off0 = v.off;
+    v.off += (v.edge.laneOff(v.lane ?? 0) - v.off) * Math.min(1, dt * 1.5);
+    const [x, z, tx, tz] = this.#pose(v);
+    v.x = x;
+    v.z = z;
+    // Курс — по касательной к пути, при перестроении чуть в сторону сдвига.
+    const side = dt > 0 ? Math.atan2((v.off - off0) / dt, Math.max(v.speed, 2)) : 0;
+    let dh = Math.atan2(tx, tz) - Math.max(-0.2, Math.min(0.2, side)) - v.heading;
     dh = Math.atan2(Math.sin(dh), Math.cos(dh));
-    v.heading += dh * Math.min(1, dt * 5);
-    if (dt > 0) stepRoll(v, (dh * Math.min(1, dt * 5)) / dt, v.speed, dt);
+    v.heading += dh * Math.min(1, dt * 10);
     v.dx = Math.sin(v.heading);
     v.dz = Math.cos(v.heading);
+  }
+
+  // Точка машины на пути и направление пути [x, z, dx, dz]. У узла путь — кубическая кривая от полосы
+  // прежнего ребра к полосе следующего (на прямой — та же прямая), иначе угол срезается рывком.
+  #pose(v) {
+    const e = v.edge;
+    v.sk = 1;
+    let c = null, u;
+    if (v.next && v.next.a === e.b) {
+      c = this.#corner(e, v.next, v.off);
+      if (e.len - v.s < c.inA) u = (v.s - e.len + c.inA) / (c.inA + c.outB);
+      else c = null;
+    }
+    if (!c && v.prev && v.prev.b === e.a) {
+      c = this.#corner(v.prev, e, v.off);
+      if (v.s < c.outB) u = (v.s + c.inA) / (c.inA + c.outB);
+      else c = null;
+    }
+    if (!c) return [e.ax + e.dx * v.s - e.dz * v.off, e.az + e.dz * v.s + e.dx * v.off, e.dx, e.dz];
+    // Ручки — к точке пересечения полос, 2/3 расстояния до неё: на прямой кривая проходится равномерно.
+    const { a, b, dA, dB, cx, cz } = c, hA = (2 / 3) * Math.max(dA, 0.5), hB = (2 / 3) * Math.max(dB, 0.5);
+    const p0x = cx - a.dx * dA, p0z = cz - a.dz * dA, p3x = cx + b.dx * dB, p3z = cz + b.dz * dB;
+    const p1x = p0x + a.dx * hA, p1z = p0z + a.dz * hA, p2x = p3x - b.dx * hB, p2z = p3z - b.dz * hB;
+    const t = Math.max(0, Math.min(1, u)), m = 1 - t;
+    const k0 = m * m * m, k1 = 3 * m * m * t, k2 = 3 * m * t * t, k3 = t * t * t;
+    const d0 = m * m, d1 = 2 * m * t, d2 = t * t;
+    let dx = d0 * (p1x - p0x) + d1 * (p2x - p1x) + d2 * (p3x - p2x), dz = d0 * (p1z - p0z) + d1 * (p2z - p1z) + d2 * (p3z - p2z);
+    const l = Math.hypot(dx, dz);
+    if (l > 1e-6) { dx /= l; dz /= l; } else { dx = b.dx; dz = b.dz; }
+    // Длина кривой (по хордам) → во сколько раз медленнее идёт s по оси, чтобы скорость по полосе была настоящей.
+    let len = 0, qx = p0x, qz = p0z;
+    for (let i = 1; i <= 8; i++) {
+      const tt = i / 8, mm = 1 - tt, a0 = mm * mm * mm, a1 = 3 * mm * mm * tt, a2 = 3 * mm * tt * tt, a3 = tt * tt * tt;
+      const nx = a0 * p0x + a1 * p1x + a2 * p2x + a3 * p3x, nz = a0 * p0z + a1 * p1z + a2 * p2z + a3 * p3z;
+      len += Math.hypot(nx - qx, nz - qz); qx = nx; qz = nz;
+    }
+    v.sk = (c.inA + c.outB) / Math.max(len, 0.1);
+    return [k0 * p0x + k1 * p1x + k2 * p2x + k3 * p3x, k0 * p0z + k1 * p1z + k2 * p2z + k3 * p3z, dx, dz];
+  }
+
+  // Поворот с ребра a на ребро b на полосе со сдвигом off. Кривая строится вокруг точки (cx, cz), где
+  // пересекаются линии полос (на повороте направо она до узла, налево — за ним), на CORNER в обе стороны;
+  // inA — за сколько до конца a кривая начинается, outB — через сколько от начала b кончается (не дальше
+  // середины ребра — чтобы не налезать на соседний поворот); dA, dB — от начала и конца кривой до (cx, cz).
+  // Считать от самого узла нельзя: на повороте направо полоса пересекает поперечную раньше узла,
+  // и кривая от узла шла бы назад — машина крутилась петлёй.
+  #corner(a, b, off) {
+    const cr = a.dx * b.dz - a.dz * b.dx;
+    let x = 0, y = 0; // где пересекаются полосы: x — вдоль a от узла, y — вдоль b от узла
+    if (Math.abs(cr) > 0.05) {
+      const wx = off * (a.dz - b.dz), wz = off * (b.dx - a.dx); // off · (правая b − правая a)
+      x = Math.max(-15, Math.min(15, (wx * b.dz - wz * b.dx) / cr));
+      y = Math.max(-15, Math.min(15, -(a.dx * wz - a.dz * wx) / cr));
+    }
+    const inA = Math.max(0.5, Math.min(a.len / 2, CORNER - x)), outB = Math.max(0.5, Math.min(b.len / 2, CORNER + y));
+    const s = a.len + x;
+    return { a, b, inA, outB, dA: inA + x, dB: outB - y, cx: a.ax + a.dx * s - a.dz * off, cz: a.az + a.dz * s + a.dx * off };
   }
 
   // Страховка: если две попутные машины всё же наехали друг на друга (слияние полос, развилка,
@@ -342,9 +396,7 @@ export class Traffic {
         const [rear, gap] = along > 0 ? [a, need - along] : [b, need + along];
         rear.s = Math.max(0, rear.s - gap);
         rear.speed = 0;
-        const off = rear.edge.laneOff(rear.lane ?? 0);
-        rear.x = rear.edge.ax + rear.edge.dx * rear.s - rear.edge.dz * off;
-        rear.z = rear.edge.az + rear.edge.dz * rear.s + rear.edge.dx * off;
+        [rear.x, rear.z] = this.#pose(rear);
       }
     }
   }
@@ -389,10 +441,7 @@ export class Traffic {
       e.set(-Math.atan2(hf - hb, 2 * a), v.heading, Math.atan2(hl - hr, 2 * b));
       this.quat.setFromEuler(e);
       this.mat4.compose(p, this.quat, one);
-      // Кузов — с креном вокруг продольной оси на высоте центра крена, колёса — без.
-      this.bodyM.copy(this.mat4).multiply(this.tmpM.makeTranslation(0, v.rollY, 0))
-        .multiply(this.tmpM.makeRotationZ(v.roll)).multiply(this.tmpM.makeTranslation(0, -v.rollY, 0));
-      v.meshes.forEach((m, i) => m.setMatrixAt(v.idx, i < v.body ? this.bodyM : this.mat4));
+      for (const m of v.meshes) m.setMatrixAt(v.idx, this.mat4);
       if (Math.hypot(v.x - px, v.z - pz) < 60) {
         const throttle = Math.min(1, Math.max(0, v.acc / 2.8));
         this.smoke.emit(dt, v.smoke, this.mat4, v.pipe, v.dx * v.speed, v.dz * v.speed, v.speed, throttle, v.bus ? 1 : 0.7);

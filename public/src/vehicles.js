@@ -262,23 +262,19 @@ function wheelGeometry(spec, seg, left = false) {
   return mergeGeometries([m.wheel.clone(), merge(wheelParts(spec.wheels, seg).slice(1))]); // шина — своя
 }
 
-function meshParts(spec, wheelsInDetail, wheelsApart) {
+function meshParts(spec, wheelsInDetail) {
   const { r, front: wf, rear: wr, track } = spec.wheels, m = spec.mesh;
   const wheels = [];
   for (const z of [wf, wr]) for (const x of [-track, track]) wheels.push({ x, y: r, z, r, front: z > 0 });
-  let detail = m.detail.clone(), wheelGeo;
-  if (wheelsInDetail || wheelsApart) {
-    const all = wheels.map((p) => wheelGeometry(spec, 12, p.x < 0).translate(p.x, p.y, p.z));
-    if (wheelsApart) wheelGeo = mergeGeometries(all);
-    else detail = mergeGeometries([detail, ...all]);
+  let detail = m.detail.clone();
+  if (wheelsInDetail) {
+    detail = mergeGeometries([detail, ...wheels.map((p) => wheelGeometry(spec, 12, p.x < 0).translate(p.x, p.y, p.z))]);
   }
-  return { paint: m.paint.clone(), detail, lights: m.lights.clone(), wheelGeo, wheels, length: m.length };
+  return { paint: m.paint.clone(), detail, lights: m.lights.clone(), wheels, length: m.length };
 }
 
-// wheelsInDetail — колёса в детали (стоящие машины); wheelsApart — колёса отдельной геометрией
-// wheelGeo (трафик: кузов кренится, колёса нет).
-export function vehicleParts(spec, { wheelsInDetail = false, wheelsApart = false } = {}) {
-  if (spec.mesh) return meshParts(spec, wheelsInDetail, wheelsApart);
+export function vehicleParts(spec, { wheelsInDetail = false } = {}) {
+  if (spec.mesh) return meshParts(spec, wheelsInDetail);
   const W = spec.width, CW = spec.cabinWidth, front = Math.max(...spec.body.map((p) => p[0])), rear = Math.min(...spec.body.map((p) => p[0]));
   const paint = [], detail = [], lights = [];
   const { r, front: wf, rear: wr, track } = spec.wheels, R = r + ARCH_GAP, y0 = spec.body[0][1];
@@ -369,10 +365,9 @@ export function vehicleParts(spec, { wheelsInDetail = false, wheelsApart = false
   // Колёса.
   const wheels = [];
   for (const z of [wf, wr]) for (const x of [-track, track]) wheels.push({ x, y: r, z, r, front: z > 0 });
-  const wheelList = [];
-  if (wheelsInDetail || wheelsApart) for (const w of wheels) for (const [g, c] of wheelParts(spec.wheels, 12)) (wheelsApart ? wheelList : detail).push([g.translate(w.x, w.y, w.z), c, false]);
+  if (wheelsInDetail) for (const w of wheels) for (const [g, c] of wheelParts(spec.wheels, 12)) detail.push([g.translate(w.x, w.y, w.z), c, false]);
   const form = bodyForm(spec, front, rear);
-  return { paint: merge(paint, form), detail: merge(detail, form), lights: merge(lights, form), wheelGeo: wheelsApart ? merge(wheelList) : undefined, wheels, length: front - rear };
+  return { paint: merge(paint, form), detail: merge(detail, form), lights: merge(lights, form), wheels, length: front - rear };
 }
 
 // Колесо вокруг своего центра: шина и штампованный диск с колпаком; alloy — литой диск со спицами.

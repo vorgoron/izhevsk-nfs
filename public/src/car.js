@@ -15,9 +15,9 @@ const STEER_RATE = 2.3;   // рад/с на средней скорости
 // Крен кузова в повороте: рад на 1 м/с² бокового ускорения, предел; пружина подвески (жёсткость, демпфер).
 const ROLL_K = 0.005, ROLL_MAX = 0.1, ROLL_STIFF = 70, ROLL_DAMP = 9;
 
-// Шаг крена на подвеске к цели от бокового ускорения (скорость × угловая скорость по курсу), общий с трафиком.
+// Шаг крена на подвеске к цели от бокового ускорения (скорость × угловая скорость по курсу).
 // o: { roll, rollV }; yaw — скорость изменения курса, рад/с (рост курса — поворот влево).
-export function stepRoll(o, yaw, speed, dt) {
+function stepRoll(o, yaw, speed, dt) {
   const target = Math.max(-ROLL_MAX, Math.min(ROLL_MAX, yaw * speed * ROLL_K));
   const sdt = Math.min(dt, 1 / 30);
   o.rollV += ((target - o.roll) * ROLL_STIFF - o.rollV * ROLL_DAMP) * sdt;
