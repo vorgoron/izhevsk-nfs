@@ -14,6 +14,15 @@ const DRIFT_GRIP = 1.4;
 const STEER_RATE = 2.3;   // рад/с на средней скорости
 // Крен кузова в повороте: рад на 1 м/с² бокового ускорения, предел; пружина подвески (жёсткость, демпфер).
 const ROLL_K = 0.005, ROLL_MAX = 0.1, ROLL_STIFF = 70, ROLL_DAMP = 9;
+
+// Шаг крена на подвеске к цели от бокового ускорения (скорость × угловая скорость по курсу), общий с трафиком.
+// o: { roll, rollV }; yaw — скорость изменения курса, рад/с (рост курса — поворот влево).
+export function stepRoll(o, yaw, speed, dt) {
+  const target = Math.max(-ROLL_MAX, Math.min(ROLL_MAX, yaw * speed * ROLL_K));
+  const sdt = Math.min(dt, 1 / 30);
+  o.rollV += ((target - o.roll) * ROLL_STIFF - o.rollV * ROLL_DAMP) * sdt;
+  o.roll += o.rollV * sdt;
+}
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
 const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
@@ -146,10 +155,9 @@ export class Car {
     this.roll += (Math.atan2(hl - hr, 1.8) - this.roll) * k; // от рельефа — вся машина
     // Кузов кренится наружу поворота от бокового ускорения (скорость × угловая скорость) и
     // покачивается на подвеске — пружина с демпфером, после поворота чуть перекачивается обратно.
-    const rollTarget = Math.max(-ROLL_MAX, Math.min(ROLL_MAX, -yawRate * vf * ROLL_K));
-    const sdt = Math.min(dt, 1 / 30);
-    this.bodyRollV += ((rollTarget - this.bodyRoll) * ROLL_STIFF - this.bodyRollV * ROLL_DAMP) * sdt;
-    this.bodyRoll += this.bodyRollV * sdt;
+    const sus = { roll: this.bodyRoll, rollV: this.bodyRollV };
+    stepRoll(sus, -yawRate, vf, dt);
+    this.bodyRoll = sus.roll; this.bodyRollV = sus.rollV;
     // Кочки на грунте: мелкая тряска кузова, сильнее на скорости.
     if (off > 0.05) {
       const b = off * Math.min(1, Math.abs(vf) / 12) * 0.025;

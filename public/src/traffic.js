@@ -2,6 +2,8 @@
 // односторонние улицы, торможение перед впереди идущими и перед игроком, столкновения.
 import * as THREE from 'three';
 import { MODELS, vehicleParts, prism, withArches, wheelArches, ARCH_GAP } from './vehicles.js';
+import { stepRoll } from './car.js';
+import { ExhaustFX } from './effects.js';
 
 // Скорость по классу дороги, м/с. Нет в списке — трафика там нет (дворы, проезды).
 const SPEED = {
@@ -51,13 +53,14 @@ function busGeometry() {
     [box(2.4, 0.15, 11.2), '#cfd2d6', 0, 2.92, 0],
   ];
   for (const sx of [-0.9, 0.9]) parts.push([box(0.35, 0.2, 0.05), '#fff6d0', sx, 0.8, 5.76], [box(0.35, 0.25, 0.05), '#ff2a1a', sx, 0.9, -5.76]);
+  const wheels = [];
   for (const z of zs) {
     // Ниша между колёсами — чтобы сквозь арки не просвечивала улица.
     parts.push([box(2 * (wx - 0.14), r + R - y0 + 0.01, 2 * R), '#111214', 0, (y0 + r + R + 0.01) / 2, z]);
-    for (const x of [-wx, wx]) parts.push([wheel(r), '#151618', x, r, z], [hub(r * 0.55), '#9ea3a8', x, r, z]);
+    for (const x of [-wx, wx]) wheels.push([wheel(r), '#151618', x, r, z], [hub(r * 0.55), '#9ea3a8', x, r, z]);
   }
-  // Кузов — под цвет инстанса, остальное своим цветом.
-  return { paint: merged(paint), detail: merged(parts) };
+  // Кузов — под цвет инстанса, остальное своим цветом; колёса отдельно (кузов кренится, они нет).
+  return { paint: merged(paint), detail: merged(parts), wheels: merged(wheels) };
 }
 
 // ---------------------------------------------------------------- трафик
@@ -69,18 +72,20 @@ export class Traffic {
     this.signals = null; // выставляет Signals
     this.#buildGraph();
 
-    // Каждый тип — набор InstancedMesh с общими индексами: кузов (цвет от инстанса), детали, фары.
+    // Каждый тип — набор InstancedMesh с общими индексами: кузов (цвет от инстанса), детали, фары
+    // и последним — колёса. body — сколько первых мешей кренится вместе с кузовом.
     const lit = new THREE.MeshLambertMaterial({ vertexColors: true });
     const glow = new THREE.MeshBasicMaterial({ vertexColors: true });
     const kinds = Object.entries(MIX).map(([key, count]) => {
-      const p = vehicleParts(MODELS[key], { wheelsInDetail: true });
-      return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0,
+      const p = vehicleParts(MODELS[key], { wheelsApart: true });
+      return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0, body: 3,
         meshes: [new THREE.InstancedMesh(p.paint, lit, count), new THREE.InstancedMesh(p.detail, lit, count),
-          new THREE.InstancedMesh(p.lights, glow, count)] };
+          new THREE.InstancedMesh(p.lights, glow, count), new THREE.InstancedMesh(p.wheelGeo, lit, count)] };
     });
     const bus = busGeometry();
-    kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0,
-      meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES)] });
+    kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0, body: 2,
+      meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES),
+        new THREE.InstancedMesh(bus.wheels, lit, BUSES)] });
     this.meshes = kinds.flatMap((k) => k.meshes);
     const c = new THREE.Color();
     this.vehicles = [];
@@ -90,8 +95,11 @@ export class Traffic {
       for (let idx = 0; idx < kind.count; idx++, n++) {
         kind.meshes[kind.paint].setColorAt(idx, c.set(kind.colors[(idx * 3 + n) % kind.colors.length]));
         this.vehicles.push({
-          meshes: kind.meshes, idx, bus, kind: kind.key,
+          meshes: kind.meshes, body: kind.body, idx, bus, kind: kind.key,
           len: kind.len,
+          // Крен кузова (как у игрока, car.js), центр крена; выхлопная труба слева сзади; ускорение — для дыма.
+          roll: 0, rollV: 0, rollY: bus ? 0.9 : 0.45, acc: 0, smoke: { carry: Math.random() },
+          pipe: new THREE.Vector3(bus ? -0.9 : -0.45, bus ? 0.45 : 0.33, -kind.len / 2 - 0.1),
           r: bus ? 1.3 : 1.1,
           circles: bus ? [-4.5, -1.5, 1.5, 4.5] : [-1.2, 1.2], // коллайдеры вдоль кузова
           maxSpeed: bus ? 11 : 17 * (MODELS[kind.key]?.stats.kmh ?? 160) / 160,
@@ -113,6 +121,9 @@ export class Traffic {
     this.quat = new THREE.Quaternion();
     this.up = new THREE.Vector3(0, 1, 0);
     this.hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+    this.bodyM = new THREE.Matrix4();
+    this.tmpM = new THREE.Matrix4();
+    this.smoke = new ExhaustFX(scene, 400);
   }
 
   // Направленный граф полос: двусторонняя улица — два ребра со сдвигом вправо.
@@ -178,7 +189,7 @@ export class Traffic {
       const d = Math.hypot(x - px, z - pz);
       if (d < minD || d > SPAWN_MAX) continue;
       if (this.vehicles.some((o) => o.active && Math.hypot(o.x - x, o.z - z) < 14)) continue;
-      Object.assign(v, { edge: e, next: this.#choose(e), s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz),
+      Object.assign(v, { edge: e, next: this.#choose(e), s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), roll: 0, rollV: 0, acc: 0,
         lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true });
       return;
     }
@@ -194,6 +205,7 @@ export class Traffic {
   setEnabled(on) {
     this.enabled = on;
     for (const m of this.meshes) m.visible = on;
+    this.smoke.points.visible = on;
   }
 
   update(dt, car) {
@@ -205,7 +217,7 @@ export class Traffic {
     }
     this.#separate();
     this.#collidePlayer(car);
-    this.#sync();
+    this.#sync(dt, px, pz);
   }
 
   #drive(v, dt, car) {
@@ -287,7 +299,9 @@ export class Traffic {
     // Удар от игрока: постоять.
     if (v.hit > 0) { v.hit -= dt; limit = 0; }
 
+    const speed0 = v.speed;
     v.speed += Math.max(-9 * dt, Math.min(2.8 * dt, limit - v.speed));
+    if (dt > 0) v.acc += ((v.speed - speed0) / dt - v.acc) * Math.min(1, dt * 5);
     v.s += v.speed * dt;
     while (v.s > v.edge.len) {
       v.s -= v.edge.len;
@@ -306,6 +320,7 @@ export class Traffic {
     let dh = Math.atan2(ce.dx, ce.dz) - v.heading;
     dh = Math.atan2(Math.sin(dh), Math.cos(dh));
     v.heading += dh * Math.min(1, dt * 5);
+    if (dt > 0) stepRoll(v, (dh * Math.min(1, dt * 5)) / dt, v.speed, dt);
     v.dx = Math.sin(v.heading);
     v.dz = Math.cos(v.heading);
   }
@@ -358,7 +373,8 @@ export class Traffic {
     }
   }
 
-  #sync() {
+  // Трафик дымит только рядом с игроком.
+  #sync(dt, px, pz) {
     const p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), e = new THREE.Euler(0, 0, 0, 'YXZ');
     const w = this.world;
     for (const v of this.vehicles) {
@@ -373,8 +389,16 @@ export class Traffic {
       e.set(-Math.atan2(hf - hb, 2 * a), v.heading, Math.atan2(hl - hr, 2 * b));
       this.quat.setFromEuler(e);
       this.mat4.compose(p, this.quat, one);
-      for (const m of v.meshes) m.setMatrixAt(v.idx, this.mat4);
+      // Кузов — с креном вокруг продольной оси на высоте центра крена, колёса — без.
+      this.bodyM.copy(this.mat4).multiply(this.tmpM.makeTranslation(0, v.rollY, 0))
+        .multiply(this.tmpM.makeRotationZ(v.roll)).multiply(this.tmpM.makeTranslation(0, -v.rollY, 0));
+      v.meshes.forEach((m, i) => m.setMatrixAt(v.idx, i < v.body ? this.bodyM : this.mat4));
+      if (Math.hypot(v.x - px, v.z - pz) < 60) {
+        const throttle = Math.min(1, Math.max(0, v.acc / 2.8));
+        this.smoke.emit(dt, v.smoke, this.mat4, v.pipe, v.dx * v.speed, v.dz * v.speed, v.speed, throttle, v.bus ? 1 : 0.7);
+      }
     }
+    this.smoke.step(dt);
     for (const m of this.meshes) m.instanceMatrix.needsUpdate = true;
   }
 }
