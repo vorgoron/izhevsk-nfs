@@ -69,6 +69,7 @@ export class Traffic {
     this.world = world;
     this.enabled = true;
     this.signals = null; // выставляет Signals
+    this.honks = []; // гудки за кадр: { x, z, bus, long } — забирает Sound.traffic
     this.#buildGraph();
 
     // Каждый тип — набор InstancedMesh с общими индексами: кузов (цвет от инстанса), детали, фары.
@@ -103,6 +104,7 @@ export class Traffic {
           mood: 0.85 + ((n * 37) % 30) / 100, // кто-то едет бодрее
           edge: null, next: null, s: 0, speed: 0,
           x: 0, z: 0, heading: 0, dx: 0, dz: 1, hit: 0, stuck: 0, ghost: 0, active: false,
+          waitPlayer: 0, honkCool: 0,
         });
       }
     }
@@ -260,7 +262,16 @@ export class Traffic {
       }
     }
     const f = car.forward;
-    check(car.pos.x, car.pos.y, 4.3, false, f.x, f.y);
+    const byPlayer = check(car.pos.x, car.pos.y, 4.3, false, f.x, f.y);
+
+    // Игрок стоит поперёк дороги — посигналить ему (не чаще раза в несколько секунд).
+    v.honkCool = Math.max(0, v.honkCool - dt);
+    v.waitPlayer = byPlayer && v.speed < 2 ? v.waitPlayer + dt : 0;
+    if (v.waitPlayer > 1.5 && v.honkCool <= 0) {
+      this.honks.push({ x: v.x, z: v.z, bus: v.bus, long: false });
+      v.honkCool = 4 + Math.random() * 4;
+      v.waitPlayer = 0;
+    }
 
     // Упёрлись в медленного впереди — перестроиться в соседнюю полосу, если она свободна.
     v.laneCool = Math.max(0, v.laneCool - dt);
@@ -417,6 +428,11 @@ export class Traffic {
           // Встаёт машина трафика только от удара (не от того, что о неё трутся — иначе стоит вечно).
           const vn = (car.vel.x - v.dx * v.speed) * nx + (car.vel.y - v.dz * v.speed) * nz;
           if (car.touchVehicle(nx, nz, min - d, vn)) {
+            // Протаранили — долгий гудок.
+            if (v.hit <= 0 && v.honkCool <= 0) {
+              this.honks.push({ x: v.x, z: v.z, bus: v.bus, long: true });
+              v.honkCool = 3;
+            }
             v.speed *= 0.3;
             v.hit = 2.5;
           }

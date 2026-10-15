@@ -20,7 +20,7 @@ export class Radio {
     this.started = false;
     const a = (this.audio = new Audio());
     a.preload = 'none';
-    a.volume = 0.6; // на iPhone не работает — там громкость только кнопками телефона
+    a.volume = 0.6; // на iPhone не работает — там громкость только кнопками телефона (и ползунок в меню тоже)
     const set = (status) => { if (this.station >= 0 && a.src && this.status !== status) { this.status = status; this.onChange(); } };
     a.addEventListener('error', () => set('error'));
     a.addEventListener('waiting', () => set('loading'));
@@ -45,6 +45,11 @@ export class Radio {
     if (this.station >= 0) this.#play();
     else this.#stop();
     this.onChange();
+  }
+
+  // Ползунок громкости, 0..1.
+  setVolume(v) {
+    this.audio.volume = 0.6 * Math.max(0, Math.min(1, v));
   }
 
   // Общий «звук выкл» глушит и радио; поток не рвём, чтобы включение было мгновенным.

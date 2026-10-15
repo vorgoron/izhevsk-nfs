@@ -1,8 +1,14 @@
-// Звук целиком синтезируется Web Audio: мотор, визг шин, ветер, нитро, удары, сигналы гонки.
+// Звук целиком синтезируется Web Audio: мотор, визг шин, ветер, нитро, удары, сигналы гонки,
+// трафик вокруг (моторы ближайших машин, шорох шин потока, гудки).
 // Браузер разрешает звук только после жеста пользователя — контекст создаётся на первое нажатие.
 
 const GEARS = [0, 35, 65, 100, 140, 185, 260]; // км/ч: границы передач
 const IDLE_RPM = 900, MAX_RPM = 6400;
+const TRAFFIC_VOICES = 4; // столько ближайших машин слышно мотором
+const TRAFFIC_HEAR = 70; // м
+const SOUND_SPEED = 343; // м/с, для Доплера
+// Ползунки громкости в меню, 0..1: общая, своя машина, трафик, радио (радио — <audio>, его ставит main.js).
+export const VOLUMES = ['master', 'car', 'traffic', 'radio'];
 
 export class Sound {
   constructor() {
@@ -11,6 +17,17 @@ export class Sound {
     try { this.muted = localStorage.getItem('muted') === '1'; } catch {}
     this.prev = { state: null, next: 0, count: 0, impact: 0 };
     this.rpm = IDLE_RPM;
+    this.vol = Object.fromEntries(VOLUMES.map((k) => [k, 1]));
+    try {
+      const saved = JSON.parse(localStorage.getItem('volume') || '{}');
+      for (const k of VOLUMES) if (Number.isFinite(saved[k])) this.vol[k] = Math.max(0, Math.min(1, saved[k]));
+    } catch {}
+  }
+
+  setVolume(key, v) {
+    this.vol[key] = Math.max(0, Math.min(1, v));
+    try { localStorage.setItem('volume', JSON.stringify(this.vol)); } catch {}
+    this.#applyGain();
   }
 
   // Вызывать из обработчика нажатия клавиши/клика.
@@ -33,15 +50,26 @@ export class Sound {
   }
 
   #applyGain() {
-    if (this.ctx) this.master.gain.setTargetAtTime(this.muted || this.paused ? 0 : 0.8, this.ctx.currentTime, 0.05);
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.master.gain.setTargetAtTime(this.muted || this.paused ? 0 : 0.8 * this.vol.master, t, 0.05);
+    this.carBus.gain.setTargetAtTime(this.vol.car, t, 0.05);
+    this.trafficBus.gain.setTargetAtTime(this.vol.traffic, t, 0.05);
   }
 
   #init() {
     const ctx = (this.ctx = new AudioContext());
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted || this.paused ? 0 : 0.8;
+    this.master.gain.value = this.muted || this.paused ? 0 : 0.8 * this.vol.master;
     const comp = ctx.createDynamicsCompressor();
     this.master.connect(comp).connect(ctx.destination);
+    // Свои ползунки: звуки своей машины и трафика; сигналы гонки, звонки и бульканье — сразу в master.
+    this.carBus = ctx.createGain();
+    this.carBus.gain.value = this.vol.car;
+    this.carBus.connect(this.master);
+    this.trafficBus = ctx.createGain();
+    this.trafficBus.gain.value = this.vol.traffic;
+    this.trafficBus.connect(this.master);
 
     // Белый шум — основа шин, ветра, нитро и ударов.
     const len = ctx.sampleRate * 2;
@@ -59,7 +87,7 @@ export class Sound {
     const curve = new Float32Array(1024);
     for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(2.5 * x); }
     shaper.curve = curve;
-    shaper.connect(this.engineFilter).connect(this.engineGain).connect(this.master);
+    shaper.connect(this.engineFilter).connect(this.engineGain).connect(this.carBus);
     this.engineOsc = [['sawtooth', 1, 0.5], ['sawtooth', 0.5, 0.6], ['square', 1.004, 0.2]].map(([type, mul, g]) => {
       const o = ctx.createOscillator();
       o.type = type;
@@ -70,13 +98,71 @@ export class Sound {
       return { o, mul };
     });
 
-    this.skid = this.#noiseVoice('bandpass', 1300, 3);
-    this.wind = this.#noiseVoice('lowpass', 500, 0.7);
-    this.nitroV = this.#noiseVoice('highpass', 2500, 0.7);
-    this.gravel = this.#noiseVoice('lowpass', 380, 1.2); // гул грунта под колёсами
+    this.skid = this.#noiseVoice('bandpass', 1300, 3, this.carBus);
+    this.wind = this.#noiseVoice('lowpass', 500, 0.7, this.carBus);
+    this.nitroV = this.#noiseVoice('highpass', 2500, 0.7, this.carBus);
+    this.gravel = this.#noiseVoice('lowpass', 380, 1.2, this.carBus); // гул грунта под колёсами
+
+    // Трафик: несколько голосов-моторов, каждый со своей панорамой, и общий шорох шин.
+    this.trafficV = Array.from({ length: TRAFFIC_VOICES }, () => this.#trafficVoice());
+    this.trafficRoll = this.#noiseVoice('lowpass', 650, 0.8, this.trafficBus);
   }
 
-  #noiseVoice(type, freq, q) {
+  // Мотор чужой машины: пила + треугольник октавой ниже, приглушённые фильтром.
+  #trafficVoice() {
+    const ctx = this.ctx;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 400;
+    f.Q.value = 2;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    const pan = ctx.createStereoPanner();
+    f.connect(g).connect(pan).connect(this.trafficBus);
+    const osc = [['sawtooth', 1, 0.5], ['triangle', 0.5, 0.8]].map(([type, mul, gv]) => {
+      const o = ctx.createOscillator();
+      o.type = type;
+      const gn = ctx.createGain();
+      gn.gain.value = gv;
+      o.connect(gn).connect(f);
+      o.start();
+      return { o, mul };
+    });
+    return { f, g, pan, osc, v: null };
+  }
+
+  // Гудок: два расстроенных квадрата через фильтр — «ба-а» легковушки, у автобуса ниже.
+  #honk(bus, long, vol, pan) {
+    const ctx = this.ctx, t = ctx.currentTime;
+    const dur = long ? 0.9 : 0.35 + Math.random() * 0.15;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = bus ? 1400 : 2200;
+    const g = ctx.createGain();
+    g.gain.value = vol; // огибающая — у каждого «бипа» своя
+    const p = ctx.createStereoPanner();
+    p.pan.value = pan;
+    f.connect(g).connect(p).connect(this.trafficBus);
+    // Короткий гудок иногда двойной.
+    const beeps = long || Math.random() < 0.6 ? [0] : [0, dur + 0.12];
+    for (const freq of bus ? [262, 330] : [415, 523]) {
+      for (const k of beeps) {
+        const o = ctx.createOscillator();
+        o.type = 'square';
+        o.frequency.value = freq * (0.98 + Math.random() * 0.04);
+        const og = ctx.createGain();
+        og.gain.setValueAtTime(0, t + k);
+        og.gain.linearRampToValueAtTime(0.5, t + k + 0.015);
+        og.gain.setValueAtTime(0.5, t + k + dur);
+        og.gain.linearRampToValueAtTime(0, t + k + dur + 0.05);
+        o.connect(og).connect(f);
+        o.start(t + k);
+        o.stop(t + k + dur + 0.1);
+      }
+    }
+  }
+
+  #noiseVoice(type, freq, q, out) {
     const ctx = this.ctx;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
@@ -87,7 +173,7 @@ export class Sound {
     f.Q.value = q;
     const g = ctx.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(out);
     src.start();
     return { f, g };
   }
@@ -116,7 +202,7 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.9 * strength, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(this.carBus);
     src.start(t, Math.random());
     src.stop(t + 0.4);
     const o = ctx.createOscillator();
@@ -125,7 +211,7 @@ export class Sound {
     const og = ctx.createGain();
     og.gain.setValueAtTime(0.8 * strength, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    o.connect(og).connect(this.master);
+    o.connect(og).connect(this.carBus);
     o.start(t);
     o.stop(t + 0.35);
   }
@@ -159,9 +245,67 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.9, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.3);
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(this.carBus);
     src.start(t, Math.random());
     src.stop(t + 1.4);
+  }
+
+  // Трафик слышно вокруг машины игрока: громкость — от расстояния, панорама — слева/справа
+  // от курса игрока, высота мотора — от скорости и газа, со сдвигом Доплера.
+  traffic(dt, traffic, car) {
+    const honks = traffic.honks.splice(0); // копятся, только пока их не забрали
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t = this.ctx.currentTime;
+    const set = (param, v, tc = 0.08) => param.setTargetAtTime(v, t, tc);
+    const px = car.pos.x, pz = car.pos.y, r = car.right;
+    const near = [];
+    if (traffic.enabled) {
+      for (const v of traffic.vehicles) {
+        if (!v.active) continue;
+        const d = Math.hypot(v.x - px, v.z - pz);
+        if (d < TRAFFIC_HEAR) near.push({ v, d });
+      }
+    }
+    near.sort((a, b) => a.d - b.d);
+    const loud = (d) => Math.min(1, (10 / Math.max(d, 1)) ** 1.1);
+
+    // Голос остаётся за машиной, пока она в числе ближайших; свободные берут новых — с нуля громкости.
+    const top = near.slice(0, TRAFFIC_VOICES);
+    for (const voice of this.trafficV) if (!top.some((n) => n.v === voice.v)) voice.v = null;
+    for (const n of top) {
+      if (this.trafficV.some((voice) => voice.v === n.v)) continue;
+      const voice = this.trafficV.find((x) => !x.v);
+      voice.v = n.v;
+      voice.g.gain.cancelScheduledValues(t);
+      voice.g.gain.setValueAtTime(0, t);
+    }
+    for (const voice of this.trafficV) {
+      const v = voice.v;
+      if (!v) { set(voice.g.gain, 0, 0.1); continue; }
+      const rx = v.x - px, rz = v.z - pz, d = Math.max(Math.hypot(rx, rz), 0.5);
+      const throttle = Math.min(1, Math.max(0, v.acc / 2.8));
+      // Легковушка — четвёрка на 2–3 передаче, автобус — дизель пониже.
+      const rpm = v.bus ? 650 + (v.speed / 11) * 1300 + throttle * 300 : 850 + Math.min(1, v.speed / 15) * 2300 + throttle * 500;
+      // Доплер: скорость сближения вдоль линии игрок—машина.
+      const closing = -((v.dx * v.speed - car.vel.x) * rx + (v.dz * v.speed - car.vel.y) * rz) / d;
+      const dop = SOUND_SPEED / (SOUND_SPEED - Math.max(-60, Math.min(60, closing)));
+      const freq = (rpm / 60) * (v.bus ? 3 : 2) * dop;
+      for (const { o, mul } of voice.osc) set(o.frequency, freq * mul, 0.05);
+      set(voice.f.frequency, (v.bus ? 220 : 300) + rpm * 0.12 + throttle * 250);
+      set(voice.g.gain, loud(d) * (v.bus ? 0.32 : 0.22) * (0.6 + throttle * 0.4));
+      set(voice.pan.pan, Math.max(-1, Math.min(1, ((rx * r.x + rz * r.y) / d) * 0.8)));
+    }
+
+    // Шорох шин всего потока рядом.
+    let roll = 0;
+    for (const { v, d } of near) roll += loud(d * 0.7) * Math.min(1, v.speed / 14);
+    set(this.trafficRoll.g.gain, Math.min(0.2, roll * 0.08), 0.2);
+
+    for (const h of honks) {
+      const rx = h.x - px, rz = h.z - pz, d = Math.max(Math.hypot(rx, rz), 0.5);
+      if (d > 120) continue;
+      this.#honk(h.bus, h.long, Math.min(0.2, 0.2 * (8 / d) ** 1.1), Math.max(-1, Math.min(1, ((rx * r.x + rz * r.y) / d) * 0.8)));
+    }
   }
 
   update(dt, car, input, race) {
@@ -181,7 +325,7 @@ export class Sound {
     const freq = (this.rpm / 60) * 2; // 4 цилиндра: 2 вспышки на оборот
     for (const { o, mul } of this.engineOsc) set(o.frequency, freq * mul, 0.02);
     set(this.engineFilter.frequency, 300 + this.rpm * (throttle ? 0.35 : 0.18));
-    set(this.engineGain.gain, 0.16 + throttle * 0.1 + (this.rpm / MAX_RPM) * 0.06);
+    set(this.engineGain.gain, 0.09 + throttle * 0.055 + (this.rpm / MAX_RPM) * 0.035);
 
     // ---- шины: боковое скольжение и торможение юзом
     const slip = Math.abs(car.vel.dot(car.right));

@@ -136,9 +136,18 @@
     #menu .go { font-weight: 800; font-size: 17px; background: #ffd23f; color: #15181b; }
     #menu .go:hover { background: #ffdc5c; }
     #menu .go kbd { color: #15181b; border-color: rgba(0,0,0,.3); background: rgba(0,0,0,.08); }
+    #menu .page { display: flex; flex-direction: column; gap: 6px; }
+    #menu .page[hidden] { display: none; }
+    #menu button i { font-style: normal; font-size: 20px; line-height: 1; opacity: .6; }
+    #menu .volumes { display: flex; flex-direction: column; gap: 4px; padding: 6px 12px 8px; border-radius: 9px; background: rgba(255,255,255,.06); }
+    #menu .volumes.off { opacity: .45; }
+    #menu .volumes label { display: grid; grid-template-columns: 105px 1fr 42px; align-items: center; gap: 8px; font-size: 14px; }
+    #menu .volumes input { width: 100%; min-width: 0; margin: 0; height: 28px; accent-color: #ffd23f; cursor: pointer; }
+    #menu .volumes output { text-align: right; color: #ffd23f; font-weight: 700; font-variant-numeric: tabular-nums; }
     #menu .keys { margin-top: 10px; font-size: 12.5px; line-height: 1.8; opacity: .7; }
     body.touch #menu kbd, body.touch #menu .keys { display: none; }
     body.touch #menu .box { padding: calc(10px + env(safe-area-inset-top)) 14px 12px; gap: 4px; }
+    body.touch #menu .page { gap: 4px; }
     body.touch #menu button { padding: 8px 12px; }
     body.touch #menu h2 { font-size: 20px; }
 

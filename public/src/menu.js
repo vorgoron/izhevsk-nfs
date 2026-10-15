@@ -3,18 +3,23 @@
 // чтобы переключатели в меню показывали текущее состояние.
 
 const CAMERAS = ['сзади', 'из салона', 'сверху'];
+const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, fps, bigMap, fullscreen }.
-  constructor({ actions, state }) {
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, fps, bigMap, fullscreen };
+  // volume — ползунки громкости { get(key), set(key, 0..1) }.
+  constructor({ actions, state, volume }) {
     this.actions = actions;
     this.state = state;
+    this.volume = volume;
     this.isOpen = false;
 
     const el = (this.el = document.createElement('div'));
     el.id = 'menu';
     const fs = document.fullscreenEnabled; // iPhone не умеет
+    // Две страницы: главная и подменю громкости (ползунки), переход — кнопки data-page.
     el.innerHTML = `<div class="box">
+      <div class="page" data-page="main">
       <h2>Пауза</h2>
       <button data-act="menu" class="go">Продолжить <kbd>Esc</kbd></button>
       <button data-act="race">Новая гонка <kbd>N</kbd></button>
@@ -22,6 +27,7 @@ export class Menu {
       <button data-act="garage">Гараж — выбор машины <kbd>G</kbd></button>
       <h3>Настройки</h3>
       <button data-act="sound">Звук <b data-v="sound"></b><kbd>V</kbd></button>
+      <button data-page="volume">Громкость <b data-v="volume"></b><i>›</i></button>
       <button data-act="radio">Радио <b data-v="radio"></b><kbd>B</kbd></button>
       <button data-act="traffic">Трафик <b data-v="traffic"></b><kbd>T</kbd></button>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
@@ -32,13 +38,24 @@ export class Menu {
         <kbd>W A S D</kbd> / стрелки — ехать · <kbd>Пробел</kbd> ручник · <kbd>Shift</kbd> нитро<br>
         мышь — повернуть камеру
       </div>
+      </div>
+      <div class="page" data-page="volume" hidden>
+      <h2>Громкость</h2>
+      <div class="volumes">${Object.entries(VOLUME_LABELS).map(([k, label]) =>
+        `<label>${label}<input type="range" min="0" max="100" step="5" data-vol="${k}"><output data-vol-out="${k}"></output></label>`).join('')}</div>
+      <button data-page="main" class="go">‹ Назад <kbd>Esc</kbd></button>
+      </div>
     </div>`;
     document.body.append(el);
     for (const b of el.querySelectorAll('[data-act]')) {
       b.addEventListener('click', () => this.actions[b.dataset.act]());
     }
+    for (const b of el.querySelectorAll('button[data-page]')) b.addEventListener('click', () => this.page(b.dataset.page));
+    for (const r of el.querySelectorAll('[data-vol]')) {
+      r.addEventListener('input', () => { this.volume.set(r.dataset.vol, r.value / 100); this.sync(); });
+    }
     // Клик мимо панели — продолжить.
-    el.addEventListener('pointerdown', (e) => { if (e.target === el) this.actions.menu(); });
+    el.addEventListener('pointerdown', (e) => { if (e.target === el) { this.page('main'); this.actions.menu(); } });
     document.addEventListener('fullscreenchange', () => this.sync());
     this.sync();
   }
@@ -53,11 +70,32 @@ export class Menu {
       fps: s.fps ? `до ${s.fps}` : 'без предела',
       bigMap: s.bigMap ? 'крупная' : 'обычная',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
+      volume: s.sound ? `${Math.round(this.volume.get('master') * 100)}%` : 'звук выкл',
     };
+    s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
       b.classList.toggle('off', !['camera', 'bigMap', 'fps'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
+    for (const r of this.el.querySelectorAll('[data-vol]')) {
+      const pct = Math.round(this.volume.get(r.dataset.vol) * 100);
+      if (document.activeElement !== r) r.value = pct;
+      this.el.querySelector(`[data-vol-out="${r.dataset.vol}"]`).textContent = `${pct}%`;
+    }
+    this.el.querySelector('.volumes').classList.toggle('off', !s.sound);
+  }
+
+  // Показать страницу меню: 'main' или 'volume'.
+  page(name) {
+    for (const p of this.el.querySelectorAll('.page')) p.hidden = p.dataset.page !== name;
+    this.sync();
+  }
+
+  // Esc в подменю — назад на главную, а не закрыть меню. true — если было куда возвращаться.
+  back() {
+    if (!this.isOpen || this.el.querySelector('[data-page="main"].page').hidden === false) return false;
+    this.page('main');
+    return true;
   }
 
   open() {
@@ -71,6 +109,7 @@ export class Menu {
   close() {
     if (!this.isOpen) return;
     this.isOpen = false;
+    this.page('main');
     this.el.classList.remove('open');
     document.body.classList.remove('in-menu');
   }

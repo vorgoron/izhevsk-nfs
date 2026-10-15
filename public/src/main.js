@@ -196,6 +196,8 @@ async function main() {
     }
   });
   radio.setMuted(sound.muted);
+  const radioVolume = () => radio.setVolume(sound.vol.master * sound.vol.radio);
+  radioVolume();
   game.radio = radio;
   radioName = radio.name; // первый показ — без вспышки
   radio.onChange();
@@ -219,6 +221,7 @@ async function main() {
   // гараж) закрывают меню, настройки переключаются на месте.
   const actions = {
     menu: () => {
+      if (menu.back()) return; // из подменю — на главную страницу меню
       if (garage.isOpen) garage.close();
       menu.toggle();
       sound.setPaused(menu.isOpen);
@@ -252,6 +255,10 @@ async function main() {
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
   const menu = new Menu({
     actions,
+    volume: {
+      get: (k) => sound.vol[k],
+      set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
+    },
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement }),
   });
@@ -615,6 +622,7 @@ async function main() {
     dustFx.update(dt, car);
     exhaustFx.update(dt, car);
     sound.update(dt, car, inp, race);
+    sound.traffic(dt, traffic, car);
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);
     skyDome.update(dt, camera, car.pos.x, car.pos.y);
