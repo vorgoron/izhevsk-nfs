@@ -2,6 +2,6 @@
   "name": "izhevsk-nfs-models",
   "private": true,
   "type": "module",
-  "description": "Сборка моделей машин public/models/*.glb (vesta.mjs, oda.mjs)",
+  "description": "Сборка моделей машин public/models/*.glb (vesta.mjs, oda.mjs, moskvich.mjs)",
   "dependencies": { "meshoptimizer": "0.21.0" }
 }

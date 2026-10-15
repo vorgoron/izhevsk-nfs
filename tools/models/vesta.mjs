@@ -5,10 +5,9 @@
 // y вверх от земли, x — поперёк. Размеры колёс пишутся в extras сцены.
 //
 //   cd tools/models && npm install && node vesta.mjs ~/Downloads/lada_vesta/scene.gltf
-import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bbox, hex, simplify, writeGlb } from './lib.mjs';
+import { bbox, hex, readGltf, simplify, writeGlb } from './lib.mjs';
 
 const src = resolve(process.argv[2] || join(process.env.HOME, 'Downloads/lada_vesta/scene.gltf'));
 const out = resolve(dirname(fileURLToPath(import.meta.url)), '../../public/models/vesta.glb');
@@ -37,51 +36,7 @@ const ROLES = {
 // не поддаётся (28 тыс. → 1,9 тыс.); диск игра рисует сама (wheelParts в vehicles.js).
 const WHEEL = { plastic: ['#151618', 0.04] };
 
-// ---------------------------------------------------------------- чтение glTF
-
-const gltf = JSON.parse(readFileSync(src, 'utf8'));
-const bin = readFileSync(join(dirname(src), gltf.buffers[0].uri));
-const COMP = { 5121: Uint8Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
-const NUM = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
-function accessor(i) {
-  const a = gltf.accessors[i], v = gltf.bufferViews[a.bufferView], T = COMP[a.componentType], n = NUM[a.type];
-  const stride = (v.byteStride || 0) / T.BYTES_PER_ELEMENT || n;
-  const base = new T(bin.buffer, bin.byteOffset + (v.byteOffset || 0) + (a.byteOffset || 0), (a.count - 1) * stride + n);
-  const outArr = new (T === Float32Array ? Float32Array : Uint32Array)(a.count * n);
-  for (let k = 0; k < a.count; k++) for (let j = 0; j < n; j++) outArr[k * n + j] = base[k * stride + j];
-  return outArr;
-}
-const I4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-function mul(a, b) { // столбцовые 4×4
-  const o = new Array(16).fill(0);
-  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
-  return o;
-}
-function local(n) {
-  if (n.matrix) return n.matrix;
-  const [x, y, z, w] = n.rotation || [0, 0, 0, 1], [sx, sy, sz] = n.scale || [1, 1, 1], [tx, ty, tz] = n.translation || [0, 0, 0];
-  return [(1 - 2 * (y * y + z * z)) * sx, 2 * (x * y + z * w) * sx, 2 * (x * z - y * w) * sx, 0,
-    2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
-    2 * (x * z + y * w) * sz, 2 * (y * z - x * w) * sz, (1 - 2 * (x * x + y * y)) * sz, 0, tx, ty, tz, 1];
-}
-const apply = (m, x, y, z) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
-
-// Все примитивы в мировых координатах: { node, wheel (имя колеса или null), mat, pos, idx }.
-const prims = [];
-(function walk(ids, parent, wheel) {
-  for (const id of ids) {
-    const n = gltf.nodes[id], m = mul(parent, local(n)), w = wheel || (/^wheel/.test(n.name || '') ? n.name : null);
-    if (n.mesh != null) {
-      for (const p of gltf.meshes[n.mesh].primitives) {
-        const raw = accessor(p.attributes.POSITION), pos = new Float32Array(raw.length);
-        for (let i = 0; i < raw.length; i += 3) pos.set(apply(m, raw[i], raw[i + 1], raw[i + 2]), i);
-        const idx = p.indices != null ? accessor(p.indices) : Uint32Array.from({ length: raw.length / 3 }, (_, i) => i);
-        prims.push({ node: n.name, wheel: w, mat: gltf.materials[p.material].name, pos, idx });
-      }
-    }
-    if (n.children) walk(n.children, m, w);
-  }
-})(gltf.scenes[0].nodes, I4, null);
+const prims = readGltf(src);
 
 // ---------------------------------------------------------------- оси игры
 

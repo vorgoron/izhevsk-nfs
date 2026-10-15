@@ -1,8 +1,8 @@
-// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs): упрощение и запись GLB в формате игры.
+// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs, moskvich.mjs): чтение glTF, упрощение и запись GLB в формате игры.
 // Модель — части paint (кузов, под цвет), detail, lights, wheel; у каждой позиции, цвета вершин
 // и индексы, нормали считаются в игре (плоские). Координаты: +z вперёд, y вверх от земли.
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { MeshoptSimplifier } from 'meshoptimizer';
 
 await MeshoptSimplifier.ready;
@@ -15,6 +15,56 @@ export const bbox = (list) => {
   }
   return { lo, hi, size: hi.map((h, k) => h - lo[k]), mid: hi.map((h, k) => (h + lo[k]) / 2) };
 };
+
+// ---------------------------------------------------------------- чтение glTF
+
+const COMP = { 5121: Uint8Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
+const NUM = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+function accessor(gltf, bin, i) {
+  const a = gltf.accessors[i], v = gltf.bufferViews[a.bufferView], T = COMP[a.componentType], n = NUM[a.type];
+  const stride = (v.byteStride || 0) / T.BYTES_PER_ELEMENT || n;
+  const base = new T(bin.buffer, bin.byteOffset + (v.byteOffset || 0) + (a.byteOffset || 0), (a.count - 1) * stride + n);
+  const outArr = new (T === Float32Array ? Float32Array : Uint32Array)(a.count * n);
+  for (let k = 0; k < a.count; k++) for (let j = 0; j < n; j++) outArr[k * n + j] = base[k * stride + j];
+  return outArr;
+}
+const I4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+function mul(a, b) { // столбцовые 4×4
+  const o = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+  return o;
+}
+function local(n) {
+  if (n.matrix) return n.matrix;
+  const [x, y, z, w] = n.rotation || [0, 0, 0, 1], [sx, sy, sz] = n.scale || [1, 1, 1], [tx, ty, tz] = n.translation || [0, 0, 0];
+  return [(1 - 2 * (y * y + z * z)) * sx, 2 * (x * y + z * w) * sx, 2 * (x * z - y * w) * sx, 0,
+    2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
+    2 * (x * z + y * w) * sz, 2 * (y * z - x * w) * sz, (1 - 2 * (x * x + y * y)) * sz, 0, tx, ty, tz, 1];
+}
+const apply = (m, x, y, z) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
+
+// Все примитивы glTF (scene.gltf + один .bin) в мировых координатах: { node, wheel (имя узла-колеса
+// /^wheel/ или null), mat (имя материала), pos, idx }.
+export function readGltf(src) {
+  const gltf = JSON.parse(readFileSync(src, 'utf8'));
+  const bin = readFileSync(join(dirname(src), gltf.buffers[0].uri));
+  const prims = [];
+  (function walk(ids, parent, wheel) {
+    for (const id of ids) {
+      const n = gltf.nodes[id], m = mul(parent, local(n)), w = wheel || (/^wheel/.test(n.name || '') ? n.name : null);
+      if (n.mesh != null) {
+        for (const p of gltf.meshes[n.mesh].primitives) {
+          const raw = accessor(gltf, bin, p.attributes.POSITION), pos = new Float32Array(raw.length);
+          for (let i = 0; i < raw.length; i += 3) pos.set(apply(m, raw[i], raw[i + 1], raw[i + 2]), i);
+          const idx = p.indices != null ? accessor(gltf, bin, p.indices) : Uint32Array.from({ length: raw.length / 3 }, (_, i) => i);
+          prims.push({ node: n.name, wheel: w, mat: gltf.materials[p.material].name, pos, idx });
+        }
+      }
+      if (n.children) walk(n.children, m, w);
+    }
+  })(gltf.scenes[0].nodes, I4, null);
+  return prims;
+}
 
 export const hex = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16) / 255);
 
