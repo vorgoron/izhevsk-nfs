@@ -19,6 +19,7 @@ import { Trams } from './trams.js';
 import { NitroFX, DustFX, ExhaustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
+import { createPerf } from './perf.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
@@ -550,12 +551,15 @@ async function main() {
   const clock = new THREE.Clock();
   const STEP = 1 / 120;
   let acc = 0;
+  const perf = flags.has('perf') ? createPerf(renderer) : null;
   renderer.setAnimationLoop(() => {
+    perf?.begin();
     const dt = Math.min(clock.getDelta(), 0.1);
     // Меню — пауза: мир стоит, только перерисовываем кадр.
     if (menu.isOpen) {
       acc = 0;
       renderer.render(scene, camera);
+      perf?.end();
       return;
     }
     acc += dt;
@@ -591,6 +595,7 @@ async function main() {
     sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 300);
     updateHud();
     renderer.render(scene, camera);
+    perf?.end();
   });
 }
 
