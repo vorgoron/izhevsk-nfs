@@ -172,6 +172,7 @@ export function roadMaterials(renderer) {
 }
 
 const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
+const MEDIAN_REACH = 25; // м: дальше парный мост не соединяется общим настилом (как MEDIAN_MAX в world.js)
 
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
 export function buildRoadChunk(world, runs, mats) {
@@ -210,6 +211,7 @@ export function buildRoadChunk(world, runs, mats) {
     const base = b.p.length / 3;
     // Продольная координата текстуры — от начала дороги, чтобы разметка не сбивалась на стыке квадратов.
     let bridgeEdge = null; // нормаль полотна в предыдущей точке (для бортов моста)
+    let prevMedian = null; // края общего настила с парным мостом в предыдущей точке
     let prevEdge = null;   // края полотна в предыдущей точке (для откосов насыпи подъезда)
     let v = 0;
     for (let i = 1; i <= from; i++) {
@@ -272,6 +274,7 @@ export function buildRoadChunk(world, runs, mats) {
         const [px, pz] = pts[i - 1], pl = bridgeEdge, y0 = ys[i - 1], y1 = ys[i];
         const o = 1 + 0.25 / half; // борт чуть снаружи полотна
         for (const sgn of [1, -1]) {
+          if (road.twin && sgn === road.twinSide) continue; // к парному мосту — общий настил, без борта
           const ax = px + sgn * pl.nx * o, az = pz + sgn * pl.nz * o, bx = x + sgn * nx * o, bz = z + sgn * nz * o;
           quad(bp, [ax, y0 - DECK, az], [bx, y1 - DECK, bz], [bx, y1 + PARAPET, bz], [ax, y0 + PARAPET, az]);
         }
@@ -285,6 +288,16 @@ export function buildRoadChunk(world, runs, mats) {
             if (y1 - DECK - g > 2.5 && !onRoad) pillars.push([qx, qz, g - 0.5, y1 - DECK]); // не на дорогу под мостом
           }
         }
+      }
+      // Общий настил до парного моста: от своего края до края соседа, плита толщиной DECK.
+      if (road.medianDraw && ys[i] != null) {
+        const tw = medianEdge(world, road, x, z, nx, nz, half, ys[i]);
+        if (tw && prevMedian) {
+          quad(bp, prevMedian[0], tw[0], tw[1], prevMedian[1]);
+          const dn = (p) => [p[0], p[1] - DECK, p[2]];
+          quad(bp, dn(prevMedian[1]), dn(tw[1]), dn(tw[0]), dn(prevMedian[0]));
+        }
+        prevMedian = tw;
       }
       bridgeEdge = { nx, nz };
       // Береговой устой на концах моста: стенка от настила до земли (и ниже), перекрывает
@@ -354,6 +367,23 @@ export function buildRoadChunk(world, runs, mats) {
   return group;
 }
 
+// Края общего настила в точке моста: [свой край, край парного моста] или null (за его концами).
+function medianEdge(world, road, x, z, nx, nz, half, y) {
+  const l = Math.hypot(nx, nz) || 1, ux = (nx / l) * road.twinSide, uz = (nz / l) * road.twinSide;
+  let best = null;
+  for (const s of world.segmentsNear(x, z, MEDIAN_REACH)) {
+    if (s.road !== road.twin) continue;
+    const c = World.closest(s, x, z);
+    if (!best || c.d < best.c.d) best = { s, c };
+  }
+  if (!best || best.c.t === 0 && best.s.s0 === 0 || best.c.t === 1 && best.s.s0 + best.s.len >= road.twin.len - 0.01) return null;
+  const { s, c } = best, w2 = s.w / 2;
+  if (c.d - half - w2 > MEDIAN_REACH) return null;
+  const yb = s.ya + (s.yb - s.ya) * c.t;
+  // Край соседа — со стороны нашего моста.
+  return [[x + ux * half, y, z + uz * half], [c.px - ux * w2, yb, c.pz - uz * w2]];
+}
+
 function quad(arr, a, b, c, d) {
   arr.push(...a, ...b, ...c, ...a, ...c, ...d);
 }
@@ -383,6 +413,8 @@ export function buildRailChunk(world, info, mat, deckMat) {
         const sx = ax + ((bx - ax) * k) / n, sz = az + ((bz - az) * k) / n, ex = ax + ((bx - ax) * (k + 1)) / n, ez = az + ((bz - az) * (k + 1)) / n;
         const sy = world.railGround(sx, sz, dx, dz), ey = world.railGround(ex, ez, dx, dz);
         if (sy - world.terrain(sx, sz) < 1 && ey - world.terrain(ex, ez) < 1) continue;
+        const onMedian = (px, pz, py) => { const m = world.medianY(px, pz); return m !== null && Math.abs(m - py) < 0.01; };
+        if (onMedian(sx, sz, sy) && onMedian(ex, ez, ey)) continue; // лежит на общем настиле
         const hx = -dz * RAIL_DECK / 2, hz = dx * RAIL_DECK / 2;
         quad(deck, [sx + hx, sy, sz + hz], [ex + hx, ey, ez + hz], [ex - hx, ey, ez - hz], [sx - hx, sy, sz - hz]);
         for (const sg of [1, -1]) quad(deck, [sx + hx * sg, sy, sz + hz * sg], [ex + hx * sg, ey, ez + hz * sg], [ex + hx * sg, ey - DECK, ez + hz * sg], [sx + hx * sg, sy - DECK, sz + hz * sg]);

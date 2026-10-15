@@ -14,6 +14,8 @@ const RAMP = 40; // м: подъезд к ровному мосту
 // концы приподнимаются не выше END_MAX м (дальше — подъезды насыпью).
 const CLEAR = 6.5, GRADE = 0.07, END_MAX = 6;
 const GRADE_MAX = 0.12; // подъезд короче нужного (дальше перекрёсток) — сжимается до такого уклона
+const MEDIAN_GAP = 6; // м: шире промежуток без трамвая между парными мостами — не заполняется
+const MEDIAN_MAX = 25; // м: шире промежуток между парными мостами — общего настила нет
 const RAIL_ALONG = 9; // м от края полотна путепровода: пути вдоль него идут на его уровне
 const STEP = 2; // м: на сколько выше машины поверхность ещё «под колёсами» (ground)
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
@@ -250,8 +252,8 @@ export class World {
       const E = Math.min(Ecap, Math.max(0, ...need.map((q) => q.v - Rmax * q.sin)));
       plans.push({ r, pts, acc, L, sAt, lin, need, Rmax, Ecap, E });
     }
-    // Парные мосты (две проезжие части рядом, концы рядом) — одной высоты: между ними трамвайные
-    // пути и полоса, которые идут вровень с дорогой.
+    // Парные путепроводы (две проезжие части рядом, концы рядом) — одной высоты: между ними трамвайные
+    // пути и полоса, которые идут вровень с дорогой (общий настил — #pairTwins).
     const ends = (p) => [p.pts[0], p.pts[p.pts.length - 1]];
     for (const a of plans) {
       for (const b of plans) {
@@ -264,6 +266,39 @@ export class World {
       const R = E > 0 ? Rmax : Math.min(Rmax, Math.max(0, ...need.map((q) => q.v / q.sin)));
       const hump = (s) => E + R * Math.sin((Math.PI * s) / L);
       r.hump = { E, ramp: (2 * E) / GRADE, y: acc.map((s) => lin(s) + hump(s)), short: (x, z) => { const s = sAt(x, z); return CLEAR + this.meshTerrain(x, z) - lin(s) - hump(s); } };
+    }
+  }
+
+  // Парные мосты (две проезжие части рядом, концы попарно в 40 м) — и путепроводы, и через реку:
+  // промежуток между ними (с трамваем или узкий) — общий настил (medianY, рисует один из пары, борт со стороны соседа
+  // не рисуется). Иначе в щель между настилами и трамвайными путями видно землю и можно провалиться.
+  #pairTwins() {
+    const br = this.roads.filter((r) => r.br && r.y);
+    const ends = (r) => [this.nodes[r.n[0]], this.nodes[r.n[r.n.length - 1]]];
+    for (const a of br) {
+      for (const b of br) {
+        if (a === b || a.twin || !ends(a).every(([x, z]) => ends(b).some(([u, v]) => Math.hypot(u - x, v - z) < 40))) continue;
+        const [a0, a1] = ends(a), [b0, b1] = ends(b), la = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]), lb = Math.hypot(b1[0] - b0[0], b1[1] - b0[1]);
+        if (Math.abs((a1[0] - a0[0]) * (b1[0] - b0[0]) + (a1[1] - a0[1]) * (b1[1] - b0[1])) < 0.95 * la * lb) continue; // не параллельны
+        const pa = a.n.map((i) => this.nodes[i]), k = Math.max(1, pa.length >> 1);
+        const [p, q] = [pa[k], pa[k - 1]], pb = b.n.map((i) => this.nodes[i]), m = pb[pb.length >> 1];
+        const mb = pb.length > 1 ? [(pb[0][0] + pb[pb.length - 1][0]) / 2, (pb[0][1] + pb[pb.length - 1][1]) / 2] : m;
+        const mx = (p[0] + q[0]) / 2, mz = (p[1] + q[1]) / 2;
+        // Настил нужен, если между мостами трамвай или узкая щель; широкий промежуток без путей
+        // (два отдельных моста через ручей) остаётся пустым.
+        let near = null;
+        for (let i = 1; i < pb.length; i++) {
+          const c = World.closest({ ax: pb[i - 1][0], az: pb[i - 1][1], bx: pb[i][0], bz: pb[i][1] }, mx, mz);
+          if (!near || c.d < near.d) near = c;
+        }
+        const gap = near.d - a.w / 2 - b.w / 2, cx = (mx + near.px) / 2, cz = (mz + near.pz) / 2;
+        const tram = this.city.rails.some((r) => r.k === 'tram' && r.p.some((_, i) => i > 0 &&
+          World.closest({ ax: r.p[i - 1][0], az: r.p[i - 1][1], bx: r.p[i][0], bz: r.p[i][1] }, cx, cz).d < gap / 2 + 1));
+        if (gap > MEDIAN_GAP && !tram) continue;
+        a.twin = b;
+        a.twinSide = Math.sign((mb[0] - mx) * -(p[1] - q[1]) + (mb[1] - mz) * (p[0] - q[0])) || 1;
+        a.medianDraw = !b.twin; // рисует тот, кто первым нашёл пару
+      }
     }
   }
 
@@ -452,6 +487,7 @@ export class World {
       road.y = acc.map((d) => y0 + (y1 - y0) * (len ? d / len : 0) + road.lift);
     }
     this.#levelBridgeEnds();
+    this.#pairTwins();
     // Проход 2: подъезды к ровным мостам и приподнятым путепроводам — дорога плавно поднимается
     // к настилу, продолжая его, а не упирается в устой. ramp: [{ from: 0|1 (начало/конец), y, len, quad }].
     // Подъезд к путепроводу продолжается по цепочке кусков улицы (off — длина до куска), пока не
@@ -480,7 +516,7 @@ export class World {
         };
         acc += L;
         this.segments.push(seg);
-        this.#insert(this.roadGrid, this.roadCell, seg, seg.w / 2 + 2);
+        this.#insert(this.roadGrid, this.roadCell, seg, seg.w / 2 + 2 + (road.twin ? MEDIAN_MAX : 0));
       }
     }
     this.#raiseRampEmbankments();
@@ -635,7 +671,36 @@ export class World {
       const v = this.#segY(s, c, x, z, t);
       if (v <= lim) y = Math.max(y, v);
     }
+    const m = this.medianY(x, z);
+    if (m !== null && m <= lim) y = Math.max(y, m);
     return y;
+  }
+
+  // Высота общего настила между парными мостами в точке или null (точка не между ними).
+  // Настил ровный поперёк: от края одного моста к краю другого.
+  medianY(x, z) {
+    return this.#median(x, z)?.y ?? null;
+  }
+
+  // { y, s } — высота общего настила и ближайший отрезок моста (для направления) или null.
+  #median(x, z) {
+    const near = new Map(); // мост → ближайший его отрезок
+    for (const s of this.nearbyRoadSegments(x, z)) {
+      if (!s.road.twin) continue;
+      const c = World.closest(s, x, z), r = s.road;
+      // За концами моста настила нет.
+      if ((s.s0 === 0 && c.t === 0) || (s.s0 + s.len >= r.len - 0.01 && c.t === 1)) continue;
+      if (!near.has(r) || c.d < near.get(r).c.d) near.set(r, { s, c });
+    }
+    let a = null, b = null;
+    for (const [r, k] of near) if (near.has(r.twin) && (!a || k.c.d < a.c.d)) [a, b] = [k, near.get(r.twin)];
+    if (!a) return null;
+    const ga = a.c.d - a.s.w / 2, gb = b.c.d - b.s.w / 2;
+    // Между ними: точка лежит на отрезке между ближайшими точками двух мостов.
+    if (ga < -0.3 || gb < -0.3 || ga + gb > MEDIAN_MAX || a.c.d + b.c.d > Math.hypot(a.c.px - b.c.px, a.c.pz - b.c.pz) + 1) return null;
+    const ya = a.s.ya + (a.s.yb - a.s.ya) * a.c.t, yb = b.s.ya + (b.s.yb - b.s.ya) * b.c.t;
+    const f = Math.min(1, Math.max(0, ga / (ga + gb || 1)));
+    return { y: ya + (yb - ya) * f, s: a.s };
   }
 
   // Высота под рельсами: как ground, но путепроводы (мосты над дорогами/рельсами) пропускаются —
@@ -644,19 +709,23 @@ export class World {
   // идут вровень с ближайшим полотном моста или подъезда: в OSM у трамвая свой мост, а флага
   // «мост» у рельсов в данных нет.
   railGround(x, z, dx = 0, dz = 0) {
+    const along = (s) => Math.abs(((s.bx - s.ax) * dx + (s.bz - s.az) * dz) / (s.len || 1)) > 0.9;
+    const m = this.#median(x, z);
+    if (m && along(m.s)) return m.y; // вдоль парных мостов — по их общему настилу; поперёк — под ним
     const t = this.terrain(x, z);
-    let y = t, along = null;
+    let y = t, near = null;
     for (const s of this.segmentsNear(x, z, RAIL_ALONG + 15)) {
       const c = World.closest(s, x, z);
+      // Вдоль любого моста или подъезда — на уровне полотна (у трамвая в OSM свой мост рядом).
       const lifted = s.road.hump || s.road.ramp?.some((r) => r.quad);
-      if (lifted && c.d <= s.w / 2 + RAIL_ALONG && Math.abs(((s.bx - s.ax) * dx + (s.bz - s.az) * dz) / (s.len || 1)) > 0.9) {
-        if (!along || c.d < along.d) along = { d: c.d, y: this.#segY(s, c, x, z, t) };
+      if ((lifted || s.road.br || s.road.ramp) && c.d <= s.w / 2 + RAIL_ALONG && along(s)) {
+        if (!near || c.d < near.d) near = { d: c.d, y: this.#segY(s, c, x, z, t) };
         continue;
       }
-      if (s.road.hump) continue;
+      if (lifted) continue; // поперёк путепровода или его подъезда — пути под ним
       if (c.d <= s.w / 2 + 0.3) y = Math.max(y, this.#segY(s, c, x, z, t));
     }
-    return along ? Math.max(y, along.y) : y;
+    return near ? Math.max(y, near.y) : y;
   }
 
   // Высота полотна дороги road в точке (ближайший её отрезок рядом) или null.
