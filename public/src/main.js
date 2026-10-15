@@ -209,6 +209,11 @@ async function main() {
   });
 
   let camMode = 0; // 0 — за машиной, 1 — из салона, 2 — сверху
+  // Предел кадров в секунду, 0 — без предела. На экранах 120–144 Гц без предела игра рисует
+  // вдвое больше кадров, чем нужно для плавности, — телефон греется.
+  const FPS_CAPS = [60, 30, 0];
+  let fpsCap = 60;
+  try { const v = localStorage.getItem('fps'); if (v !== null && FPS_CAPS.includes(+v)) fpsCap = +v; } catch {}
 
   // Действия общие для клавиатуры, меню и сенсорных кнопок. Действия «в игру» (гонка, на дорогу,
   // гараж) закрывают меню, настройки переключаются на месте.
@@ -234,6 +239,10 @@ async function main() {
     },
     race: () => { resume(); race.start(car.pos.x, car.pos.y); },
     camera: () => { camMode = (camMode + 1) % 3; },
+    fps: () => {
+      fpsCap = FPS_CAPS[(FPS_CAPS.indexOf(fpsCap) + 1) % FPS_CAPS.length];
+      try { localStorage.setItem('fps', fpsCap); } catch {}
+    },
     garage: () => { resume(); garage.toggle(); },
     map: () => $('minimap').classList.toggle('big'),
     fullscreen: toggleFullscreen,
@@ -243,12 +252,12 @@ async function main() {
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
   const menu = new Menu({
     actions,
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, bigMap: $('minimap').classList.contains('big'),
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement }),
   });
   game.menu = menu;
   $('menu-btn').addEventListener('click', actions.menu);
-  const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera',
+  const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
     KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen' };
 
   const keys = new Set();
@@ -563,7 +572,14 @@ async function main() {
   const STEP = 1 / 120;
   let acc = 0;
   const perf = flags.has('perf') ? createPerf(renderer, scene, camera, sun) : null;
-  renderer.setAnimationLoop(() => {
+  let nextFrame = 0;
+  renderer.setAnimationLoop((now) => {
+    // Предел кадров: пропускаем вызовы раньше срока (запас 1 мс на дрожание таймера).
+    // Срок двигается шагом интервала — на 144 Гц в среднем выходит ровно предел.
+    if (fpsCap) {
+      if (now < nextFrame - 1) return;
+      nextFrame = Math.max(nextFrame + 1000 / fpsCap, now);
+    }
     perf?.begin();
     const dt = Math.min(clock.getDelta(), 0.1);
     // Меню — пауза: мир стоит, только перерисовываем кадр.

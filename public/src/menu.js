@@ -5,7 +5,7 @@
 const CAMERAS = ['сзади', 'из салона', 'сверху'];
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, bigMap, fullscreen }.
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, fps, bigMap, fullscreen }.
   constructor({ actions, state }) {
     this.actions = actions;
     this.state = state;
@@ -25,6 +25,7 @@ export class Menu {
       <button data-act="radio">Радио <b data-v="radio"></b><kbd>B</kbd></button>
       <button data-act="traffic">Трафик <b data-v="traffic"></b><kbd>T</kbd></button>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
+      <button data-act="fps">Кадров в секунду <b data-v="fps"></b><kbd>L</kbd></button>
       <button data-act="map">Миникарта <b data-v="bigMap"></b><kbd>M</kbd></button>
       ${fs ? '<button data-act="fullscreen">Во весь экран <b data-v="fullscreen"></b><kbd>F</kbd></button>' : ''}
       <div class="keys">
@@ -49,12 +50,13 @@ export class Menu {
       radio: s.radio ?? 'выкл',
       traffic: s.traffic ? 'вкл' : 'выкл',
       camera: CAMERAS[s.camera],
+      fps: s.fps ? `до ${s.fps}` : 'без предела',
       bigMap: s.bigMap ? 'крупная' : 'обычная',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
     };
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', b.dataset.v !== 'camera' && b.dataset.v !== 'bigMap' && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'bigMap', 'fps'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
   }
 
