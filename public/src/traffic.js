@@ -232,7 +232,7 @@ export class Traffic {
       let ap = this.signals.approach.get(e), dist = rest;
       if (!ap && v.next) { ap = this.signals.approach.get(v.next); dist = rest + v.next.len; }
       if (ap) {
-        const stop = dist - ap.stopBack;
+        const stop = dist - ap.stopBack - v.len / 2; // до переднего бампера, не до центра
         const st = this.signals.state(ap);
         if (stop > -1 && st !== 'green' && !(st === 'yellow' && stop < v.speed * 1.2)) {
           limit = Math.min(limit, Math.max(0, (stop - 1) * 0.7));
