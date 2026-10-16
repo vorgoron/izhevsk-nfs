@@ -19,10 +19,16 @@ const NAME_MAX = 20;
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, NAME_MAX);
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
 
-function loadName() {
-  try { const n = cleanName(localStorage.getItem('name')); if (n) return n; } catch {}
-  return `Гонщик ${100 + Math.floor(Math.random() * 900)}`;
+// Значение из localStorage, а нет — созданное make() и сразу сохранённое: имя по умолчанию и своя
+// комната не меняются от перезагрузки.
+function stored(key, valid, make) {
+  try { const v = localStorage.getItem(key); if (v && valid(v)) return v; } catch {}
+  const v = make();
+  try { localStorage.setItem(key, v); } catch {}
+  return v;
 }
+const loadName = () => stored('name', (v) => cleanName(v) === v, () => `Гонщик ${100 + Math.floor(Math.random() * 900)}`);
+const ownRoom = () => stored('room', (v) => ROOM_RE.test(v) && v !== CITY, () => Math.random().toString(36).slice(2, 8).padEnd(6, '0'));
 
 // Ник над машиной: спрайт постоянного размера на экране, виден сквозь дома.
 function makeLabel(text) {
@@ -105,9 +111,9 @@ export class Net {
     this.sendT = 0;
   }
 
-  // Своя комната для друзей: новая (если сейчас в общем городе) и ссылка на неё.
+  // Ссылка для друзей: из общего города — в свою комнату (код у игрока постоянный), из чужой — на неё же.
   inviteLink() {
-    if (this.room === CITY) this.join(Math.random().toString(36).slice(2, 8));
+    if (this.room === CITY) this.join(ownRoom());
     return location.href;
   }
 

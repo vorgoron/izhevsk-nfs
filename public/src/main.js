@@ -256,11 +256,16 @@ async function main() {
     // Позвать друзей: своя комната и ссылка на неё в буфер обмена (не вышло — ссылка видна в адресе).
     invite: () => {
       const link = net.inviteLink();
-      navigator.clipboard?.writeText(link).then(() => { copiedAt = performance.now(); menu.sync(); }, () => {});
+      navigator.clipboard?.writeText(link).then(() => {
+        // «Скопирована» на 4 с; меню само не перерисовывается — снимает надпись таймер.
+        clearTimeout(copied);
+        copied = setTimeout(() => { copied = 0; menu.sync(); }, 4000);
+        menu.sync();
+      }, () => {});
     },
-    city: () => net.join(CITY),
+    city: () => { clearTimeout(copied); copied = 0; net.join(CITY); },
   };
-  let copiedAt = -1e9;
+  let copied = 0; // таймер надписи «ссылка скопирована», 0 — не показываем
   const resume = () => { menu.close(); sound.setPaused(false); };
   // После любого действия (клавишей, кнопкой) меню показывает актуальные значения.
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
@@ -272,7 +277,7 @@ async function main() {
     },
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
-      players: net.count, netStatus: net.status, copied: performance.now() - copiedAt < 4000 }),
+      players: net.count, netStatus: net.status, copied: !!copied }),
     setName: (v) => net.setName(v),
   });
   game.menu = menu;
