@@ -13,6 +13,21 @@
             "c": { ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)" },
             "$other": { ".validate": false }
           }
+        },
+        "race": {
+          ".write": "auth != null && $room.matches(/^[a-z0-9-]{1,24}$/)",
+          ".validate": "newData.hasChildren(['a', 'b', 't', 'o'])",
+          "a": { ".validate": "newData.isNumber()" },
+          "b": { ".validate": "newData.isNumber()" },
+          "t": { ".validate": "newData.isNumber()" },
+          "o": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+          "r": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid",
+              ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() < 7200"
+            }
+          },
+          "$other": { ".validate": false }
         }
       }
     }

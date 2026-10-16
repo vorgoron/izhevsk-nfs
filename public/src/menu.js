@@ -8,7 +8,8 @@ const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traf
 export class Menu {
   // actions — общие действия main.js; state() — { sound, radio, traffic, camera, fps, bigMap, fullscreen };
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
-  // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied.
+  // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
+  // shared (гонка общая — в своей комнате на связи).
   constructor({ actions, state, volume, setName }) {
     this.actions = actions;
     this.state = state;
@@ -23,7 +24,7 @@ export class Menu {
       <div class="page" data-page="main">
       <h2>Пауза</h2>
       <button data-act="menu" class="go">Продолжить <kbd>Esc</kbd></button>
-      <button data-act="race">Новая гонка <kbd>N</kbd></button>
+      <button data-act="race">Новая гонка <b data-v="race"></b><kbd>N</kbd></button>
       <button data-act="respawn">На дорогу <kbd>R</kbd></button>
       <button data-act="garage">Гараж — выбор машины <kbd>G</kbd></button>
       <h3>Сеть <span data-v="net"></span></h3>
@@ -89,12 +90,13 @@ export class Menu {
       name: s.name,
       invite: s.copied ? 'ссылка скопирована' : s.city ? 'своя комната' : 'ссылка',
       room: s.room,
+      race: s.shared ? 'со всеми в комнате' : '',
     };
     s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'bigMap', 'fps', 'net', 'name', 'room'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'bigMap', 'fps', 'net', 'name', 'room', 'race'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;

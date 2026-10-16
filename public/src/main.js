@@ -155,8 +155,7 @@ async function main() {
     const s = r.seg;
     car.place(r.px, r.pz, Math.atan2(s.bx - s.ax, s.bz - s.az));
   };
-  respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0);
-  race.start(car.pos.x, car.pos.y);
+  respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0); // гонки нет — свободная езда, гонка — по кнопке (N)
   progress(0.7, 'Строю город вокруг…');
   await frame();
   await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
@@ -183,6 +182,28 @@ async function main() {
     if (window.game?.menu?.isOpen) game.menu.sync();
   });
   setPlate(car.model, net.name);
+  // Общая гонка: новая (ещё до старта) — встаём в сетку; та же — обновились результаты.
+  net.onRace = (v) => {
+    if (!v) { race.shared = false; return; }
+    if (race.shared && v.t === race.startAt) return;
+    if (v.t <= net.serverNow()) return; // уже стартовала без нас — ждём следующую
+    const order = String(v.o).split(','), i = order.indexOf(net.uid);
+    if (race.startShared({ from: v.a, to: v.b, startAt: v.t, slot: i < 0 ? order.length : i, clock: () => net.serverNow() })) {
+      if (menu.isOpen) actions.menu();
+      car.nitro = 1; car.fuel = Math.max(car.fuel, 0.5);
+    }
+  };
+  race.onFinish = (t) => { if (race.shared) net.finishRace(t); };
+  // Таблица общей гонки: финишировавшие по времени, остальные — «едет».
+  const standings = () => {
+    const v = net.race;
+    if (!race.shared || !v || v.t !== race.startAt) return '';
+    const r = v.r ?? {};
+    const rows = String(v.o).split(',').filter((u) => u in r || net.ghosts.has(u) || u === net.uid)
+      .map((u) => ({ u, t: r[u] })).sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
+    const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+    return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
+  };
   window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues, chunks, net }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
@@ -251,7 +272,12 @@ async function main() {
       }
       else respawnAt(car.pos.x, car.pos.y);
     },
-    race: () => { resume(); race.start(car.pos.x, car.pos.y); },
+    // В своей комнате — общая гонка: старт отсюда, финиш случайный; придёт всем через базу (net.onRace).
+    race: () => {
+      resume();
+      const p = net.shared && race.pick(car.pos.x, car.pos.y);
+      if (!p || !net.startRace(p.from, p.to)) race.start(car.pos.x, car.pos.y);
+    },
     camera: () => { camMode = (camMode + 1) % 3; },
     fps: () => {
       fpsCap = FPS_CAPS[(FPS_CAPS.indexOf(fpsCap) + 1) % FPS_CAPS.length];
@@ -284,11 +310,12 @@ async function main() {
     },
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
-      players: net.count, netStatus: net.status, copied: !!copied }),
+      players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared }),
     setName: (v) => net.setName(v),
   });
   game.menu = menu;
   $('menu-btn').addEventListener('click', actions.menu);
+  $('race-btn').addEventListener('click', actions.race);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
     KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen' };
 
@@ -586,7 +613,8 @@ async function main() {
       banner.classList.toggle('show', race.time < 0.8);
       if (race.time < 0.8) banner.textContent = 'ПОЕХАЛИ!';
     } else if (race.state === 'finished') {
-      banner.innerHTML = `ФИНИШ ${formatTime(race.time)}<small>${race.isRecord ? 'новый рекорд!' : `рекорд ${formatTime(race.best)}`}<br>N — новая гонка</small>`;
+      const table = standings();
+      banner.innerHTML = `ФИНИШ ${formatTime(race.time)}<small>${table || (race.isRecord ? 'новый рекорд!' : `рекорд ${formatTime(race.best)}`)}<br>N — новая гонка</small>`;
       banner.classList.add('show');
     } else {
       banner.classList.remove('show');
@@ -595,6 +623,7 @@ async function main() {
     $('fuel-fill').style.width = `${car.fuel * 100}%`;
     $('fuel').classList.toggle('low', car.fuel < LOW_FUEL);
     fuelWarnings();
+    document.body.classList.toggle('no-race', race.state === 'idle');
     $('time').textContent = formatTime(race.time);
     $('cp').textContent = race.checkpoints.length ? `${Math.min(race.next, race.checkpoints.length)}/${race.checkpoints.length}` : '–';
     $('dist').textContent = `${(race.length / 1000).toFixed(1)} км`;

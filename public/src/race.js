@@ -1,8 +1,10 @@
-// Гонка по чекпоинтам: маршрут — кратчайший путь по графу улиц.
+// Гонка по чекпоинтам: маршрут — кратчайший путь по графу улиц. Общая гонка в комнате: маршрут задают
+// узлы старта и финиша (у всех один граф — один путь), отсчёт и время — по часам сервера (clock).
 import * as THREE from 'three';
 
 const CP_SPACING = 230;
 const CP_RADIUS = 13;
+const GRID_BACK = 7, GRID_SIDE = 1.6; // м: стартовая сетка общей гонки — по две машины в ряд
 
 export class Race {
   constructor(world, scene) {
@@ -44,19 +46,45 @@ export class Race {
 
   // Новая гонка от точки (x, z): финиш в 1.3–2.3 км по прямой, маршрут по улицам.
   start(x, z) {
+    const p = this.pick(x, z);
+    return !!p && this.#begin(p.from, p.to);
+  }
+
+  // Узлы старта и финиша новой гонки от точки (x, z).
+  pick(x, z) {
     const w = this.world;
     const from = w.nearestGraphNode(x, z);
     const ids = [...w.graph.keys()];
-    let path = null;
-    for (let tries = 0; tries < 60 && !path; tries++) {
+    for (let tries = 0; tries < 60; tries++) {
       const to = ids[Math.floor(Math.random() * ids.length)];
       const [px, pz] = w.nodes[to], [fx, fz] = w.nodes[from];
       const d = Math.hypot(px - fx, pz - fz);
       if (d < 1300 || d > 2300) continue;
       const p = w.shortestPath(from, to);
-      if (p && p.length > 5) path = p;
+      if (p && p.length > 5) return { from, to };
     }
-    if (!path) return false;
+    return null;
+  }
+
+  // Общая гонка: старт в момент startAt (мс по clock()), slot — место в стартовой сетке.
+  startShared({ from, to, startAt, slot, clock }) {
+    if (!this.#begin(from, to)) return false;
+    this.shared = true;
+    this.startAt = startAt;
+    this.clock = clock;
+    const { x, z, heading } = this.startPose, row = slot >> 1, side = slot % 2 ? 1 : -1;
+    const fx = Math.sin(heading), fz = Math.cos(heading);
+    this.startPose = { x: x - fx * GRID_BACK * row + fz * GRID_SIDE * side, z: z - fz * GRID_BACK * row - fx * GRID_SIDE * side, heading };
+    this.update(0, null);
+    return true;
+  }
+
+  #begin(from, to) {
+    const w = this.world;
+    const path = w.graph.has(from) && w.graph.has(to) ? w.shortestPath(from, to) : null;
+    if (!path || path.length < 2) return false;
+    this.shared = false;
+    this.startAt = null;
 
     this.route = path.map((id) => w.nodes[id]);
     this.checkpoints = [];
@@ -86,9 +114,10 @@ export class Race {
     return true;
   }
 
-  // Тот же маршрут заново: отсчёт со старта.
+  // Тот же маршрут заново: отсчёт со старта. Общая гонка общая и по времени — заново её не начать.
   restart() {
     if (!this.route.length) return false;
+    if (this.shared) return this.state === 'countdown';
     this.state = 'countdown';
     this.countdown = 3;
     this.time = 0;
@@ -132,18 +161,25 @@ export class Race {
   }
 
   update(dt, car) {
+    if (this.shared && this.state !== 'finished') { // время — от общего старта, а не своими кадрами
+      const t = (this.clock() - this.startAt) / 1000;
+      this.countdown = -t;
+      if (t >= 0) { this.state = 'running'; this.time = t; }
+    }
+    if (!car) return;
     if (this.state === 'countdown') {
-      this.countdown -= dt;
+      if (!this.shared) this.countdown -= dt;
       car.place(this.startPose.x, this.startPose.z, this.startPose.heading);
       if (this.countdown <= 0) this.state = 'running';
     } else if (this.state === 'running') {
-      this.time += dt;
+      if (!this.shared) this.time += dt;
       const cp = this.checkpoints[this.next];
       if (Math.hypot(car.pos.x - cp.x, car.pos.y - cp.z) < CP_RADIUS) {
         this.next++;
         if (this.next >= this.checkpoints.length) {
           this.state = 'finished';
           this.#saveBest();
+          this.onFinish?.(this.time);
         }
         this.#updateGateLook();
       }

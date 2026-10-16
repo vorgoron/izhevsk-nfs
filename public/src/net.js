@@ -2,6 +2,8 @@
 // пишет её положение в rooms/<комната>/players/<uid>; чужие машины плавно едут между полученными
 // точками. Столкновения каждый считает сам: свою машину отталкивает от того, где видит чужую, — и
 // у того, в кого врезались, его игра так же оттолкнёт его машину от нашей.
+// Общая гонка — rooms/<комната>/race: { a, b — узлы старта и финиша, t — старт по часам сервера,
+// o — uid участников через запятую (порядок — места в стартовой сетке), r/<uid> — время финиша, с }.
 // В общем городе пока никого не видно и ничего не шлём (лимиты Firebase): связь — только в своей комнате. Нет связи с Firebase — игра идёт как раньше, одна.
 import * as THREE from 'three';
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
@@ -20,6 +22,7 @@ const NAME_MAX = 10; // столько помещается на номер ма
 const CAR_R = 1.15, CAR_AXLE = 1.25; // два круга вдоль машины, как в car.js
 // Машины одинаковой массы: удар делится пополам — каждому достаётся половина относительной скорости.
 const SHARE = 0.5;
+const RACE_DELAY = 5000; // мс от «Новой гонки» до старта: успеть всем получить гонку и встать на старт
 const SAME_LEVEL = 3; // м: по высоте дальше — разные уровни (эстакада и дорога под ней), не сталкиваемся
 
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, NAME_MAX);
@@ -69,7 +72,28 @@ export class Net {
     const r = new URLSearchParams(location.search).get('room')?.toLowerCase();
     this.room = r && ROOM_RE.test(r) ? r : CITY;
     this.sendT = 0;
+    this.offset = 0;   // мс: часы сервера − свои
+    this.race = null;  // общая гонка комнаты (как в базе)
+    this.onRace = () => {};
     queueMicrotask(() => this.join(this.room)); // onChange — когда конструктор уже вернул объект
+  }
+
+  get shared() { return this.room !== CITY && this.status === 'online'; }
+  serverNow() { return Date.now() + this.offset; }
+  nameOf(uid) { return uid === this.uid ? this.name : this.ghosts.get(uid)?.name ?? 'Гонщик'; }
+
+  // Новая общая гонка: участники — все, кого сейчас видно, сам запустивший — первым в сетке.
+  startRace(from, to) {
+    if (!this.shared) return false;
+    const o = [this.uid, ...[...this.ghosts].filter(([, g]) => !g.stale).map(([uid]) => uid)].join(',');
+    this.fb.set(this.fb.ref(this.db, `rooms/${this.room}/race`), { a: from, b: to, t: Math.round(this.serverNow() + RACE_DELAY), o })
+      .catch((e) => console.warn('[net] гонка не записалась:', e));
+    return true;
+  }
+
+  finishRace(time) {
+    if (!this.shared) return;
+    this.fb.set(this.fb.ref(this.db, `rooms/${this.room}/race/r/${this.uid}`), +time.toFixed(2)).catch(() => {});
   }
 
   get count() { let n = 1; for (const g of this.ghosts.values()) n += !g.stale; return n; }
@@ -88,6 +112,7 @@ export class Net {
       this.status = s.val() ? 'online' : 'connecting';
       this.onChange();
     });
+    db.onValue(db.ref(this.db, '.info/serverTimeOffset'), (s) => { this.offset = s.val() ?? 0; });
     this.join(this.room);
   }
 
@@ -104,6 +129,7 @@ export class Net {
     this.me = null;
     this.unsub?.forEach((f) => f());
     this.unsub = null;
+    if (this.race) { this.race = null; this.onRace(null); }
     if (room === CITY) {
       if (was) remove(was);
       if (this.db) goOffline(this.db);
@@ -133,6 +159,7 @@ export class Net {
       onChildAdded(players, got),
       onChildChanged(players, got),
       onChildRemoved(players, (s) => { this.#drop(s.key); this.onChange(); }),
+      this.fb.onValue(ref(this.db, `rooms/${room}/race`), (s) => { this.race = s.val(); this.onRace(this.race); }),
     ];
     this.sendT = 0;
   }
