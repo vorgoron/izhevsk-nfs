@@ -3,7 +3,7 @@ import { World } from './world.js';
 import { MINIMAP_SCALE } from './build.js';
 import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
-import { MODELS, buildPlayerModel, loadVehicleMeshes } from './vehicles.js';
+import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates } from './vehicles.js';
 import { Garage, loadChoice } from './garage.js';
 import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
@@ -129,7 +129,9 @@ async function main() {
   const setVehicle = (key, color) => {
     scene.remove(car.model);
     car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
+    disposePlates(car.model);
     const m = buildPlayerModel(key, color);
+    setPlate(m, net.name);
     m.userData.perf = 'машина игрока';
     scene.add(m);
     car.setModel(m, MODELS[key].stats);
@@ -175,7 +177,12 @@ async function main() {
   });
   if (!choice.saved) garage.open();
   // Другие игроки: подключение в фоне, без связи игра идёт одна. Меню открыто — обновляем его.
-  const net = new Net(scene, choice, () => { if (window.game?.menu?.isOpen) game.menu.sync(); });
+  // На номере своей машины — имя игрока (сменил имя — меняется и номер).
+  const net = new Net(scene, choice, () => {
+    setPlate(car.model, net.name);
+    if (window.game?.menu?.isOpen) game.menu.sync();
+  });
+  setPlate(car.model, net.name);
   window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues, chunks, net }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод

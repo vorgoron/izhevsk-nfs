@@ -3,7 +3,7 @@
 // плавно едут между полученными точками. Нет связи с Firebase — игра идёт как раньше, одна.
 import * as THREE from 'three';
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
-import { MODELS, DEFAULT_MODEL, buildPlayerModel } from './vehicles.js';
+import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates } from './vehicles.js';
 
 export const CITY = 'city'; // общий город — комната по умолчанию
 const SEND_EVERY = 0.1;      // с
@@ -14,7 +14,7 @@ const LABEL_DIST = 600;      // м: дальше ник не показывае�
 // после вылета, а onDisconnect не сработал. Обновления пойдут снова — машина появится.
 const STALE = 5000;
 const ROOM_RE = /^[a-z0-9-]{1,24}$/;
-const NAME_MAX = 20;
+const NAME_MAX = 10; // столько помещается на номер машины
 
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, NAME_MAX);
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
@@ -27,7 +27,8 @@ function stored(key, valid, make) {
   try { localStorage.setItem(key, v); } catch {}
   return v;
 }
-const loadName = () => stored('name', (v) => cleanName(v) === v, () => `Гонщик ${100 + Math.floor(Math.random() * 900)}`);
+// Имя, сохранённое до ограничения длины, обрезаем.
+const loadName = () => cleanName(stored('name', (v) => !!cleanName(v), () => `Гонщик ${100 + Math.floor(Math.random() * 900)}`));
 const ownRoom = () => stored('room', (v) => ROOM_RE.test(v) && v !== CITY, () => Math.random().toString(36).slice(2, 8).padEnd(6, '0'));
 
 // Ник над машиной: спрайт постоянного размера на экране, виден сквозь дома.
@@ -177,6 +178,7 @@ export class Net {
       this.scene.add(g.label);
       g.name = name;
     }
+    setPlate(g.mesh, name); // на номере — имя игрока (тот же текст — ничего не делает)
     const last = g.buf.at(-1);
     if (last && t < last.t - 1000) { g.buf = []; g.offset = Infinity; } // у игрока перезагрузилась вкладка
     if (last && t <= last.t) return;
@@ -227,6 +229,7 @@ export class Net {
     if (!mesh) return;
     this.scene.remove(mesh);
     mesh.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
+    disposePlates(mesh);
   }
 
   #drop(uid) {

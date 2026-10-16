@@ -83,6 +83,8 @@ export const MODELS = {
     // Готовая модель (tools/models/vesta.mjs); не загрузилась — рисуется процедурная по полям ниже.
     glb: 'models/vesta.glb',
     credit: 'Модель: «Lada Vesta», tiunov.se (Sketchfab), CC BY 4.0',
+    // В готовой модели номеров нет — места под таблички: центр, нормаль наружу (у остальных находятся по цвету).
+    meshPlates: [{ x: 0, y: 0.47, z: 2.215, w: 0.52, h: 0.11, n: [0, 0, 1] }, { x: 0, y: 0.6, z: -2.225, w: 0.52, h: 0.11, n: [0, 0, -1] }],
     width: 1.76, cabinWidth: 1.5,
     // Бамперы в профиле кузова: низкий скруглённый нос, капот круто падает вперёд, короткий высокий багажник.
     body: [[-2.2, 0.32], [2.2, 0.32], [2.26, 0.46], [2.25, 0.6], [2.17, 0.73], [1.95, 0.83], [1.0, 1.0], [-1.66, 1.05],
@@ -415,6 +417,123 @@ export function buildPlayerModel(key, color) {
   }
   g.userData.paint = paintMat;
   g.userData.length = parts.length;
+  g.userData.plateHost = meshes[1];
+  g.userData.plateSpots = plateSpots(spec, parts.detail);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   return g;
+}
+
+// ---------------------------------------------------------------- номер с именем игрока
+
+// Таблички в детали (detail) крашены '#f0f0ea': в готовых моделях цвет записан как есть, в процедурных —
+// переведён в линейный. По этим вершинам и находим места под номер; грани — только смотрящие вперёд/назад.
+const PLATE_COLORS = [[0.941, 0.941, 0.918], [0.871, 0.871, 0.823]];
+function plateSpots(spec, detail) {
+  if (spec.mesh && spec.meshPlates) return spec.meshPlates;
+  const key = spec.mesh ? 'platesMesh' : 'platesProc';
+  if (spec[key]) return spec[key];
+  const c = detail.attributes.color, p = detail.attributes.position, nr = detail.attributes.normal;
+  const isPlate = (i) => PLATE_COLORS.some(([pr, pg, pb]) => Math.abs(c.getX(i) - pr) + Math.abs(c.getY(i) - pg) + Math.abs(c.getZ(i) - pb) < 0.01);
+  const spots = [];
+  for (const side of [1, -1]) {
+    const idx = [];
+    for (let i = 0; i < c.count; i++) if (Math.sign(p.getZ(i)) === side && nr.getZ(i) * side >= 0.5 && isPlate(i)) idx.push(i);
+    if (!idx.length) continue;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, sz = 0;
+    const n = new THREE.Vector3();
+    for (const i of idx) {
+      x0 = Math.min(x0, p.getX(i)); x1 = Math.max(x1, p.getX(i));
+      y0 = Math.min(y0, p.getY(i)); y1 = Math.max(y1, p.getY(i));
+      sz += p.getZ(i);
+      n.x += nr.getX(i); n.y += nr.getY(i); n.z += nr.getZ(i);
+    }
+    n.normalize();
+    // Центр — середина по x и y; вдоль нормали — у самой выступающей точки таблички: у готовых моделей
+    // (STL) табличка неровная, и номер на средней плоскости местами уходил бы под её треугольники.
+    const ctr = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, sz / idx.length);
+    let out = -Infinity;
+    for (const i of idx) out = Math.max(out, (p.getX(i) - ctr.x) * n.x + (p.getY(i) - ctr.y) * n.y + (p.getZ(i) - ctr.z) * n.z);
+    ctr.addScaledVector(n, out);
+    // Наклонная табличка (номер на крышке багажника) по высоте занимает меньше своей высоты.
+    spots.push({ x: ctr.x, y: ctr.y, z: ctr.z, w: x1 - x0, h: (y1 - y0) / Math.max(0.3, Math.abs(n.z)), n: n.toArray() });
+  }
+  return (spec[key] = spots);
+}
+
+// Номер на холсте. Длинный — пропорции российского 520×112 мм: текст, справа регион 18, RUS и флаг.
+// Квадратный (задний у Москвича, 290×170) — в две строки: текст, под ним 18 RUS.
+const PLATE_FONT = '"Arial Narrow", "Roboto Condensed", "DIN Condensed", sans-serif';
+function drawPlate(cv, text, square) {
+  const W = cv.width, H = cv.height, g = cv.getContext('2d');
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#f4f4f0';
+  g.beginPath(); g.roundRect(0, 0, W, H, 18); g.fill();
+  g.strokeStyle = '#111'; g.lineWidth = 8;
+  g.beginPath(); g.roundRect(8, 8, W - 16, H - 16, 14); g.stroke();
+  g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  // Регион: «18», ниже RUS и флаг; (cx, top, w, h) — поле под него.
+  const region = (cx, top, w, h) => {
+    g.textAlign = 'center';
+    g.font = `bold ${h * 0.5}px ${PLATE_FONT}`;
+    g.fillText('18', cx, top + h * 0.38, w - 30);
+    g.font = `bold ${h * 0.2}px sans-serif`;
+    const fy = top + h * 0.8, fw = w * 0.24, fh = h * 0.13, fx = cx + w * 0.12;
+    g.textAlign = 'right';
+    g.fillText('RUS', fx - 8, fy);
+    ['#fff', '#1c57b8', '#d52b1e'].forEach((col, i) => { g.fillStyle = col; g.fillRect(fx, fy - fh / 2 + (i * fh) / 3, fw, fh / 3); });
+    g.strokeStyle = '#111'; g.lineWidth = 2; g.strokeRect(fx, fy - fh / 2, fw, fh);
+    g.fillStyle = '#111';
+  };
+  const name = (cx, cy, size, maxW) => {
+    g.textAlign = 'center';
+    g.font = `bold ${size}px ${PLATE_FONT}`;
+    g.fillText(text.toUpperCase(), cx, cy + size * 0.05, maxW); // длинное имя сжимается по ширине
+  };
+  if (square) {
+    name(W / 2, H * 0.3, H * 0.36, W - 50);
+    region(W / 2 - W * 0.1, H * 0.5, W * 0.5, H * 0.48);
+    return;
+  }
+  const R = Math.round(W * 0.235), split = W - R;
+  g.beginPath(); g.moveTo(split, 8); g.lineTo(split, H - 8); g.stroke();
+  name(split / 2, H / 2, H * 0.72, split - 44);
+  region(split + R / 2, 0, R, H);
+}
+
+// Повесить на машину (buildPlayerModel) номера с текстом или сменить текст.
+export function setPlate(model, text) {
+  const ud = model.userData;
+  if (!ud.plateSpots?.length || ud.plateText === text) return;
+  ud.plateText = text;
+  if (!ud.plateTex) {
+    ud.plateTex = {}; // формат ('long' | 'square') → текстура
+    for (const sp of ud.plateSpots) {
+      const fmt = sp.w / sp.h < 2.5 ? 'square' : 'long';
+      if (!ud.plateTex[fmt]) {
+        const cv = document.createElement('canvas');
+        [cv.width, cv.height] = fmt === 'square' ? [580, 340] : [1040, 224];
+        const tex = (ud.plateTex[fmt] = new THREE.CanvasTexture(cv));
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
+        tex.userData.mat = new THREE.MeshLambertMaterial({ map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+      }
+      const n = new THREE.Vector3(...sp.n);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(sp.w, sp.h), ud.plateTex[fmt].userData.mat);
+      m.position.set(sp.x, sp.y, sp.z).addScaledVector(n, 0.004);
+      // Разворот вокруг вертикали к нормали, потом наклон. Не setFromUnitVectors: для нормали назад
+      // (поворот на 180°) он крутит вокруг поперечной оси — номер вверх ногами и зеркально.
+      m.rotation.order = 'YXZ';
+      m.rotation.set(-Math.asin(n.y), Math.atan2(n.x, n.z), 0);
+      ud.plateHost.add(m);
+    }
+  }
+  for (const [fmt, tex] of Object.entries(ud.plateTex)) {
+    drawPlate(tex.image, text, fmt === 'square');
+    tex.needsUpdate = true;
+  }
+}
+
+// Освободить текстуры номеров (машину убрали со сцены).
+export function disposePlates(model) {
+  for (const tex of Object.values(model.userData.plateTex ?? {})) { tex.userData.mat.dispose(); tex.dispose(); }
 }

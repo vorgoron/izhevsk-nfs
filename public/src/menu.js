@@ -46,8 +46,8 @@ export class Menu {
       </div>
       <div class="page" data-page="name" hidden>
       <h2>Имя</h2>
-      <input data-name maxlength="20" autocomplete="nickname" enterkeyhint="done" spellcheck="false">
-      <p class="hint">Его видят другие игроки над вашей машиной.</p>
+      <input data-name maxlength="10" autocomplete="nickname" enterkeyhint="done" spellcheck="false">
+      <p class="hint">До 10 знаков. Его видят другие игроки над вашей машиной и на её номере.</p>
       <button data-page="main" class="go">‹ Готово <kbd>Esc</kbd></button>
       </div>
       <div class="page" data-page="volume" hidden>
