@@ -7,8 +7,9 @@ const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traf
 
 export class Menu {
   // actions — общие действия main.js; state() — { sound, radio, traffic, camera, fps, bigMap, fullscreen };
-  // volume — ползунки громкости { get(key), set(key, 0..1) }.
-  constructor({ actions, state, volume }) {
+  // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
+  // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied.
+  constructor({ actions, state, volume, setName }) {
     this.actions = actions;
     this.state = state;
     this.volume = volume;
@@ -25,6 +26,10 @@ export class Menu {
       <button data-act="race">Новая гонка <kbd>N</kbd></button>
       <button data-act="respawn">На дорогу <kbd>R</kbd></button>
       <button data-act="garage">Гараж — выбор машины <kbd>G</kbd></button>
+      <h3>Сеть <span data-v="net"></span></h3>
+      <button data-page="name">Имя <b data-v="name"></b><i>›</i></button>
+      <button data-act="invite">Позвать друзей <b data-v="invite"></b></button>
+      <button data-act="city" data-show="room">В общий город <b data-v="room"></b></button>
       <h3>Настройки</h3>
       <button data-act="sound">Звук <b data-v="sound"></b><kbd>V</kbd></button>
       <button data-page="volume">Громкость <b data-v="volume"></b><i>›</i></button>
@@ -39,6 +44,12 @@ export class Menu {
         мышь — повернуть камеру
       </div>
       </div>
+      <div class="page" data-page="name" hidden>
+      <h2>Имя</h2>
+      <input data-name maxlength="20" autocomplete="nickname" enterkeyhint="done" spellcheck="false">
+      <p class="hint">Его видят другие игроки над вашей машиной.</p>
+      <button data-page="main" class="go">‹ Готово <kbd>Esc</kbd></button>
+      </div>
       <div class="page" data-page="volume" hidden>
       <h2>Громкость</h2>
       <div class="volumes">${Object.entries(VOLUME_LABELS).map(([k, label]) =>
@@ -51,6 +62,9 @@ export class Menu {
       b.addEventListener('click', () => this.actions[b.dataset.act]());
     }
     for (const b of el.querySelectorAll('button[data-page]')) b.addEventListener('click', () => this.page(b.dataset.page));
+    const nameIn = (this.nameIn = el.querySelector('[data-name]'));
+    nameIn.addEventListener('change', () => { setName(nameIn.value); this.sync(); });
+    nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.page('main'); });
     for (const r of el.querySelectorAll('[data-vol]')) {
       r.addEventListener('input', () => { this.volume.set(r.dataset.vol, r.value / 100); this.sync(); });
     }
@@ -71,12 +85,19 @@ export class Menu {
       bigMap: s.bigMap ? 'крупная' : 'обычная',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
       volume: s.sound ? `${Math.round(this.volume.get('master') * 100)}%` : 'звук выкл',
+      net: { online: `· ${s.city ? 'общий город' : 'своя комната'} · ${s.players} в игре`, connecting: '· подключение…', offline: '· нет связи' }[s.netStatus],
+      name: s.name,
+      invite: s.copied ? 'ссылка скопирована' : s.city ? 'своя комната' : 'ссылка',
+      room: s.room,
     };
+    s.invite = s.online;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'bigMap', 'fps'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'bigMap', 'fps', 'net', 'name', 'room'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
+    this.el.querySelector('[data-show="room"]').hidden = s.city;
+    if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;
     for (const r of this.el.querySelectorAll('[data-vol]')) {
       const pct = Math.round(this.volume.get(r.dataset.vol) * 100);
       if (document.activeElement !== r) r.value = pct;
@@ -87,8 +108,11 @@ export class Menu {
 
   // Показать страницу меню: 'main' или 'volume'.
   page(name) {
+    // Уходим со страницы имени — сохранить введённое (change не всегда успевает, например по Esc).
+    if (document.activeElement === this.nameIn) this.nameIn.blur();
     for (const p of this.el.querySelectorAll('.page')) p.hidden = p.dataset.page !== name;
     this.sync();
+    if (name === 'name') this.nameIn.focus();
   }
 
   // Esc в подменю — назад на главную, а не закрыть меню. true — если было куда возвращаться.

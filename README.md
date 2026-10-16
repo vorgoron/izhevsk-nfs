@@ -103,6 +103,10 @@ AREA=center python3 tools/fetch_city.py  # только центр — быст�
 - `public/src/trams.js` — трамваи по маршрутам OSM (route=tram, 11 номеров): весь парк ~60 вагонов (раз в ~4 км на направление) движется
   всегда, рисуются ближние; остановки, обратный рейс на конечной, номер на табло, звонок перед игроком.
 - `public/src/race.js` — маршрут 1.3–2.3 км по главным улицам, чекпоинты каждые ~230 м.
+- `public/src/net.js` — мультиплеер через Firebase Realtime Database (проект `izh-car`, конфиг в
+  `public/src/firebase-config.js`, правила в `database.rules.json`, заливка — `firebase deploy --only database`):
+  все в общем городе, `?room=…` — своя комната; чужие машины-призраки с никами, без столкновений.
+  `public/net-test.html?room=…` — проверка связи без игры.
 
 ## Публикация
 

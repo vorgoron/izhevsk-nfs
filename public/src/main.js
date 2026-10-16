@@ -20,6 +20,7 @@ import { NitroFX, DustFX, ExhaustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
+import { Net, CITY } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
@@ -132,6 +133,7 @@ async function main() {
     m.userData.perf = 'машина игрока';
     scene.add(m);
     car.setModel(m, MODELS[key].stats);
+    net.setVehicle(key, color);
     nitroFx.attach(m);
     exhaustFx.attach(m);
     car.update(0, {}); // поставить новую модель на место старой
@@ -172,7 +174,9 @@ async function main() {
     },
   });
   if (!choice.saved) garage.open();
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues, chunks }; // для отладки из консоли
+  // Другие игроки: подключение в фоне, без связи игра идёт одна. Меню открыто — обновляем его.
+  const net = new Net(scene, choice, () => { if (window.game?.menu?.isOpen) game.menu.sync(); });
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues, chunks, net }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -249,7 +253,14 @@ async function main() {
     garage: () => { resume(); garage.toggle(); },
     map: () => $('minimap').classList.toggle('big'),
     fullscreen: toggleFullscreen,
+    // Позвать друзей: своя комната и ссылка на неё в буфер обмена (не вышло — ссылка видна в адресе).
+    invite: () => {
+      const link = net.inviteLink();
+      navigator.clipboard?.writeText(link).then(() => { copiedAt = performance.now(); menu.sync(); }, () => {});
+    },
+    city: () => net.join(CITY),
   };
+  let copiedAt = -1e9;
   const resume = () => { menu.close(); sound.setPaused(false); };
   // После любого действия (клавишей, кнопкой) меню показывает актуальные значения.
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
@@ -260,7 +271,9 @@ async function main() {
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, bigMap: $('minimap').classList.contains('big'),
-      fullscreen: !!document.fullscreenElement }),
+      fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
+      players: net.count, netStatus: net.status, copied: performance.now() - copiedAt < 4000 }),
+    setName: (v) => net.setName(v),
   });
   game.menu = menu;
   $('menu-btn').addEventListener('click', actions.menu);
@@ -270,6 +283,8 @@ async function main() {
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
   addEventListener('keydown', (e) => {
+    // Печатают в поле (имя в меню) — буквы не управляют игрой, работает только Esc.
+    if (e.target.closest?.('input:not([type=range])') && e.code !== 'Escape') return;
     keys.add(e.code);
     sound.unlock();
     if (e.code !== 'KeyB') radio.unlock();
@@ -447,6 +462,13 @@ async function main() {
         mg.fill();
       }
     }
+    mg.fillStyle = '#4ab3ff'; // другие игроки
+    for (const g of net.ghosts.values()) {
+      if (!g.mesh?.visible) continue;
+      mg.beginPath();
+      mg.arc((g.mesh.position.x - xmin) * scale, (g.mesh.position.z - zmin) * scale, 5 / zoom, 0, 7);
+      mg.fill();
+    }
     if (race.route.length && race.state !== 'finished') {
       mg.beginPath();
       race.route.forEach(([x, z], i) => mg[i ? 'lineTo' : 'moveTo']((x - xmin) * scale, (z - zmin) * scale));
@@ -617,6 +639,7 @@ async function main() {
     queues.update(dt, car);
     trams.update(dt, car);
     car.checkStuck(dt, inp);
+    net.update(dt, car);
     traffic.update(dt, car);
     nitroFx.update(dt, car);
     dustFx.update(dt, car);
