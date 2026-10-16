@@ -105,7 +105,7 @@ AREA=center python3 tools/fetch_city.py  # только центр — быст�
 - `public/src/race.js` — маршрут 1.3–2.3 км по главным улицам, чекпоинты каждые ~230 м.
 - `public/src/net.js` — мультиплеер через Firebase Realtime Database (проект `izh-car`, конфиг в
   `public/src/firebase-config.js`, правила в `database.rules.json`, заливка — `firebase deploy --only database`):
-  все в общем городе, `?room=…` — своя комната; чужие машины с никами; столкновения каждый считает для своей машины сам.
+  в общем городе пока без сети (лимиты Firebase), `?room=…` — своя комната с другими игроками; чужие машины с никами; столкновения каждый считает для своей машины сам.
   `public/net-test.html?room=…` — проверка связи без игры.
 
 ## Публикация

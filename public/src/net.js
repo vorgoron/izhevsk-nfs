@@ -1,7 +1,8 @@
 // Мультиплеер через Firebase Realtime Database: каждый считает свою машину сам и 10 раз в секунду
 // пишет её положение в rooms/<комната>/players/<uid>; чужие машины плавно едут между полученными
 // точками. Столкновения каждый считает сам: свою машину отталкивает от того, где видит чужую, — и
-// у того, в кого врезались, его игра так же оттолкнёт его машину от нашей. Нет связи с Firebase — игра идёт как раньше, одна.
+// у того, в кого врезались, его игра так же оттолкнёт его машину от нашей.
+// В общем городе пока никого не видно и ничего не шлём (лимиты Firebase): связь — только в своей комнате. Нет связи с Firebase — игра идёт как раньше, одна.
 import * as THREE from 'three';
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
 import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates } from './vehicles.js';
@@ -63,16 +64,12 @@ export class Net {
     this.name = loadName();
     this.model = model;
     this.color = color;
-    this.status = 'connecting'; // 'connecting' | 'online' | 'offline'
+    this.status = 'solo'; // 'solo' (общий город, без сети) | 'connecting' | 'online' | 'offline'
     this.ghosts = new Map();    // uid → { name, model, color, mesh, label, buf, offset, spin }
     const r = new URLSearchParams(location.search).get('room')?.toLowerCase();
     this.room = r && ROOM_RE.test(r) ? r : CITY;
     this.sendT = 0;
-    this.start().catch((e) => {
-      console.warn('[net] нет связи:', e);
-      this.status = 'offline';
-      this.onChange();
-    });
+    queueMicrotask(() => this.join(this.room)); // onChange — когда конструктор уже вернул объект
   }
 
   get count() { let n = 1; for (const g of this.ghosts.values()) n += !g.stale; return n; }
@@ -87,6 +84,7 @@ export class Net {
     this.uid = user.uid;
     this.db = db.getDatabase(app);
     db.onValue(db.ref(this.db, '.info/connected'), (s) => {
+      if (this.room === CITY) return;
       this.status = s.val() ? 'online' : 'connecting';
       this.onChange();
     });
@@ -94,17 +92,39 @@ export class Net {
   }
 
   // Перейти в комнату: уйти из прежней (запись и подписки), войти в новую, адрес — в строку браузера.
+  // В общий город — отключиться от базы совсем (запись уберёт onDisconnect).
   join(room) {
     this.room = room;
     const url = new URL(location.href);
     if (room === CITY) url.searchParams.delete('room'); else url.searchParams.set('room', room);
     history.replaceState(null, '', url);
     for (const uid of [...this.ghosts.keys()]) this.#drop(uid);
-    this.onChange();
-    if (!this.db) return; // ещё подключаемся — start() войдёт сам
-    const { ref, remove, onDisconnect, onChildAdded, onChildChanged, onChildRemoved } = this.fb;
-    if (this.me) { remove(this.me); onDisconnect(this.me).cancel(); }
+    const { ref, remove, onDisconnect, onChildAdded, onChildChanged, onChildRemoved, goOnline, goOffline } = this.fb ?? {};
+    const was = this.me;
+    this.me = null;
     this.unsub?.forEach((f) => f());
+    this.unsub = null;
+    if (room === CITY) {
+      if (was) remove(was);
+      if (this.db) goOffline(this.db);
+      this.status = 'solo';
+      this.onChange();
+      return;
+    }
+    if (!this.db) { // Firebase ещё не загружен — start() войдёт сам
+      this.status = 'connecting';
+      this.onChange();
+      this.starting ??= this.start().catch((e) => {
+        console.warn('[net] нет связи:', e);
+        this.starting = null;
+        this.status = 'offline';
+        this.onChange();
+      });
+      return;
+    }
+    if (was) { remove(was); onDisconnect(was).cancel(); }
+    goOnline(this.db);
+    this.onChange();
     this.me = ref(this.db, `rooms/${room}/players/${this.uid}`);
     onDisconnect(this.me).remove();
     const players = ref(this.db, `rooms/${room}/players`);

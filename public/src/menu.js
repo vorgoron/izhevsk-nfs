@@ -85,12 +85,12 @@ export class Menu {
       bigMap: s.bigMap ? 'крупная' : 'обычная',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
       volume: s.sound ? `${Math.round(this.volume.get('master') * 100)}%` : 'звук выкл',
-      net: { online: `· ${s.city ? 'общий город' : 'своя комната'} · ${s.players} в игре`, connecting: '· подключение…', offline: '· нет связи' }[s.netStatus],
+      net: { online: `· ${s.city ? 'общий город' : 'своя комната'} · ${s.players} в игре`, connecting: '· подключение…', offline: '· нет связи', solo: '· общий город · пока без других игроков' }[s.netStatus],
       name: s.name,
       invite: s.copied ? 'ссылка скопирована' : s.city ? 'своя комната' : 'ссылка',
       room: s.room,
     };
-    s.invite = s.online;
+    s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
