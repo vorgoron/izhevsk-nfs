@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>IzhCar — проверка связи</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 14px system-ui, sans-serif; overflow: hidden; }
+  #info { position: fixed; top: 8px; left: 8px; right: 8px; white-space: pre-line; pointer-events: none; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">Подключаюсь…</div>
+<script type="module">
+import { firebaseConfig, FIREBASE_SDK } from './src/firebase-config.js';
+const { initializeApp } = await import(`${FIREBASE_SDK}/firebase-app.js`);
+const { initializeAuth, browserSessionPersistence, signInAnonymously } = await import(`${FIREBASE_SDK}/firebase-auth.js`);
+const { getDatabase, ref, set, onValue, onDisconnect } = await import(`${FIREBASE_SDK}/firebase-database.js`);
+
+const info = document.getElementById('info');
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const room = (new URLSearchParams(location.search).get('room') || 'test').toLowerCase();
+const name = (navigator.userAgent.match(/iPhone|Android|Mac|Windows|Linux/) || ['?'])[0];
+
+const app = initializeApp(firebaseConfig);
+// Вход в sessionStorage, а не в общий для всех вкладок IndexedDB: каждая вкладка — отдельный игрок.
+const { user } = await signInAnonymously(initializeAuth(app, { persistence: browserSessionPersistence }));
+const db = getDatabase(app);
+const me = ref(db, `rooms/${room}/players/${user.uid}`);
+onDisconnect(me).remove();
+
+const pos = { x: 0.5, y: 0.5 };
+const others = new Map();
+let rtt = [], sent = 0;
+
+onValue(ref(db, `rooms/${room}/players`), (snap) => {
+  others.clear();
+  snap.forEach((p) => {
+    if (p.key === user.uid) return;
+    const [x, y] = p.val().s.split(',').map(Number);
+    others.set(p.key, { x, y, n: p.val().n });
+  });
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'mouse' && !e.buttons) return;
+  pos.x = e.clientX / innerWidth; pos.y = e.clientY / innerHeight;
+});
+canvas.addEventListener('pointerdown', (e) => { pos.x = e.clientX / innerWidth; pos.y = e.clientY / innerHeight; });
+
+// 10 раз в секунду; время до подтверждения сервером — это RTT.
+setInterval(() => {
+  const t = performance.now();
+  sent++;
+  set(me, { n: name, s: `${pos.x.toFixed(3)},${pos.y.toFixed(3)}` })
+    .then(() => { rtt.push(performance.now() - t); if (rtt.length > 50) rtt.shift(); })
+    .catch((e) => { info.textContent = `Ошибка записи: ${e.message}`; });
+}, 100);
+
+function draw() {
+  canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const dot = (x, y, color, label) => {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x * innerWidth, y * innerHeight, 18, 0, 7); ctx.fill();
+    ctx.fillText(label, x * innerWidth + 22, y * innerHeight + 5);
+  };
+  ctx.font = '14px system-ui';
+  for (const o of others.values()) dot(o.x, o.y, '#f80', o.n);
+  dot(pos.x, pos.y, '#4af', 'я');
+  const sorted = [...rtt].sort((a, b) => a - b);
+  const med = sorted.length ? sorted[sorted.length >> 1].toFixed(0) : '—';
+  const p90 = sorted.length ? sorted[Math.floor(sorted.length * 0.9)].toFixed(0) : '—';
+  info.textContent = `Комната: ${room}\nДругих игроков: ${others.size}\nRTT до сервера: медиана ${med} мс, 90% ${p90} мс\nВодите пальцем — точку должно быть видно на другом устройстве.`;
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "rooms": {
+      "$room": {
+        ".read": "auth != null && $room.matches(/^[a-z0-9-]{1,24}$/)",
+        "players": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.hasChildren(['n', 's']) && newData.child('n').isString() && newData.child('n').val().length <= 20 && newData.child('s').isString() && newData.child('s').val().length <= 200"
+          }
+        }
+      }
+    }
+  }
+}
