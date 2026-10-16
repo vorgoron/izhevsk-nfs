@@ -1,6 +1,7 @@
 // Мультиплеер через Firebase Realtime Database: каждый считает свою машину сам и 10 раз в секунду
-// пишет её положение в rooms/<комната>/players/<uid>; чужие машины — «призраки» без столкновений,
-// плавно едут между полученными точками. Нет связи с Firebase — игра идёт как раньше, одна.
+// пишет её положение в rooms/<комната>/players/<uid>; чужие машины плавно едут между полученными
+// точками. Столкновения каждый считает сам: свою машину отталкивает от того, где видит чужую, — и
+// у того, в кого врезались, его игра так же оттолкнёт его машину от нашей. Нет связи с Firebase — игра идёт как раньше, одна.
 import * as THREE from 'three';
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
 import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates } from './vehicles.js';
@@ -15,6 +16,10 @@ const LABEL_DIST = 600;      // м: дальше ник не показывае�
 const STALE = 5000;
 const ROOM_RE = /^[a-z0-9-]{1,24}$/;
 const NAME_MAX = 10; // столько помещается на номер машины
+const CAR_R = 1.15, CAR_AXLE = 1.25; // два круга вдоль машины, как в car.js
+// Машины одинаковой массы: удар делится пополам — каждому достаётся половина относительной скорости.
+const SHARE = 0.5;
+const SAME_LEVEL = 3; // м: по высоте дальше — разные уровни (эстакада и дорога под ней), не сталкиваемся
 
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, NAME_MAX);
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
@@ -147,6 +152,29 @@ export class Net {
     }
     const now = performance.now();
     for (const g of this.ghosts.values()) this.#place(g, now, dt, car);
+    this.#collide(car);
+  }
+
+  #collide(car) {
+    if (car.ghostVehicles > 0) return; // выезжаем из зажатия
+    const f = car.forward;
+    for (const g of this.ghosts.values()) {
+      const m = g.mesh;
+      if (!m?.visible || Math.abs(m.position.y - car.y) > SAME_LEVEL) continue;
+      if (Math.hypot(m.position.x - car.pos.x, m.position.z - car.pos.y) > 8) continue;
+      const gx = Math.sin(m.rotation.y), gz = Math.cos(m.rotation.y);
+      for (const so of [CAR_AXLE, -CAR_AXLE]) {
+        for (const go of [CAR_AXLE, -CAR_AXLE]) {
+          const cx = car.pos.x + f.x * so, cz = car.pos.y + f.y * so;
+          const ox = m.position.x + gx * go, oz = m.position.z + gz * go;
+          const d = Math.hypot(cx - ox, cz - oz), min = 2 * CAR_R;
+          if (d >= min || d < 1e-6) continue;
+          const nx = (cx - ox) / d, nz = (cz - oz) / d;
+          const vn = (car.vel.x - g.vx) * nx + (car.vel.y - g.vz) * nz;
+          car.touchVehicle(nx, nz, min - d, vn * SHARE);
+        }
+      }
+    }
   }
 
   #receive(uid, v) {
@@ -208,6 +236,10 @@ export class Net {
     } else if (i === 0) { a = c = b[0]; k = 0; }
     else { a = b[i - 1]; c = b[i]; k = (rt - a.t) / (c.t - a.t); }
     const L = (u, v) => u + (v - u) * k;
+    // Скорость — по отрезку между точками: для удара важна она, а не только скорость «вперёд».
+    const ms = c.t - a.t;
+    g.vx = ms > 0 && k < 1 + EXTRAPOLATE / ms ? (c.x - a.x) / ms * 1000 : 0;
+    g.vz = ms > 0 && k < 1 + EXTRAPOLATE / ms ? (c.z - a.z) / ms * 1000 : 0;
     m.visible = true;
     m.position.set(L(a.x, c.x), L(a.y, c.y), L(a.z, c.z));
     m.rotation.order = 'YXZ';
