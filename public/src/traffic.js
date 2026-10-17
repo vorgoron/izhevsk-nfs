@@ -10,7 +10,7 @@ const SPEED = {
   trunk_link: 11, primary_link: 11, secondary_link: 10, tertiary_link: 9,
 };
 // Состав потока: ижевские машины (vehicles.js) и автобусы.
-const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, odavan: 4, vesta: 13 };
+const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, pickup: 3, odavan: 4, vesta: 13 };
 const BUSES = 6;
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
 const GRID = 100; // м: клетка сетки рёбер

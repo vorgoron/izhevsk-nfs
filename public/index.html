@@ -71,6 +71,9 @@
     #landmark::before { content: '★ '; }
     #banner { left: 50%; top: 32%; transform: translate(-50%, -50%); font-size: 64px; font-weight: 900; font-style: italic; opacity: 0; transition: opacity .2s; text-align: center; color: #ffd23f; }
     #banner.show { opacity: 1; }
+    #banner.mini { top: 96px; transform: translate(-50%, 0); font-size: 30px; }
+    #banner.mini small { font-size: 14px; margin-top: 2px; }
+    #banner { transition: opacity .2s, top .6s ease, transform .6s ease, font-size .6s ease; }
     #banner small { display: block; font-size: 20px; font-weight: 600; color: #fff; font-style: normal; margin-top: 6px; }
     #minimap { position: fixed; left: 24px; bottom: 24px; width: 220px; height: 220px; border-radius: 50%; border: 3px solid rgba(255,255,255,.7); box-shadow: 0 4px 16px rgba(0,0,0,.5); }
     #minimap.big { width: 420px; height: 420px; }
@@ -227,6 +230,8 @@
       font-size: 12px; max-width: 42vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     body.touch #banner { font-size: 40px; top: 30%; }
     body.touch #banner small { font-size: 15px; }
+    body.touch #banner.mini { top: calc(8px + env(safe-area-inset-top)); font-size: 22px; }
+    body.touch #banner.mini small { font-size: 11px; }
     body.touch #attr { font-size: 9px; bottom: 2px; right: auto; left: calc(8px + env(safe-area-inset-left)); }
     #rotate { display: none; }
     @media (orientation: portrait) {

@@ -22,6 +22,7 @@ import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { Net, CITY } from './net.js';
 
+const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
 // Полоса загрузки: доля 0…1 и, если есть, подпись этапа.
@@ -621,6 +622,7 @@ async function main() {
     }
     $('landmark').textContent = near ? near.name : '';
     const banner = $('banner');
+    if (race.state !== 'finished') banner.classList.remove('mini');
     if (garage.isOpen) {
       banner.classList.remove('show');
     } else if (car.refueling) {
@@ -641,6 +643,7 @@ async function main() {
     } else if (race.state === 'finished') {
       const table = standings();
       banner.innerHTML = `ФИНИШ ${formatTime(race.time)}<small>${table || (race.isRecord ? 'новый рекорд!' : `рекорд ${formatTime(race.best)}`)}<br>N — новая гонка</small>`;
+      banner.classList.toggle('mini', performance.now() - race.finishedAt > FINISH_BIG);
       banner.classList.add('show');
     } else {
       banner.classList.remove('show');

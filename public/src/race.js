@@ -197,6 +197,7 @@ export class Race {
         this.next++;
         if (this.next >= this.checkpoints.length) {
           this.state = 'finished';
+          this.finishedAt = performance.now();
           this.#saveBest();
           this.onFinish?.(this.time);
         }
