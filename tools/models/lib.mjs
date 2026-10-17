@@ -1,4 +1,4 @@
-// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs, moskvich.mjs): чтение glTF, упрощение и запись GLB в формате игры.
+// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs, moskvich.mjs, pickup.mjs): чтение glTF, упрощение и запись GLB в формате игры.
 // Модель — части paint (кузов, под цвет), detail, lights, wheel; у каждой позиции, цвета вершин
 // и индексы, нормали считаются в игре (плоские). Координаты: +z вперёд, y вверх от земли.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -43,11 +43,12 @@ function local(n) {
 }
 const apply = (m, x, y, z) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
 
-// Все примитивы glTF (scene.gltf + один .bin) в мировых координатах: { node, wheel (имя узла-колеса
+// Все примитивы glTF (scene.gltf + один .bin или встроенный буфер) в мировых координатах: { node, wheel (имя узла-колеса
 // /^wheel/ или null), mat (имя материала), pos, idx }.
 export function readGltf(src) {
   const gltf = JSON.parse(readFileSync(src, 'utf8'));
-  const bin = readFileSync(join(dirname(src), gltf.buffers[0].uri));
+  const uri = gltf.buffers[0].uri; // файл рядом или встроенный base64 (экспорт Blender «glTF Embedded»)
+  const bin = uri.startsWith('data:') ? Buffer.from(uri.slice(uri.indexOf(',') + 1), 'base64') : readFileSync(join(dirname(src), uri));
   const prims = [];
   (function walk(ids, parent, wheel) {
     for (const id of ids) {

@@ -79,9 +79,9 @@ AREA=center python3 tools/fetch_city.py  # только центр — быст�
 - `public/src/landmarks.js` — достопримечательности: процедурные модели по контурам
   из OSM (список и OSM id — `LANDMARKS` в `tools/fetch_city.py`).
 - `public/src/vehicles.js` — машины ижевского автопрома: «Ода», Москвич-412, «Комби», «Каблучок»,
-  фургон «Ода», LADA Vesta. Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
-  «Ода», Москвич-412 и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
-  рисуется процедурная). Собираются `tools/models` (`oda.mjs` из STL, `moskvich.mjs` и `vesta.mjs` из glTF; общее — `lib.mjs`).
+  пикап ИЖ-2715, фургон «Ода», LADA Vesta. Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
+  «Ода», Москвич-412, пикап и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
+  рисуется процедурная). Собираются `tools/models` (`oda.mjs` из STL, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF; общее — `lib.mjs`).
 - `public/src/garage.js` — гараж: выбор машины и цвета, хранится в localStorage; смена машины перезапускает гонку.
 - `public/src/car.js` — аркадная физика (боковое сцепление, ручник, нитро, отскок от стен); вне дороги
   (трава, лес, пустырь — `World.surfaceAt`) скорость ×0.45, разгон ×0.5, хуже сцепление, тряска и пыль.
@@ -126,5 +126,7 @@ GitHub Pages через Actions: `.github/workflows/pages.yml` выкладыв�
 - Модель Москвича-412 (`public/models/moskvich.glb`) упрощена из «[Car_ Moskvich 412i E](https://sketchfab.com/3d-models/car--moskvich-412i-e-01dcdf62a2134abdbc76fb1183f728e5)»
   автора [87-Motors](https://sketchfab.com/87-Motors), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
   Пересборка: `cd tools/models && npm install && node moskvich.mjs путь/к/scene.gltf`.
+- Модель пикапа ИЖ-2715 (`public/models/pickup.glb`) собрана из glTF `tools/models/pickup.mjs`
+  (`node pickup.mjs путь/к/IZH-2715.gltf`). Источник и лицензия: _уточняются_.
 - Модель ИЖ-2126 «Ода» (`public/models/oda.glb`) собрана из STL-модели `tools/models/oda.mjs`
   (`node oda.mjs путь/к/модели.stl`). Источник и лицензия: _уточняются_.
