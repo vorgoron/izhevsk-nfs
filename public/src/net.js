@@ -74,6 +74,7 @@ export class Net {
     this.sendT = 0;
     this.offset = 0;   // мс: часы сервера − свои
     this.race = null;  // общая гонка комнаты (как в базе)
+    this.progress = null; // м по маршруту общей гонки — шлём, пока в ней едем (для «кто впереди»)
     this.onRace = () => {};
     queueMicrotask(() => this.join(this.room)); // onChange — когда конструктор уже вернул объект
   }
@@ -192,6 +193,7 @@ export class Net {
         f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now())].join(',');
       const data = { n: this.name, s, m: this.model };
       if (this.color) data.c = this.color;
+      if (this.progress != null) data.p = Math.round(this.progress);
       this.fb.set(this.me, data).catch((e) => {
         if (!this.writeErr) console.warn('[net] запись не прошла:', e);
         this.writeErr = true;
@@ -233,8 +235,9 @@ export class Net {
     const color = /^#[0-9a-f]{6}$/i.test(v.c ?? '') ? v.c : undefined;
     const name = cleanName(v.n) || 'Гонщик';
     let g = this.ghosts.get(uid);
+    if (g) g.p = typeof v.p === 'number' ? v.p : null;
     if (!g) {
-      g = { buf: [], offset: Infinity, spin: 0, stale: false };
+      g = { buf: [], offset: Infinity, spin: 0, stale: false, p: typeof v.p === 'number' ? v.p : null };
       this.ghosts.set(uid, g);
       this.onChange();
     }

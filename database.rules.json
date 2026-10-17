@@ -11,6 +11,7 @@
             "s": { ".validate": "newData.isString() && newData.val().length <= 200" },
             "m": { ".validate": "newData.isString() && newData.val().length <= 16" },
             "c": { ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)" },
+            "p": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 100000" },
             "$other": { ".validate": false }
           }
         },

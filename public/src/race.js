@@ -88,19 +88,21 @@ export class Race {
 
     this.route = path.map((id) => w.nodes[id]);
     this.checkpoints = [];
+    this.cum = [0]; // пройдено по маршруту до узла i, м
     let acc = 0, len = 0;
     for (let i = 1; i < this.route.length; i++) {
       const [ax, az] = this.route[i - 1], [bx, bz] = this.route[i];
       const seg = Math.hypot(bx - ax, bz - az);
       len += seg;
       acc += seg;
+      this.cum.push(len);
       if (acc >= CP_SPACING && len < this.#total() - CP_SPACING * 0.5) {
-        this.checkpoints.push({ x: bx, z: bz });
+        this.checkpoints.push({ x: bx, z: bz, i });
         acc = 0;
       }
     }
     const [lx, lz] = this.route[this.route.length - 1];
-    this.checkpoints.push({ x: lx, z: lz, finish: true });
+    this.checkpoints.push({ x: lx, z: lz, finish: true, i: this.route.length - 1 });
     this.length = len;
 
     this.#buildGates();
@@ -158,6 +160,23 @@ export class Race {
       cp.gate.material.opacity = current ? 0.3 : 0.1;
       cp.ring.scale.setScalar(current ? 1 : 0.6);
     });
+  }
+
+  // Сколько метров маршрута проехано: проекция машины на участок между взятым и следующим чекпоинтом
+  // (только на него — маршрут может проходить рядом сам с собой).
+  progress(car) {
+    if (this.state === 'finished') return this.length;
+    if (this.state !== 'running') return 0;
+    const lo = this.next > 0 ? this.checkpoints[this.next - 1].i : 0, hi = this.checkpoints[this.next].i;
+    let best = this.cum[lo], bd = Infinity;
+    for (let i = lo + 1; i <= hi; i++) {
+      const [ax, az] = this.route[i - 1], [bx, bz] = this.route[i];
+      const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+      const k = Math.max(0, Math.min(1, ((car.pos.x - ax) * dx + (car.pos.y - az) * dz) / l2));
+      const d = Math.hypot(ax + dx * k - car.pos.x, az + dz * k - car.pos.y);
+      if (d < bd) { bd = d; best = this.cum[i - 1] + Math.sqrt(l2) * k; }
+    }
+    return best;
   }
 
   update(dt, car) {

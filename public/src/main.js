@@ -194,6 +194,32 @@ async function main() {
     }
   };
   race.onFinish = (t) => { if (race.shared) net.finishRace(t); };
+  // Список справа — кто в комнате; в общей гонке — по местам: финишировавшие по времени,
+  // остальные по проеханному (своё считаем сами, чужое приходит в записи игрока, p).
+  const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const dot = (model, color) => `<i style="background:${color || MODELS[model]?.colors[0] || '#888'}"></i>`;
+  let rosterHtml = '';
+  const roster = () => {
+    let html = '';
+    if (net.room !== CITY) {
+      const v = net.race, inRace = race.shared && v && v.t === race.startAt;
+      const me = { u: net.uid, me: true, name: net.name, model: net.model, color: net.color, p: inRace ? race.progress(car) : 0 };
+      let rows = [me, ...[...net.ghosts].filter(([, g]) => !g.stale && g.name)
+        .map(([u, g]) => ({ u, name: g.name, model: g.model, color: g.color, p: g.p ?? 0 }))];
+      if (inRace) {
+        const order = String(v.o).split(','), r = v.r ?? {};
+        rows = rows.filter((x) => order.includes(x.u) || x.u in r);
+        for (const x of rows) { x.t = r[x.u]; x.slot = order.indexOf(x.u); }
+        rows.sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity) || b.p - a.p || a.slot - b.slot);
+        const lead = rows.find((x) => x.t == null)?.p;
+        html = `<h4>Гонка · ${rows.length}</h4>` + rows.map((x, k) => `<div${x.me ? ' class="me"' : ''}><span>${k + 1}.</span>${dot(x.model, x.color)}${esc(x.name)}`
+          + `<em>${x.t != null ? formatTime(x.t) : race.state === 'countdown' || k === 0 || x.p >= lead ? '' : `−${Math.round(lead - x.p)} м`}</em></div>`).join('');
+      } else {
+        html = `<h4>В комнате · ${rows.length}</h4>` + rows.map((x) => `<div${x.me ? ' class="me"' : ''}>${dot(x.model, x.color)}${esc(x.name)}${x.me ? '<em>ты</em>' : ''}</div>`).join('');
+      }
+    }
+    if (html !== rosterHtml) { rosterHtml = html; $('roster').innerHTML = html; $('roster').hidden = !html; }
+  };
   // Таблица общей гонки: финишировавшие по времени, остальные — «едет».
   const standings = () => {
     const v = net.race;
@@ -624,6 +650,7 @@ async function main() {
     $('fuel').classList.toggle('low', car.fuel < LOW_FUEL);
     fuelWarnings();
     document.body.classList.toggle('no-race', race.state === 'idle');
+    roster();
     $('time').textContent = formatTime(race.time);
     $('cp').textContent = race.checkpoints.length ? `${Math.min(race.next, race.checkpoints.length)}/${race.checkpoints.length}` : '–';
     $('dist').textContent = `${(race.length / 1000).toFixed(1)} км`;
@@ -680,6 +707,7 @@ async function main() {
     queues.update(dt, car);
     trams.update(dt, car);
     car.checkStuck(dt, inp);
+    net.progress = race.shared && race.state !== 'countdown' && net.race?.t === race.startAt ? race.progress(car) : null;
     net.update(dt, car);
     traffic.update(dt, car);
     nitroFx.update(dt, car);
