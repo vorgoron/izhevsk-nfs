@@ -171,6 +171,9 @@ export class Net {
     return location.href;
   }
 
+  // Имя выбрал сам игрок, а не «Гонщик 123», созданное по умолчанию, — на старте не спрашиваем.
+  get named() { return !/^Гонщик \d{3}$/.test(this.name); }
+
   setName(name) {
     this.name = cleanName(name) || this.name;
     try { localStorage.setItem('name', this.name); } catch {}

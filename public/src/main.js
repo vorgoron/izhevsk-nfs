@@ -168,14 +168,13 @@ async function main() {
   const traffic = owned('трафик', () => new Traffic(world, scene));
   const signals = owned('светофоры', () => new Signals(world, traffic, scene));
   traffic.reset(car.pos.x, car.pos.y);
-  // Сменил машину — гонка с начала (честно); первый запуск — сразу в гараж.
+  // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
   const garage = new Garage(choice, {
     onChange: setVehicle,
     onClose: (changed) => {
       if (changed && race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
     },
   });
-  if (!choice.saved) garage.open();
   // Другие игроки: подключение в фоне, без связи игра идёт одна. Меню открыто — обновляем его.
   // На номере своей машины — имя игрока (сменил имя — меняется и номер).
   const net = new Net(scene, choice, () => {
@@ -346,6 +345,7 @@ async function main() {
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
     KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen' };
 
+  let starting = true;
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
   addEventListener('keydown', (e) => {
@@ -354,6 +354,7 @@ async function main() {
     keys.add(e.code);
     sound.unlock();
     if (e.code !== 'KeyB') radio.unlock();
+    if (starting) return; // экран «Поехали»: клавиши игры не работают
     // Esc в гараже закрывает гараж (garage.js гасит событие), а не открывает меню.
     if (!e.repeat && !e.defaultPrevented && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
@@ -660,6 +661,34 @@ async function main() {
     drawMinimap();
   }
 
+  // Экран «Поехали»: логотип остаётся, вместо полосы — имя (если ещё не выбрано) и кнопка.
+  // Нажатие заодно разрешает звук: браузер не даёт играть звуку и радио до первого клика/клавиши.
+  function startScreen() {
+    const box = $('start'), nameIn = box.querySelector('input');
+    $('loading-bar').hidden = $('loading-text').hidden = true;
+    box.hidden = false;
+    nameIn.parentElement.hidden = net.named;
+    nameIn.placeholder = net.name;
+    if (!net.named && !isTouch) nameIn.focus();
+    return new Promise((resolve) => {
+      const go = () => {
+        removeEventListener('keydown', onKey);
+        if (nameIn.value.trim()) net.setName(nameIn.value);
+        nameIn.blur();
+        sound.unlock();
+        radio.unlock();
+        resolve();
+      };
+      const onKey = (e) => {
+        if (e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+        e.preventDefault();
+        go();
+      };
+      addEventListener('keydown', onKey);
+      box.querySelector('button').addEventListener('click', go, { once: true });
+    });
+  }
+
   // ---------------------------------------------------------------- цикл
 
   // Шейдеры компилируем заранее, иначе первый кадр после заставки подвисает.
@@ -667,7 +696,12 @@ async function main() {
   await frame();
   renderer.compile(scene, camera);
   progress(1);
-  $('loading').remove();
+  await startScreen();
+  starting = false;
+  if (!choice.saved) garage.open();
+  // Заставка с логотипом гаснет поверх уже идущей игры.
+  $('loading').classList.add('done');
+  setTimeout(() => $('loading').remove(), 600);
   const clock = new THREE.Clock();
   const STEP = 1 / 120;
   let acc = 0;

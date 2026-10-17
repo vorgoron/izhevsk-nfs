@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#15181b">
-  <title>Ижевск: уличные гонки</title>
+  <title>Izh Car — уличные гонки по Ижевску</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="icon" href="icon-512.png" type="image/png" sizes="512x512">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -15,11 +15,32 @@
     canvas { display: block; }
     html.nohud body > :not(canvas:first-child) { display: none !important; }
     #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #15181b; font-size: 20px; z-index: 19; }
-    #loading .box { width: min(80vw, 420px); text-align: center; }
-    #loading h1 { margin: 0 0 18px; font-size: 30px; font-style: italic; font-weight: 900; color: #ffd23f; }
+    #loading { transition: opacity .6s; }
+    #loading.done { opacity: 0; pointer-events: none; }
+    #loading .box { width: min(86vw, 480px); text-align: center; }
+    #loading h1 { margin: 0 0 22px; }
+    #loading h1 img { display: block; width: 100%; animation: logo-in .7s cubic-bezier(.2,.8,.3,1.2) both; }
+    #loading h1 small { display: block; margin-top: 10px; font-size: 15px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; opacity: .6; }
+    @keyframes logo-in { from { opacity: 0; transform: scale(.85) skewX(-8deg); } }
     #loading-bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,.15); overflow: hidden; }
     #loading-fill { height: 100%; width: 0; border-radius: 4px; background: linear-gradient(90deg, #ff8a2a, #ffd23f); transition: width .2s; }
     #loading-text { margin-top: 12px; font-size: 15px; opacity: .75; min-height: 1.4em; }
+    /* Экран «Поехали» на месте полосы загрузки (main.js: startScreen). */
+    #start { display: flex; flex-direction: column; gap: 14px; animation: logo-in .4s ease-out both; }
+    #start[hidden], #start label[hidden] { display: none; }
+    #start label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600; text-align: left; }
+    #start label small { font-weight: 400; font-size: 12px; opacity: .6; }
+    #start input { font: inherit; font-size: 19px; color: #fff; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.3);
+      border-radius: 10px; padding: 10px 14px; outline: none; }
+    #start input:focus { border-color: #ffd23f; }
+    #start button { font: inherit; font-size: 22px; font-weight: 900; font-style: italic; text-transform: uppercase; letter-spacing: .04em;
+      color: #15181b; background: #ffd23f; border: 0; border-radius: 12px; padding: 12px; cursor: pointer; }
+    #start button:hover { background: #ffdc5c; }
+    #start button kbd { margin-left: 10px; font-family: inherit; font-size: 12px; font-style: normal; font-weight: 600; text-transform: none; letter-spacing: 0;
+      border: 1px solid rgba(0,0,0,.3); border-radius: 4px; padding: 0 5px; opacity: .6; vertical-align: middle; }
+    body.touch #start button kbd { display: none; }
+    body.touch #loading h1 { margin-bottom: 12px; }
+    body.touch #loading .box { width: min(70vw, 420px); }
     #loading.error #loading-fill { background: #ff3b30; }
     #loading.error #loading-text { color: #ff9d8a; opacity: 1; }
     .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
@@ -245,7 +266,11 @@
   </script>
 </head>
 <body>
-  <div id="loading"><div class="box"><h1>Ижевск: уличные гонки</h1><div id="loading-bar"><div id="loading-fill"></div></div><div id="loading-text">Загрузка…</div></div></div>
+  <div id="loading"><div class="box"><h1><img src="logo.svg" alt="Izh Car"><small>уличные гонки по Ижевску</small></h1><div id="loading-bar"><div id="loading-fill"></div></div><div id="loading-text">Загрузка…</div>
+    <div id="start" hidden>
+      <label>Имя гонщика<input maxlength="10" autocomplete="nickname" enterkeyhint="go" spellcheck="false"><small>Его видят другие игроки и на номере вашей машины. Поменять — в меню.</small></label>
+      <button>Поехали ▶<kbd>Enter</kbd></button>
+    </div></div></div>
   <div id="street" class="hud"></div>
   <div id="landmark" class="hud"></div>
   <div id="race" class="hud">
