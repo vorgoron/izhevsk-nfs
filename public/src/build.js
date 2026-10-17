@@ -735,16 +735,14 @@ export function treeMaterials() {
   };
 }
 
-function mergeGeos(geos) {
-  const pos = [], nor = [];
+function mergeGeos(geos, extra = []) {
+  const names = ['position', 'normal', ...extra], arrs = names.map(() => []);
   for (const g of geos) {
     const n = g.index ? g.toNonIndexed() : g;
-    pos.push(...n.attributes.position.array);
-    nor.push(...n.attributes.normal.array);
+    names.forEach((k, i) => arrs[i].push(...n.attributes[k].array));
   }
   const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  names.forEach((k, i) => out.setAttribute(k, new THREE.Float32BufferAttribute(arrs[i], 3)));
   return out;
 }
 
@@ -755,9 +753,10 @@ const STREET_KINDS = new Set(['primary', 'secondary', 'tertiary', 'residential',
 
 // Деревья квадрата: из OSM, случайные в парках (лиственные) и лесах (в основном ели),
 // и редкие деревья вдоль улиц в застройке. Детерминированно по квадрату.
-export function buildTreeChunk(world, info, mats) {
-  const { x0, z0, x1, z1, data } = info;
-  // Возле достопримечательностей деревья не сажаем: они закрывают модели.
+// Проверки места для дерева или столба в квадрате: free — не у достопримечательности и не на
+// рельсах, inBuilding — внутри дома квадрата.
+function spotChecks(world, data) {
+  // Возле достопримечательностей ничего не ставим: закрывает модели.
   const POINT_CLEAR = { wheel: 27 }; // колесо широкое: деревья врезались бы в нижние кабинки
   const clear = (world.city.landmarks || []).map((l) => [l.x, l.z, l.p
     ? Math.max(...l.p.map(([x, z]) => Math.hypot(x - l.x, z - l.z))) + 6 : POINT_CLEAR[l.key] ?? 12]);
@@ -766,6 +765,17 @@ export function buildTreeChunk(world, info, mats) {
   for (const r of data.rails) for (let i = 1; i < r.p.length; i++) railSegs.push({ ax: r.p[i - 1][0], az: r.p[i - 1][1], bx: r.p[i][0], bz: r.p[i][1] });
   const offRails = (x, z) => railSegs.every((sg) => World.closest(sg, x, z).d > 3.5);
   const free = (x, z) => clear.every(([cx, cz, r]) => Math.hypot(x - cx, z - cz) > r) && offRails(x, z);
+  const inBuilding = (x, z) => data.buildings.some((b) => {
+    const p = b.p;
+    if (Math.abs(p[0][0] - x) > 80 || Math.abs(p[0][1] - z) > 80) return false;
+    return pointInPoly(x, z, p);
+  });
+  return { free, inBuilding };
+}
+
+export function buildTreeChunk(world, info, mats) {
+  const { x0, z0, x1, z1, data } = info;
+  const { free, inBuilding } = spotChecks(world, data);
   const leafy = data.trees.filter(([x, z]) => free(x, z));
   const spruce = [];
   let rnd = (info.ci * 48271 + info.cj * 16807 + 12345) % 2147483647 || 1;
@@ -793,11 +803,6 @@ export function buildTreeChunk(world, info, mats) {
   }
   // Вдоль улиц в застройке: по обе стороны, за краем полотна, не на домах, дорогах, воде.
   if (data.buildings.length >= 12) {
-    const inBuilding = (x, z) => data.buildings.some((b) => {
-      const p = b.p;
-      if (Math.abs(p[0][0] - x) > 80 || Math.abs(p[0][1] - z) > 80) return false;
-      return pointInPoly(x, z, p);
-    });
     for (const { road, from, to } of data.runs) {
       if (!STREET_KINDS.has(road.k) || road.br || road.tu) continue;
       for (let i = from + 1; i <= to; i++) {
@@ -841,6 +846,88 @@ export function buildTreeChunk(world, info, mats) {
   plant(leafy, mats.trunkGeo, mats.crownGeo, (c) => c.setHSL(0.25 + rand() * 0.08, 0.35 + rand() * 0.2, 0.22 + rand() * 0.1));
   plant(spruce, mats.spruceTrunkGeo, mats.spruceGeo, (c) => c.setHSL(0.36 + rand() * 0.05, 0.35 + rand() * 0.15, 0.15 + rand() * 0.06));
   return out;
+}
+
+// ---------------------------------------------------------------- фонарные столбы
+
+// Бетонный столб с консолью и светильником над краем дороги; консоль — вдоль +x.
+export function poleMaterials() {
+  const part = (geo, color) => {
+    const g = geo.toNonIndexed(), c = new THREE.Color(color), n = g.attributes.position.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+  };
+  const T = 0.26; // наклон консоли вверх, рад
+  const arm = new THREE.CylinderGeometry(0.045, 0.05, 2, 5)
+    .rotateZ(-(Math.PI / 2 - T)).translate(0.05 + Math.cos(T), 8.6 + Math.sin(T), 0);
+  const ex = 0.05 + 2 * Math.cos(T), ey = 8.6 + 2 * Math.sin(T); // конец консоли
+  const geo = mergeGeos([
+    part(new THREE.CylinderGeometry(0.09, 0.16, 9.3, 8).translate(0, 4.65 - 0.3, 0), '#9d9a91'),
+    part(new THREE.CylinderGeometry(0.11, 0.11, 0.12, 8).translate(0, 8.95, 0), '#77756f'), // оголовок
+    part(arm, '#5d6266'),
+    part(new THREE.BoxGeometry(0.75, 0.17, 0.32).rotateZ(-0.1).translate(ex + 0.22, ey - 0.02, 0), '#4b5054'),
+    part(new THREE.BoxGeometry(0.52, 0.05, 0.24).rotateZ(-0.1).translate(ex + 0.25, ey - 0.12, 0), '#f2ead0'),
+  ], ['color']);
+  return { geo, mat: new THREE.MeshLambertMaterial({ vertexColors: true }) };
+}
+
+const POLE_STEP = { primary: 32, secondary: 34, tertiary: 36, residential: 42, unclassified: 42 }; // м вдоль улицы
+const POLE_OFF = 1.0;   // м от края полотна
+const POLE_END = 7;     // м: у концов улицы (перекрёстки) не ставим
+const roadPrefix = new WeakMap(); // улица → длина от начала до каждого узла
+
+// Столбы квадрата: вдоль улиц с шагом от начала всей улицы, поэтому на стыке квадратов ряд не
+// сбивается. Односторонняя — справа по ходу, широкая двусторонняя — с обеих сторон,
+// остальные — с одной стороны (какой — по улице). Не на мостах, в тоннелях, воде, домах, рельсах.
+export function buildPoleChunk(world, info, mats) {
+  const { data } = info;
+  const { free, inBuilding } = spotChecks(world, data);
+  const spots = [];
+  for (const { road, from, to } of data.runs) {
+    const step = POLE_STEP[road.k];
+    if (!step || road.br || road.tu) continue;
+    let pre = roadPrefix.get(road);
+    if (!pre) {
+      pre = [0];
+      for (let i = 1; i < road.n.length; i++) {
+        const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
+        pre.push(pre[i - 1] + Math.hypot(bx - ax, bz - az));
+      }
+      roadPrefix.set(road, pre);
+    }
+    const total = pre[pre.length - 1], h = road.n[0] * 2654435761 >>> 0;
+    const sides = road.ow ? [1] : road.w >= 14 ? [1, -1] : [h & 1 ? 1 : -1];
+    const phase = (h % 1000) / 1000 * step;
+    for (let i = from + 1; i <= to; i++) {
+      const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
+      const s0 = pre[i - 1], L = pre[i] - s0;
+      if (L < 0.5) continue;
+      const dx = (bx - ax) / L, dz = (bz - az) / L;
+      for (let s = phase + Math.ceil((s0 - phase) / step) * step; s < s0 + L; s += step) {
+        if (s < POLE_END || s > total - POLE_END) continue;
+        const t = s - s0, off = road.w / 2 + POLE_OFF;
+        for (const side of sides) {
+          // Справа от направления (dx, dz) — (−dz, dx), как полосы в traffic.js.
+          const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
+          const nr = world.nearestRoad(x, z, 4);
+          if ((nr && nr.d < 0.6) || world.isWater(x, z) || !free(x, z) || inBuilding(x, z)) continue;
+          const y = world.terrain(x, z);
+          if (world.ground(x, z) > y + 2) continue; // под настилом путепровода
+          spots.push([x, y, z, Math.atan2(dx * side, dz * side)]); // консоль — к дороге
+        }
+      }
+    }
+  }
+  if (!spots.length) return null;
+  const mesh = new THREE.InstancedMesh(mats.geo, mats.mat, spots.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+  const up = new THREE.Vector3(0, 1, 0);
+  spots.forEach(([x, y, z, a], i) => mesh.setMatrixAt(i, m.compose(p.set(x, y, z), q.setFromAxisAngle(up, a), one)));
+  mesh.computeBoundingSphere();
+  mesh.castShadow = true;
+  return mesh;
 }
 
 // ---------------------------------------------------------------- миникарта

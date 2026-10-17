@@ -1,9 +1,9 @@
-// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья строятся по мере
+// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья, столбы строятся по мере
 // приближения (не больше нескольких квадратов за кадр) и выгружаются, когда игрок уехал.
 import * as THREE from 'three';
 import {
-  buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, drawMinimapTile,
-  roadMaterials, buildingMaterials, treeMaterials,
+  buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, buildPoleChunk, drawMinimapTile,
+  roadMaterials, buildingMaterials, treeMaterials, poleMaterials,
 } from './build.js';
 
 export class ChunkManager {
@@ -14,7 +14,7 @@ export class ChunkManager {
     this.radius = radius;
     this.texSize = texSize;
     this.loaded = new Map(); // ключ → { group, terrain }
-    this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials() };
+    this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials() };
   }
 
   #key(ci, cj) { return ci * 10000 + cj; }
@@ -48,6 +48,8 @@ export class ChunkManager {
     if (rails) group.add(tag(rails, 'рельсы'));
     const trees = buildTreeChunk(w, info, this.mats.trees);
     if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
+    const poles = buildPoleChunk(w, info, this.mats.poles);
+    if (poles) group.add(tag(poles, 'столбы'));
     this.scene.add(group);
     this.loaded.set(this.#key(ci, cj), group);
   }
