@@ -1,4 +1,4 @@
-// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs, moskvich.mjs, pickup.mjs): чтение glTF, упрощение и запись GLB в формате игры.
+// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs, moskvich.mjs, pickup.mjs, kabluk.mjs): чтение glTF, упрощение и запись GLB в формате игры.
 // Модель — части paint (кузов, под цвет), detail, lights, wheel; у каждой позиции, цвета вершин
 // и индексы, нормали считаются в игре (плоские). Координаты: +z вперёд, y вверх от земли.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -66,6 +66,37 @@ export function readGltf(src) {
   })(gltf.scenes[0].nodes, I4, null);
   return prims;
 }
+
+// Центр треугольника t (индекс первой вершины в idx) примитива { pos, idx }.
+export const center = (p, t) => [0, 1, 2].map((k) => (p.pos[p.idx[t] * 3 + k] + p.pos[p.idx[t + 1] * 3 + k] + p.pos[p.idx[t + 2] * 3 + k]) / 3);
+// Часть примитива: треугольники, центр которых проходит фильтр (позиции общие с исходным).
+export function pick(p, keep) {
+  const idx = [];
+  for (let t = 0; t < p.idx.length; t += 3) if (keep(center(p, t))) idx.push(p.idx[t], p.idx[t + 1], p.idx[t + 2]);
+  return { pos: p.pos, idx: Uint32Array.from(idx) };
+}
+// Обрезка плоскостью: оставить часть примитива, где pos[axis] * side >= value * side (side = ±1).
+// Треугольники на линии реза разрезаются, а не выбрасываются целиком — у крупных панелей кузова иначе
+// на шве остаётся дыра. Вершины в ответе не общие (сварит simplify).
+export function clip(p, axis, value, side) {
+  const inside = (v) => v[axis] * side >= value * side;
+  const out = [];
+  const cut = (a, b) => { const t = (value - a[axis]) / (b[axis] - a[axis]); return a.map((v, k) => v + (b[k] - v) * t); };
+  for (let t = 0; t < p.idx.length; t += 3) {
+    const tri = [0, 1, 2].map((j) => [0, 1, 2].map((k) => p.pos[p.idx[t + j] * 3 + k]));
+    const poly = [];
+    for (let j = 0; j < 3; j++) {
+      const a = tri[j], b = tri[(j + 1) % 3];
+      if (inside(a)) poly.push(a);
+      if (inside(a) !== inside(b)) poly.push(cut(a, b));
+    }
+    for (let j = 1; j + 1 < poly.length; j++) out.push(...poly[0], ...poly[j], ...poly[j + 1]);
+  }
+  return { pos: new Float32Array(out), idx: Uint32Array.from({ length: out.length / 3 }, (_, i) => i) };
+}
+
+// Только используемые вершины подряд (для bbox по выбранным треугольникам).
+export const used = ({ pos, idx }) => ({ pos: Float32Array.from([...idx].flatMap((i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]])) });
 
 export const hex = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16) / 255);
 

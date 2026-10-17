@@ -80,8 +80,8 @@ AREA=center python3 tools/fetch_city.py  # только центр — быст�
   из OSM (список и OSM id — `LANDMARKS` в `tools/fetch_city.py`).
 - `public/src/vehicles.js` — машины ижевского автопрома: «Ода», Москвич-412, «Комби», «Каблучок»,
   пикап ИЖ-2715, фургон «Ода», LADA Vesta. Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
-  «Ода», Москвич-412, пикап и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
-  рисуется процедурная). Собираются `tools/models` (`oda.mjs` из STL, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF; общее — `lib.mjs`).
+  «Ода», Москвич-412, пикап, «Каблучок» и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
+  рисуется процедурная). Собираются `tools/models` (`oda.mjs` из STL, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`; общее — `lib.mjs`).
 - `public/src/garage.js` — гараж: выбор машины и цвета, хранится в localStorage; смена машины перезапускает гонку.
 - `public/src/car.js` — аркадная физика (боковое сцепление, ручник, нитро, отскок от стен); вне дороги
   (трава, лес, пустырь — `World.surfaceAt`) скорость ×0.45, разгон ×0.5, хуже сцепление, тряска и пыль.
@@ -128,5 +128,7 @@ GitHub Pages через Actions: `.github/workflows/pages.yml` выкладыв�
   Пересборка: `cd tools/models && npm install && node moskvich.mjs путь/к/scene.gltf`.
 - Модель пикапа ИЖ-2715 (`public/models/pickup.glb`) собрана из glTF `tools/models/pickup.mjs`
   (`node pickup.mjs путь/к/IZH-2715.gltf`). Источник и лицензия: _уточняются_.
+- Модель «Каблучка» ИЖ-2715 (`public/models/kabluk.glb`) — перед и кабина от модели пикапа, будка — от SketchUp-модели
+  «АЗЛК+Пирожок» (`node kabluk.mjs путь/к/IZH-2715.gltf путь/к/модели.dae`). Источник и лицензия: _уточняются_.
 - Модель ИЖ-2126 «Ода» (`public/models/oda.glb`) собрана из STL-модели `tools/models/oda.mjs`
   (`node oda.mjs путь/к/модели.stl`). Источник и лицензия: _уточняются_.

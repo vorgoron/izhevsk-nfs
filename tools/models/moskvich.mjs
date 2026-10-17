@@ -6,7 +6,7 @@
 //   cd tools/models && npm install && node moskvich.mjs ~/Downloads/car__moskvich_412i_e/scene.gltf
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bbox, hex, readGltf, simplify, writeGlb } from './lib.mjs';
+import { bbox, hex, pick, readGltf, simplify, used, writeGlb } from './lib.mjs';
 
 const src = resolve(process.argv[2] || join(process.env.HOME, 'Downloads/car__moskvich_412i_e/scene.gltf'));
 const out = resolve(dirname(fileURLToPath(import.meta.url)), '../../public/models/moskvich.glb');
@@ -50,13 +50,6 @@ for (const p of prims) {
     p.pos[i + 2] = -(p.pos[i + 2] - all.mid[2]) * S;
   }
 }
-const center = (p, t) => [0, 1, 2].map((k) => (p.pos[p.idx[t] * 3 + k] + p.pos[p.idx[t + 1] * 3 + k] + p.pos[p.idx[t + 2] * 3 + k]) / 3);
-// Часть примитива: треугольники, центр которых проходит фильтр.
-function pick(p, keep) {
-  const idx = [];
-  for (let t = 0; t < p.idx.length; t += 3) if (keep(center(p, t))) idx.push(p.idx[t], p.idx[t + 1], p.idx[t + 2]);
-  return { pos: p.pos, idx: Uint32Array.from(idx) };
-}
 const byMat = (mat) => prims.filter((p) => p.mat === mat);
 
 // ---------------------------------------------------------------- колёса
@@ -65,9 +58,7 @@ const byMat = (mat) => prims.filter((p) => p.mat === mat);
 const tread = byMat('material_14');
 const wheels = [];
 for (const sz of [1, -1]) for (const sx of [1, -1]) {
-  const b = bbox(tread.map((p) => pick(p, ([x, , z]) => sx * x > 0 && sz * z > 0)).map(({ pos, idx }) => ({
-    pos: Float32Array.from([...idx].flatMap((i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]])),
-  })));
+  const b = bbox(tread.map((p) => used(pick(p, ([x, , z]) => sx * x > 0 && sz * z > 0))));
   wheels.push({ x: b.mid[0], y: b.mid[1], z: b.mid[2], half: b.size[0] / 2 });
 }
 const R = wheels.reduce((s, w) => s + w.y, 0) / 4;
