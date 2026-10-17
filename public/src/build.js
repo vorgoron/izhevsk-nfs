@@ -850,15 +850,17 @@ export function buildTreeChunk(world, info, mats) {
 
 // ---------------------------------------------------------------- фонарные столбы
 
+// Деталь одного цвета для слияния с другими (цвет — вершинный).
+function part(geo, color) {
+  const g = geo.toNonIndexed(), c = new THREE.Color(color), n = g.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
 // Бетонный столб с консолью и светильником над краем дороги; консоль — вдоль +x.
 export function poleMaterials() {
-  const part = (geo, color) => {
-    const g = geo.toNonIndexed(), c = new THREE.Color(color), n = g.attributes.position.count;
-    const col = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    return g;
-  };
   const T = 0.26; // наклон консоли вверх, рад
   const arm = new THREE.CylinderGeometry(0.045, 0.05, 2, 5)
     .rotateZ(-(Math.PI / 2 - T)).translate(0.05 + Math.cos(T), 8.6 + Math.sin(T), 0);
@@ -878,6 +880,19 @@ const POLE_OFF = 1.0;   // м от края полотна
 const POLE_END = 7;     // м: у концов улицы (перекрёстки) не ставим
 const roadPrefix = new WeakMap(); // улица → длина от начала до каждого узла
 
+function prefixOf(world, road) {
+  let pre = roadPrefix.get(road);
+  if (!pre) {
+    pre = [0];
+    for (let i = 1; i < road.n.length; i++) {
+      const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
+      pre.push(pre[i - 1] + Math.hypot(bx - ax, bz - az));
+    }
+    roadPrefix.set(road, pre);
+  }
+  return pre;
+}
+
 // Столбы квадрата: вдоль улиц с шагом от начала всей улицы, поэтому на стыке квадратов ряд не
 // сбивается. Односторонняя — справа по ходу, широкая двусторонняя — с обеих сторон,
 // остальные — с одной стороны (какой — по улице). Не на мостах, в тоннелях, воде, домах, рельсах.
@@ -888,15 +903,7 @@ export function buildPoleChunk(world, info, mats) {
   for (const { road, from, to } of data.runs) {
     const step = POLE_STEP[road.k];
     if (!step || road.br || road.tu) continue;
-    let pre = roadPrefix.get(road);
-    if (!pre) {
-      pre = [0];
-      for (let i = 1; i < road.n.length; i++) {
-        const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
-        pre.push(pre[i - 1] + Math.hypot(bx - ax, bz - az));
-      }
-      roadPrefix.set(road, pre);
-    }
+    const pre = prefixOf(world, road);
     const total = pre[pre.length - 1], h = road.n[0] * 2654435761 >>> 0;
     const sides = road.ow ? [1] : road.w >= 14 ? [1, -1] : [h & 1 ? 1 : -1];
     const phase = (h % 1000) / 1000 * step;
@@ -928,6 +935,230 @@ export function buildPoleChunk(world, info, mats) {
   mesh.computeBoundingSphere();
   mesh.castShadow = true;
   return mesh;
+}
+
+// ---------------------------------------------------------------- рекламные щиты
+
+// Реклама — одна текстура-лента из ADS.length плакатов друг под другом. Плакат каждой стороны щита
+// задан полосой UV, а смена — сдвигом offset.y общей текстуры: все щиты разом прокручивают плакат
+// на следующий, как роллерный щит.
+const ADS = [izhCarAd, daurAd, izhCarFriendsAd, daurFmAd];
+const AD_W = 1024, AD_H = 512;
+const AD_SHOW = 8, AD_ROLL = 0.9; // с: плакат стоит, затем прокрутка
+
+const adFont = (px, weight = 800) => `${weight} ${px}px "Arial Black", Arial, Helvetica, sans-serif`;
+const AD_PAD = 70; // поля плаката, px
+
+// Строка плаката размером px, но не шире maxW: ширина шрифта зависит от системы, поэтому
+// не влезает — шрифт уменьшается.
+function adText(g, s, x, y, px, weight = 800, maxW = AD_W - 2 * AD_PAD) {
+  g.font = adFont(px, weight);
+  const w = g.measureText(s).width;
+  if (w > maxW) g.font = adFont(Math.floor(px * maxW / w), weight);
+  g.fillText(s, x, y);
+}
+
+function izhCarAd(g, logo) {
+  g.fillStyle = '#121212';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#ffd23f';
+  for (let x = -AD_H; x < AD_W; x += 90) { // косые полосы по низу
+    g.beginPath();
+    g.moveTo(x, AD_H); g.lineTo(x + 40, AD_H); g.lineTo(x + 80, AD_H - 40); g.lineTo(x + 40, AD_H - 40);
+    g.fill();
+  }
+  if (logo) g.drawImage(logo, (AD_W - 760) / 2, 40, 760, 204);
+  else {
+    g.font = `italic ${adFont(150)}`;
+    g.textAlign = 'center';
+    g.fillText('IZH CAR', AD_W / 2, 200, AD_W - 2 * AD_PAD);
+  }
+  g.textAlign = 'center';
+  g.fillStyle = '#fff';
+  adText(g, 'УЛИЧНЫЕ ГОНКИ ПО ИЖЕВСКУ', AD_W / 2, 330, 58);
+  g.fillStyle = '#ffd23f';
+  adText(g, 'vorgoron.ru/izhevsk-nfs', AD_W / 2, 415, 52, 700);
+}
+
+function izhCarFriendsAd(g, logo) {
+  g.fillStyle = '#ffd23f';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#121212';
+  g.textAlign = 'left';
+  const left = AD_W - AD_PAD - 60;
+  adText(g, 'ГОНЯЙ', 60, 165, 96, 800, left);
+  adText(g, 'С ДРУЗЬЯМИ', 60, 275, 96, 800, left);
+  adText(g, 'Меню → «Позвать друзей»', 60, 355, 54, 700, left);
+  if (logo) g.drawImage(logo, AD_W - 490, AD_H - 128, 440, 118);
+  else {
+    g.font = `italic ${adFont(70)}`;
+    g.textAlign = 'right';
+    g.fillText('IZH CAR', AD_W - 50, AD_H - 50, 420);
+  }
+}
+
+// Даур — в цветах удмуртского флага: чёрный, белый, красный.
+function daurAd(g) {
+  g.fillStyle = '#111';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#d42a2a';
+  g.fillRect(0, AD_H - 70, AD_W, 70);
+  g.textAlign = 'center';
+  g.fillStyle = '#fff';
+  adText(g, 'ДАУР', AD_W / 2, 230, 190);
+  g.fillStyle = '#d42a2a';
+  g.beginPath();
+  g.roundRect(AD_W / 2 - 230, 270, 460, 110, 55);
+  g.fill();
+  g.fillStyle = '#fff';
+  adText(g, 'ТВ + FM', AD_W / 2, 352, 78, 800, 400);
+  adText(g, 'daur.media', AD_W / 2, AD_H - 17, 50, 700);
+}
+
+function daurFmAd(g) {
+  g.fillStyle = '#f4f1ea';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#d42a2a';
+  g.fillRect(0, 0, 36, AD_H);
+  g.fillStyle = '#111';
+  g.fillRect(36, 0, 18, AD_H);
+  g.textAlign = 'left';
+  const left = AD_W - AD_PAD - 110;
+  adText(g, 'ДАУР FM', 110, 200, 150, 800, left);
+  g.fillStyle = '#d42a2a';
+  adText(g, 'слушай за рулём', 110, 310, 76, 800, left);
+  g.fillStyle = '#111';
+  adText(g, 'радио — в меню игры', 110, 420, 54, 700, left);
+}
+
+// Щит 6 × 3 м на одной стойке, плакаты с двух сторон; щит — вдоль локальной x, лицевые стороны ±z.
+const BB = { w: 6, h: 3, y: 6.9, t: 0.5 }; // размер плаката, высота его центра, толщина короба
+
+export function billboardMaterials(renderer) {
+  const c = document.createElement('canvas');
+  c.width = AD_W;
+  c.height = AD_H * ADS.length;
+  const g = c.getContext('2d');
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const draw = (logo) => {
+    ADS.forEach((ad, k) => {
+      g.save();
+      g.translate(0, k * AD_H);
+      g.beginPath();
+      g.rect(0, 0, AD_W, AD_H);
+      g.clip();
+      ad(g, logo);
+      g.restore();
+    });
+    tex.needsUpdate = true;
+  };
+  draw(null);
+  const logo = new Image();
+  logo.onload = () => draw(logo);
+  logo.src = 'logo.svg';
+
+  const bottom = BB.y - BB.h / 2 - 0.15;
+  const geo = mergeGeos([
+    part(new THREE.CylinderGeometry(0.45, 0.55, 0.5, 10), '#8f8c85'), // фундамент
+    part(new THREE.CylinderGeometry(0.26, 0.3, bottom + 0.6, 10).translate(0, (bottom + 0.6) / 2 - 0.3, 0), '#6b7075'),
+    part(new THREE.BoxGeometry(BB.w + 0.3, BB.h + 0.3, BB.t).translate(0, BB.y, 0), '#3f4448'),     // короб
+    part(new THREE.BoxGeometry(BB.w + 0.3, 0.06, 1.6).translate(0, bottom - 0.05, 0), '#55595d'),   // мостки
+    ...[-2, 0, 2].flatMap((x) => [-1, 1].map((s) => // светильники над плакатом
+      part(new THREE.BoxGeometry(0.3, 0.12, 0.5).translate(x, BB.y + BB.h / 2 + 0.3, s * 0.55), '#2d3135'))),
+  ], ['color']);
+  const face = new THREE.MeshLambertMaterial({ map: tex, emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 0.35 });
+  let t0 = null;
+  return {
+    geo, face,
+    frame: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    // Каждый кадр: смена плаката раз в AD_SHOW с, прокрутка за AD_ROLL с.
+    tick(now) {
+      t0 ??= now;
+      const t = (now - t0) / 1000, period = AD_SHOW + AD_ROLL, n = Math.floor(t / period);
+      const r = Math.max(0, (t - n * period - AD_SHOW) / AD_ROLL);
+      const e = r * r * (3 - 2 * r);
+      tex.offset.y = -((n + e) % ADS.length) / ADS.length;
+    },
+  };
+}
+
+const BB_STEP = { primary: 420, secondary: 480, tertiary: 560 }; // м вдоль улицы: место под щит
+const BB_KEEP = 0.5;   // доля мест, где щит действительно стоит
+const BB_SET = 4.2;    // м от края полотна до стойки
+const BB_END = 30;     // м: у концов улицы не ставим
+
+// Щиты квадрата: редкие, у крупных улиц, поперёк дороги — плакаты видно в обе стороны движения.
+// Места — с шагом от начала всей улицы (как у столбов), часть мест пустует (по хешу).
+export function buildBillboardChunk(world, info, mats) {
+  const { data } = info;
+  const { free, inBuilding } = spotChecks(world, data);
+  const spots = [];
+  for (const { road, from, to } of data.runs) {
+    const step = BB_STEP[road.k];
+    if (!step || road.br || road.tu) continue;
+    const pre = prefixOf(world, road);
+    const total = pre[pre.length - 1], h = (road.n[0] * 2246822519) >>> 0;
+    const phase = (h % 997) / 997 * step;
+    for (let i = from + 1; i <= to; i++) {
+      const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
+      const s0 = pre[i - 1], L = pre[i] - s0;
+      if (L < 0.5) continue;
+      const dx = (bx - ax) / L, dz = (bz - az) / L;
+      for (let s = phase + Math.ceil((s0 - phase) / step) * step; s < s0 + L; s += step) {
+        if (s < BB_END || s > total - BB_END) continue;
+        const k = Math.round((s - phase) / step), hk = Math.imul(h ^ k, 2654435761) >>> 0;
+        if ((hk % 1000) / 1000 >= BB_KEEP) continue;
+        const side = hk & 1024 ? 1 : -1, off = road.w / 2 + BB_SET, t = s - s0;
+        const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
+        // Края щита: стойка — на земле, не у дороги; щит не в доме и не под путепроводом.
+        const ex = -dz * side * (BB.w / 2 + 0.2), ez = dx * side * (BB.w / 2 + 0.2);
+        const nr = world.nearestRoad(x, z, 4);
+        if ((nr && nr.d < 2) || world.isWater(x, z) || !free(x, z)) continue;
+        const y = world.terrain(x, z);
+        const ok = [[x, z], [x + ex, z + ez], [x - ex, z - ez]]
+          .every(([px, pz]) => !inBuilding(px, pz) && world.ground(px, pz) < world.terrain(px, pz) + 2);
+        if (!ok) continue;
+        spots.push({ x, y, z, dx, dz, slot: hk >>> 12 });
+      }
+    }
+  }
+  if (!spots.length) return null;
+  const frames = new THREE.InstancedMesh(mats.geo, mats.frame, spots.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+  const up = new THREE.Vector3(0, 1, 0);
+  // Плакаты квадрата — одна геометрия: две стороны на щит, у каждой своя полоса ленты.
+  const pos = [], nor = [], uv = [], idx = [];
+  const n = ADS.length, pad = 3 / (AD_H * n);
+  const quad = (cx, cy, cz, nx, nz, slot) => {
+    const rx = nz, rz = -nx; // вправо для смотрящего на лицо
+    const v0 = 1 - (slot + 1) / n + pad, v1 = 1 - slot / n - pad, b = pos.length / 3;
+    for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+      pos.push(cx + rx * (u - 0.5) * BB.w, cy + (v - 0.5) * BB.h, cz + rz * (u - 0.5) * BB.w);
+      nor.push(nx, 0, nz);
+      uv.push(u, v ? v1 : v0);
+    }
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  };
+  const lift = BB.t / 2 + 0.01;
+  spots.forEach(({ x, y, z, dx, dz, slot }, i) => {
+    frames.setMatrixAt(i, m.compose(p.set(x, y, z), q.setFromAxisAngle(up, Math.atan2(dx, dz)), one));
+    // Сзади — плакат через один (другой бренд), чтобы в разные стороны висело разное.
+    quad(x + dx * lift, y + BB.y, z + dz * lift, dx, dz, slot % n);
+    quad(x - dx * lift, y + BB.y, z - dz * lift, -dx, -dz, (slot + 1) % n);
+  });
+  frames.computeBoundingSphere();
+  frames.castShadow = true;
+  const fg = new THREE.BufferGeometry();
+  fg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  fg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  fg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  fg.setIndex(idx);
+  fg.computeBoundingSphere();
+  const faces = new THREE.Mesh(fg, mats.face);
+  return [frames, faces];
 }
 
 // ---------------------------------------------------------------- миникарта

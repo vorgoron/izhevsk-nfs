@@ -1,9 +1,9 @@
-// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья, столбы строятся по мере
+// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья, столбы, щиты строятся по мере
 // приближения (не больше нескольких квадратов за кадр) и выгружаются, когда игрок уехал.
 import * as THREE from 'three';
 import {
-  buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, buildPoleChunk, drawMinimapTile,
-  roadMaterials, buildingMaterials, treeMaterials, poleMaterials,
+  buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, buildPoleChunk, buildBillboardChunk,
+  drawMinimapTile, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
 
 export class ChunkManager {
@@ -14,7 +14,8 @@ export class ChunkManager {
     this.radius = radius;
     this.texSize = texSize;
     this.loaded = new Map(); // ключ → { group, terrain }
-    this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials() };
+    this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials(),
+      ads: billboardMaterials(renderer) };
   }
 
   #key(ci, cj) { return ci * 10000 + cj; }
@@ -50,6 +51,8 @@ export class ChunkManager {
     if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
     const poles = buildPoleChunk(w, info, this.mats.poles);
     if (poles) group.add(tag(poles, 'столбы'));
+    const ads = buildBillboardChunk(w, info, this.mats.ads);
+    if (ads) group.add(...ads.map((o) => tag(o, 'щиты')));
     this.scene.add(group);
     this.loaded.set(this.#key(ci, cj), group);
   }
@@ -59,6 +62,7 @@ export class ChunkManager {
     group.traverse((o) => {
       if (!o.isMesh) return;
       // Общие материалы и геометрии деревьев не трогаем; своё — геометрии и текстура земли.
+      if (o.material === this.mats.ads.face) { o.geometry.dispose(); return; }
       if (!o.isInstancedMesh) o.geometry.dispose();
       else o.dispose();
       if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls) {
@@ -71,6 +75,7 @@ export class ChunkManager {
 
   // Каждый кадр: достроить до budget ближайших недостающих, выгрузить далёкие.
   update(px, pz, budget = 1) {
+    this.mats.ads.tick(performance.now());
     // Рядом с машиной — сразу и без лимита (после эвакуатора, рестарта гонки).
     for (const { i, j } of this.#wanted(px, pz, 600)) if (!this.loaded.has(this.#key(i, j))) this.#build(i, j);
     const want = this.#wanted(px, pz, this.radius);
