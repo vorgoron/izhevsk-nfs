@@ -20,6 +20,14 @@ python3 tools/fetch_city.py              # весь город (AREA=city)
 AREA=center python3 tools/fetch_city.py  # только центр — быстро, для отладки
 ```
 
+Этажность многоквартирных домов без этажности в OSM и признак «частный дом» берутся из выгрузки ГИС ЖКХ
+«Сведения об объектах жилищного фонда» (dom.gosuslugi.ru, открытые данные), если перед сборкой сделать
+выжимку по Ижевску (`data/raw/gis_izhevsk.json`; без неё сборка идёт как раньше):
+
+```sh
+python3 tools/gis_extract.py "…/Сведения по ОЖФ Удмуртская Респ на <дата>_1.csv" "…_2.csv"
+```
+
 Сырые ответы кешируются в `data/raw/`. OSM берётся из основного API тайлами ~0.6 × 0.6 км
 (Overpass часто недоступен; весь город — ~730 запросов, 40–60 минут на чистую загрузку),
 рельеф — тайлы Terrarium (AWS Terrain Tiles, z13), сетка 30 м.
@@ -121,6 +129,7 @@ GitHub Pages через Actions: `.github/workflows/pages.yml` выкладыв�
 - Карта: © участники OpenStreetMap. `public/city.json` — производная база данных из OSM и
   распространяется под [ODbL](https://opendatacommons.org/licenses/odbl/).
 - Рельеф: Terrain Tiles (Mapzen / AWS Open Data; источники — SRTM и др.).
+- Тип и этажность жилых домов: ГИС ЖКХ, «Сведения об объектах жилищного фонда» (открытые данные).
 - Three.js (MIT) грузится с jsDelivr.
 - Модель LADA Vesta (`public/models/vesta.glb`) упрощена из «[Lada Vesta](https://sketchfab.com/3d-models/lada-vesta-3c333139feb744ae9d36767c0e9cabfd)»
   автора [tiunov.se](https://sketchfab.com/tiunov.se), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).

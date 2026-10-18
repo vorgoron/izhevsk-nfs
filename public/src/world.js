@@ -38,6 +38,7 @@ export class World {
     this.patches = [];
     this.#initDem(city.dem);
     this.#initMeshGrid();
+    this.#levelUnderBuildings();
     this.#planOverpasses();
     this.#carveUnderBridges();
     this.levelEnds = [];
@@ -204,6 +205,38 @@ export class World {
       for (let i = 0; i <= nx; i++) h[j * (nx + 1) + i] = this.baseTerrain(xmin + (i * W) / nx, zmin + (j * H) / nz);
     }
     this.mesh = { xmin, zmin, W, H, nx, nz, dx: W / nx, dz: H / nz, h };
+  }
+
+  // Площадки под домами: узлы сетки рельефа внутри дома и в LEVEL_PAD м вокруг подтягиваются на долю
+  // LEVEL_K к средней высоте земли под контуром — на склоне дом стоит на подрезанном уступе, но склон
+  // остаётся (выровнять совсем — сетка 15 м дала бы террасы через весь квартал). Узел под несколькими
+  // домами — к среднему их высот. Достопримечательности не трогаем: их модели подогнаны под рельеф.
+  #levelUnderBuildings() {
+    const LEVEL_PAD = 3, LEVEL_K = 0.5;
+    const { h, nx, nz, dx, dz, xmin, zmin } = this.mesh;
+    const sum = new Map();
+    for (const b of this.city.buildings) {
+      if (b.lm || b.mh) continue;
+      const p = b.p;
+      let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, t = 0;
+      for (const [x, z] of p) {
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+        t += this.meshTerrain(x, z);
+      }
+      t /= p.length;
+      const i0 = Math.max(0, Math.ceil((x0 - LEVEL_PAD - xmin) / dx)), i1 = Math.min(nx, Math.floor((x1 + LEVEL_PAD - xmin) / dx));
+      const j0 = Math.max(0, Math.ceil((z0 - LEVEL_PAD - zmin) / dz)), j1 = Math.min(nz, Math.floor((z1 + LEVEL_PAD - zmin) / dz));
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const x = xmin + i * dx, z = zmin + j * dz;
+          if (!pointInRing(x, z, p) && !p.some((q, k) => World.closest({ ax: q[0], az: q[1], bx: p[(k + 1) % p.length][0],
+            bz: p[(k + 1) % p.length][1] }, x, z).d < LEVEL_PAD)) continue;
+          const n = j * (nx + 1) + i, e = sum.get(n);
+          if (e) { e[0] += t; e[1]++; } else sum.set(n, [t, 1]);
+        }
+      }
+    }
+    for (const [n, [t, c]] of sum) h[n] += (t / c - h[n]) * LEVEL_K;
   }
 
   // Путепроводы: мост только над дорогами/рельсами идёт горбом — нижняя дорога остаётся на земле,

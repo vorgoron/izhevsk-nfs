@@ -457,45 +457,279 @@ export function buildRailChunk(world, info, mat, deckMat) {
 // ---------------------------------------------------------------- здания
 
 // 0 панель, 1 кирпич, 2 штукатурка, 3 пром, 4 храм
-const WALL = ['#c8c5bb', '#a2603f', '#d8b97f', '#8e8f8c', '#f1eee6', '#d4d1ca', '#b98a5a'];
-const ROOF = ['#5d5d5d', '#4f4a47', '#6b5d4e', '#686a68', '#b89b4a', '#8d9096', '#8a3b2c'];
+// Палитры по серии (стиль дома из city.json, см. building_style в fetch_city.py): стена, крыша.
+const WALLS = [
+  ['#d9d6cf', '#cfd3d4', '#d8cfc0', '#c9c6be'],             // 0 панельная пятиэтажка
+  ['#e3dfd6', '#d9d5cb', '#a2603f', '#9a5a3c', '#c9a676'], // 1 хрущёвка: силикатный белый, красный, жёлтый кирпич
+  ['#d8b97f', '#e0c9a0', '#d4aaa0', '#e8e2d0', '#c4cfb4'], // 2 штукатурка: охра, розовый, белый, салатовый
+  ['#8e8f8c', '#a3a29c', '#9aa3a6'],                       // 3 пром
+  ['#f1eee6'],                                              // 4 храм
+  ['#d4d1ca'],                                              // 5 трибуны, навесы
+  ['#b98a5a'],                                              // 6 частный (свои цвета — HOUSE_WALLS)
+  ['#e6e4de', '#d6d8d6', '#e0dccf', '#dcdfe2'],             // 7 панельная девятиэтажка
+  ['#a2603f', '#e3dfd6', '#b5714a', '#d9d5cb'],             // 8 кирпичный многоэтажный
+  ['#ece8e0', '#d9cdb8', '#c8ccd0', '#e8dccd', '#d6c3b0'],  // 9 новостройка
+  ['#e6e1d6', '#d8c39a', '#c4cfd6', '#d6d0c4'],             // 10 общественное
+  ['#d9a19a', '#e0b0a8', '#a9c49c', '#b5cfa6', '#d8b45c', '#cfa64e'], // 11 малоэтажный послевоенный: розовый, зелёный, горчичный
+];
+const ROOFS = ['#686a68', '#5d5d5d', '#6b5d4e', '#686a68', '#b89b4a', '#8d9096', '#8a3b2c',
+  '#5f6163', '#5d5a57', '#55585c', '#626466'];
+// Скатные крыши малоэтажных послевоенных домов: шифер, зелёное и коричневое железо.
+const LOWRISE_ROOFS = ['#70757a', '#7d8287', '#4d6b4f', '#5a6e5c', '#6e4a3c'];
 const SEATS = '#2f63a8'; // трибуны: сторона к полю — ряды сидений
 // Частный сектор (стиль 6): стены — дерево, крашеные, белый кирпич; крыши — ржавое железо, зелёные, шифер.
 const HOUSE_WALLS = ['#9c7350', '#b98a5a', '#7fa3b8', '#8fae8a', '#d9d4c5', '#c8b27a', '#a5664a', '#c9c3b4'];
 const HOUSE_ROOFS = ['#8a3b2c', '#4d6b4f', '#7d8287', '#5a4636', '#9b5a36', '#6f7478'];
 
-function windowTexture(renderer) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = '#ffffff';
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 4; i++) {
-    for (let j = 0; j < 4; j++) {
-      const x = i * 64, y = j * 64;
-      g.fillStyle = 'rgba(0,0,0,0.06)';
-      g.fillRect(x, y + 62, 64, 2); // межэтажный шов
-      const lit = Math.random() < 0.12;
-      const shade = 50 + Math.random() * 40;
-      g.fillStyle = lit ? '#e8d9a0' : `rgb(${shade * 0.8},${shade},${shade * 1.15})`;
-      g.fillRect(x + 16, y + 14, 32, 34);
-      g.fillStyle = 'rgba(255,255,255,0.75)';
-      g.fillRect(x + 31, y + 14, 2, 34); // переплёт
-      g.fillRect(x + 14, y + 48, 36, 3); // подоконник
-    }
+// ---------------------------------------------------------------- фасады
+
+// Атлас фасадов: полоса на серию, в полосе два ряда по этажу — типовой этаж (верх) и первый (низ).
+// Ширина полосы — w метров стены (повторяется по горизонтали), высота ряда — один этаж.
+// Рисунок светлый и умножается на цвет стены; акценты новостроек — отдельным цветом.
+const FA = { W: 512, R: 128 }; // px: ширина полосы, высота ряда (этажа)
+const FACADES = [
+  { w: 6.4, draw: panel5 },     // 0
+  { w: 6.0, draw: brick5 },     // 1
+  { w: 3.6, draw: stalin },     // 2
+  { w: 6.0, draw: industrial }, // 3
+  { w: 3.2, draw: generic },    // 4 храм
+  { w: 3.2, draw: generic },    // 5 (окон нет — см. buildBuildingChunk)
+  { w: 3.2, draw: generic },    // 6 частный
+  { w: 6.6, draw: panel9 },     // 7
+  { w: 6.0, draw: brick9 },     // 8
+  { w: 6.0, draw: newBuild },   // 9
+  { w: 6.0, draw: publicB },    // 10
+  { w: 3.6, draw: stalin },     // 11 малоэтажный послевоенный
+  { w: 3.2, draw: panelEnd },   // 12 глухой торец панельного дома
+];
+const END_WALL = 12;
+
+// Маска «не красить в цвет стены» (стекло, рамы, вставки): рисуется параллельно атласу, потом
+// уходит в альфу атласа (0.5 — свой цвет, 1 — умножить на цвет стены).
+let rawMask = null;
+const raw = (x, y, w, h) => rawMask.fillRect(x, y, w, h);
+
+// Стекло: тёмное с разбросом; переплёт и подоконник светлые. Светящихся окон нет: ночи в игре нет,
+// а окно атласа повторяется на каждом этаже — горел бы целый столбец.
+function glass(g, x, y, w, h, rnd, { mull = true, sill = true, frame = '#f4f4f0' } = {}) {
+  const sh = 45 + rnd() * 40;
+  raw(x - 3, y - 3, w + 6, h + 6);
+  g.fillStyle = frame;
+  g.fillRect(x - 3, y - 3, w + 6, h + 6);
+  g.fillStyle = `rgb(${sh * 0.8},${sh},${sh * 1.15})`;
+  g.fillRect(x, y, w, h);
+  g.fillStyle = 'rgba(255,255,255,0.18)'; // блик сверху
+  g.fillRect(x, y, w, h * 0.3);
+  g.fillStyle = frame;
+  if (mull) {
+    g.fillRect(x + w * 0.5 - 2, y, 4, h);
+    g.fillRect(x, y + h * 0.3, w, 3);
   }
+  if (sill) {
+    g.fillStyle = 'rgba(255,255,255,0.9)';
+    g.fillRect(x - 6, y + h + 3, w + 12, 4);
+  }
+}
+const shade = (g, a, x, y, w, h) => { g.fillStyle = `rgba(0,0,0,${a})`; g.fillRect(x, y, w, h); };
+function seams(g, step) { // швы панелей: вертикальные через step px и межэтажный
+  for (let x = 0; x <= FA.W; x += step) shade(g, 0.13, x - 1, 0, 2, FA.R);
+  shade(g, 0.13, 0, FA.R - 2, FA.W, 2);
+}
+function bricks(g) {
+  for (let y = 2; y < FA.R; y += 5) shade(g, 0.05, 0, y, FA.W, 1);
+  for (let i = 0; i < 900; i++) shade(g, 0.04, (i * 977) % FA.W, (i * 131) % FA.R, 3, 2);
+}
+const plinth = (g) => shade(g, 0.22, 0, FA.R - 22, FA.W, 22);
+
+function panel5(g, ground, rnd) {
+  seams(g, 256);
+  glass(g, 68, 30, 120, 58, rnd);
+  if (ground) glass(g, 324, 30, 120, 58, rnd);
+  else { // окно и балконная дверь, перед ними балкон: плита и ограждение во всю ширину
+    glass(g, 290, 30, 104, 58, rnd);
+    glass(g, 412, 22, 52, 96, rnd, { sill: false, mull: false });
+    g.fillStyle = '#c7cac6';
+    g.fillRect(276, 84, 202, 34);
+    raw(276, 84, 202, 34);
+    shade(g, 0.15, 276, 84, 202, 3);
+    for (let x = 300; x < 470; x += 24) shade(g, 0.08, x, 87, 2, 31);
+    g.fillStyle = '#9fa29e';
+    g.fillRect(272, 118, 210, 8);
+    raw(272, 118, 210, 8);
+  }
+  if (ground) plinth(g);
+}
+function brick5(g, ground, rnd) {
+  bricks(g);
+  for (const x of [52, 308]) {
+    shade(g, 0.12, x - 8, 22, 152, 6); // перемычка
+    glass(g, x, 30, 136, 60, rnd);
+  }
+  if (ground) plinth(g);
+}
+function stalin(g, ground, rnd) {
+  if (ground) {
+    for (let y = 8; y < FA.R; y += 14) shade(g, 0.12, 0, y, FA.W, 2); // руст
+    glass(g, 120, 22, 272, 86, rnd, { sill: false });
+    shade(g, 0.2, 0, FA.R - 14, FA.W, 14);
+    return;
+  }
+  g.fillStyle = 'rgba(255,255,255,0.55)';
+  g.fillRect(0, 0, FA.W, 7); // карниз-тяга
+  shade(g, 0.1, 0, 7, FA.W, 2);
+  g.fillStyle = 'rgba(255,255,255,0.7)';
+  g.fillRect(150, 14, 212, 8); // сандрик
+  shade(g, 0.12, 150, 22, 212, 2);
+  glass(g, 170, 26, 172, 82, rnd);
+}
+function industrial(g, ground, rnd) {
+  shade(g, 0.08, 0, FA.R - 3, FA.W, 3);
+  if (ground) { shade(g, 0.12, 0, 60, FA.W, FA.R - 60); return; }
+  g.fillStyle = '#e8e8e4';
+  g.fillRect(0, 22, FA.W, 54);
+  raw(0, 22, FA.W, 54);
+  for (let x = 0; x < FA.W; x += 85) {
+    const sh = 70 + rnd() * 30;
+    g.fillStyle = `rgb(${sh * 0.85},${sh},${sh * 1.05})`;
+    g.fillRect(x + 4, 26, 77, 46);
+  }
+}
+function generic(g, ground, rnd) {
+  shade(g, 0.06, 0, FA.R - 2, FA.W, 2);
+  glass(g, 128, 28, 256, 66, rnd);
+}
+function panel9(g, ground, rnd) {
+  seams(g, 256);
+  glass(g, 68, 30, 120, 58, rnd);
+  if (ground) { glass(g, 324, 30, 120, 58, rnd); plinth(g); return; }
+  // Лоджия во всю панель: тёмная ниша, остекление внутри, сплошное ограждение снизу.
+  shade(g, 0.55, 276, 10, 216, 108);
+  glass(g, 290, 22, 188, 50, rnd, { sill: false, frame: '#9a9c9a' });
+  g.fillStyle = '#d4d6d2';
+  g.fillRect(272, 72, 224, 46);
+  shade(g, 0.1, 272, 72, 224, 3);
+}
+function brick9(g, ground, rnd) {
+  bricks(g);
+  shade(g, 0.12, 44, 22, 152, 6);
+  glass(g, 52, 30, 136, 60, rnd);
+  if (ground) { glass(g, 316, 30, 136, 60, rnd); plinth(g); return; }
+  shade(g, 0.62, 290, 8, 200, 110); // лоджия: ниша и кирпичное ограждение
+  glass(g, 304, 18, 172, 54, rnd, { sill: false, frame: '#9a9c9a' });
+  g.save();
+  g.beginPath(); g.rect(286, 74, 208, 44); g.clip();
+  g.fillStyle = '#ffffff'; g.fillRect(286, 74, 208, 44);
+  bricks(g);
+  g.restore();
+  shade(g, 0.3, 286, 74, 208, 4);
+  shade(g, 0.15, 286, 114, 208, 4);
+}
+function newBuild(g, ground, rnd) {
+  if (ground) { // витрины первого этажа
+    g.fillStyle = '#3a3f45';
+    g.fillRect(0, 10, FA.W, 108);
+    raw(0, 10, FA.W, 108);
+    for (let x = 0; x < FA.W; x += 128) glass(g, x + 6, 16, 116, 96, rnd, { sill: false, mull: false, frame: '#3a3f45' });
+    shade(g, 0.3, 0, 0, FA.W, 10);
+    return;
+  }
+  g.fillStyle = '#c96a3c'; // цветные вставки между окнами
+  g.fillRect(0, 0, 40, FA.R);
+  g.fillRect(256, 0, 40, FA.R);
+  g.fillStyle = '#7d8288';
+  g.fillRect(216, 0, 40, FA.R);
+  g.fillRect(472, 0, 40, FA.R);
+  for (const x of [0, 216, 256, 472]) raw(x, 0, 40, FA.R);
+  glass(g, 58, 14, 140, 92, rnd, { frame: '#e6e6e2' });
+  glass(g, 314, 14, 140, 92, rnd, { frame: '#e6e6e2' });
+  shade(g, 0.18, 0, FA.R - 6, FA.W, 6); // торец перекрытия
+}
+function publicB(g, ground, rnd) {
+  shade(g, 0.08, 0, FA.R - 4, FA.W, 4);
+  if (ground) {
+    glass(g, 30, 18, 452, 92, rnd, { sill: false });
+    for (let x = 30 + 113; x < 480; x += 113) { g.fillStyle = '#f4f4f0'; g.fillRect(x - 2, 18, 4, 92); }
+    return;
+  }
+  glass(g, 20, 30, 220, 64, rnd);
+  glass(g, 272, 30, 220, 64, rnd);
+}
+function panelEnd(g) {
+  seams(g, 256);
+}
+
+function facadeAtlas(renderer) {
+  const c = document.createElement('canvas');
+  c.width = FA.W;
+  c.height = FA.R * 2 * FACADES.length;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  const mc = document.createElement('canvas');
+  mc.width = c.width;
+  mc.height = c.height;
+  rawMask = mc.getContext('2d', { willReadFrequently: true });
+  rawMask.fillStyle = '#fff';
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  FACADES.forEach((f, k) => {
+    for (const ground of [false, true]) {
+      for (const x of [g, rawMask]) {
+        x.save();
+        x.translate(0, (2 * k + (ground ? 1 : 0)) * FA.R);
+        x.beginPath(); x.rect(0, 0, FA.W, FA.R); x.clip();
+      }
+      g.fillStyle = '#ffffff';
+      g.fillRect(0, 0, FA.W, FA.R);
+      f.draw(g, ground, rnd);
+      g.restore();
+      rawMask.restore();
+    }
+  });
+  const img = g.getImageData(0, 0, c.width, c.height), mask = rawMask.getImageData(0, 0, c.width, c.height).data;
+  for (let i = 3; i < mask.length; i += 4) if (mask[i] > 127) img.data[i] = 128;
+  g.putImageData(img, 0, 0);
+  rawMask = null;
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.premultiplyAlpha = false;
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return t;
+}
+
+// Стены: uv = (метры вдоль стены / w полосы, этажи от уровня земли); атрибут aFac = (полоса, число этажей).
+// Ниже земли (цоколь на склоне) и выше последнего этажа (парапет) — гладкая стена. Повтор — fract в
+// шейдере, выборка через textureGrad по непрерывным uv: иначе на стыке плиток мип-уровень скачет (шов).
+function facadeMaterial(renderer) {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true, map: facadeAtlas(renderer) });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 aFac;\nvarying vec2 vFac;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvFac = aFac;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vFac;')
+      .replace('#include <map_fragment>', `
+        float tintMask = 1.0;
+        vec2 fu = vMapUv;
+        float nb = ${2 * FACADES.length}.0;
+        vec4 sampledDiffuseColor = vec4(fu.y < 0.0 ? 0.85 : 1.0);
+        if (fu.y >= 0.0 && fu.y < vFac.y) {
+          float row = fu.y < 1.0 ? 1.0 : 0.0;
+          vec2 t = vec2(fract(fu.x), 1.0 - (2.0 * vFac.x + 1.0 + row - fract(fu.y)) / nb);
+          vec2 sc = vec2(1.0, 1.0 / nb);
+          sampledDiffuseColor = textureGrad(map, t, dFdx(fu) * sc, dFdy(fu) * sc);
+          tintMask = smoothstep(0.6, 0.9, sampledDiffuseColor.a);
+          sampledDiffuseColor.a = 1.0;
+        }
+        diffuseColor *= sampledDiffuseColor;`)
+      .replace('#include <color_fragment>', 'diffuseColor.rgb *= mix(vec3(1.0), vColor, tintMask);');
+  };
+  return m;
 }
 
 const ONION = [[0, 0], [0.62, 0], [0.86, 0.1], [1, 0.28], [0.98, 0.42], [0.82, 0.58], [0.52, 0.74], [0.24, 0.87], [0.1, 0.96], [0.05, 1.08]];
 
 export function buildingMaterials(renderer) {
   return {
-    walls: new THREE.MeshLambertMaterial({ vertexColors: true, map: windowTexture(renderer) }),
+    walls: facadeMaterial(renderer),
     roofs: new THREE.MeshLambertMaterial({ vertexColors: true }),
     // Главки храмов: барабан, луковица, крест (единичного размера, масштаб — в матрице).
     drumGeo: new THREE.CylinderGeometry(0.5, 0.5, 1.6, 12).translate(0, 0.8, 0),
@@ -549,6 +783,75 @@ function gableRoof(pts, top, wallCol, roofCol, rp, rc) {
   for (const s of [s0, s1]) tri(P(s, t0, top), P(s, t1, top), P(s, tm, yr), wallCol);
 }
 
+// Доля прямоугольника наименьшей площади вокруг контура, занятая самим контуром (1 — прямоугольник).
+function rectFill(pts) {
+  let area = 0, best = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % pts.length];
+    area += x1 * z2 - x2 * z1;
+    const L = Math.hypot(x2 - x1, z2 - z1);
+    if (L < 0.5) continue;
+    const ux = (x2 - x1) / L, uz = (z2 - z1) / L;
+    let s0 = Infinity, s1 = -Infinity, t0 = Infinity, t1 = -Infinity;
+    for (const [x, z] of pts) {
+      const s = x * ux + z * uz, t = -x * uz + z * ux;
+      s0 = Math.min(s0, s); s1 = Math.max(s1, s); t0 = Math.min(t0, t); t1 = Math.max(t1, t);
+    }
+    best = Math.min(best, (s1 - s0) * (t1 - t0));
+  }
+  return Math.abs(area / 2) / best;
+}
+
+// Вальмовая крыша по любому контуру (CCW): верхний контур — исходный, сдвинутый внутрь на d (ширина
+// крыла ≈ 2·площадь/периметр), между ними — скаты, сверху — узкая плоская полоса. Сдвиг не удался (крыло
+// схлопнулось, ребро развернулось) — меньше d, совсем не вышло — false (будет плоская).
+function hipRoof(pts, top, roofCol, rp, rc) {
+  const n = pts.length;
+  let area = 0, per = 0;
+  for (let i = 0; i < n; i++) {
+    const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % n];
+    area += x1 * z2 - x2 * z1;
+    per += Math.hypot(x2 - x1, z2 - z1);
+  }
+  const wing = Math.abs(area) / per; // половина ширины крыла
+  for (const d of [0.85, 0.65, 0.45].map((f) => Math.min(6, f * wing))) {
+    const q = [];
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[(i + n - 1) % n], p1 = pts[i], p2 = pts[(i + 1) % n];
+      const l1 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1, l2 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
+      // Внутренние нормали рёбер (CCW: наружу — (dz, -dx)).
+      const n1 = [-(p1[1] - p0[1]) / l1, (p1[0] - p0[0]) / l1], n2 = [-(p2[1] - p1[1]) / l2, (p2[0] - p1[0]) / l2];
+      const bx = n1[0] + n2[0], bz = n1[1] + n2[1], c = bx * n2[0] + bz * n2[1];
+      if (c < 0.3) { q.length = 0; break; } // острый угол — сдвиг улетает
+      q.push([p1[0] + (bx / c) * d, p1[1] + (bz / c) * d]);
+    }
+    if (q.length !== n) continue;
+    // Каждое сдвинутое ребро смотрит туда же, куда исходное, — иначе крыло схлопнулось.
+    let ok = true;
+    for (let i = 0; i < n && ok; i++) {
+      const a = pts[i], b = pts[(i + 1) % n], qa = q[i], qb = q[(i + 1) % n];
+      ok = (b[0] - a[0]) * (qb[0] - qa[0]) + (b[1] - a[1]) * (qb[1] - qa[1]) > 0;
+    }
+    if (!ok) continue;
+    const H = top + d * 0.55; // уклон ~29°
+    const up = (a, b, c) => { // треугольник нормалью вверх
+      const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+      for (const v of ny > 0 ? [a, b, c] : [a, c, b]) { rp.push(...v); rc.push(roofCol.r, roofCol.g, roofCol.b); }
+    };
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n, a = [pts[i][0], top, pts[i][1]], b = [pts[j][0], top, pts[j][1]];
+      const c = [q[j][0], H, q[j][1]], e = [q[i][0], H, q[i][1]];
+      up(a, b, c);
+      up(a, c, e);
+    }
+    for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(q.map(([x, z]) => new THREE.Vector2(x, z)), [])) {
+      up([q[a][0], H, q[a][1]], [q[b][0], H, q[b][1]], [q[c][0], H, q[c][1]]);
+    }
+    return true;
+  }
+  return false;
+}
+
 function domeMeshes(domes, mats) {
   const out = [[mats.drumGeo, mats.drum], [mats.onionGeo, mats.gold], [mats.crossGeo, mats.gold]].map(([g, m]) => new THREE.InstancedMesh(g, m, domes.length));
   const m = new THREE.Matrix4();
@@ -564,7 +867,7 @@ function domeMeshes(domes, mats) {
 let pieceIndex = null;
 
 export function buildBuildingChunk(world, list, mats) {
-  const wp = [], wn = [], wc = [], wuv = [];
+  const wp = [], wn = [], wc = [], wuv = [], wf = [];
   const rp = [], rc = [];
   const domes = []; // [x, z, крыша, размер]
   const col = new THREE.Color();
@@ -611,7 +914,8 @@ export function buildBuildingChunk(world, list, mats) {
 
     // Лёгкий разброс оттенка, чтобы кварталы не были одинаковыми; частные дома — каждый в свой цвет.
     const hash = Math.abs(Math.round(pts[0][0] * 7.3 + pts[0][1] * 3.1));
-    col.set(RECOLOR[b.lm]?.[0] ?? (b.r ? HOUSE_WALLS[hash % HOUSE_WALLS.length] : WALL[b.s]));
+    const pal = WALLS[b.s] ?? WALLS[2];
+    col.set(RECOLOR[b.lm]?.[0] ?? (b.r ? HOUSE_WALLS[hash % HOUSE_WALLS.length] : pal[(hash >> 2) % pal.length]));
     const k = 0.9 + ((pts.length * 7919 + Math.round(b.h * 13)) % 20) / 100;
     col.multiplyScalar(k);
 
@@ -625,6 +929,17 @@ export function buildBuildingChunk(world, list, mats) {
     // Трибуны (стиль 5): снаружи глухой бетон без окон, со стороны поля — сиденья.
     const stand = b.s === 5;
     const seats = new THREE.Color(SEATS);
+    // Этажи: в данных высота = этажи × 3.1 + 1 м парапета (частный дом — × 2.9 + 0.3), окна — по этажам
+    // от высшей точки земли под домом. Трибуны и навесы — без окон (этажей 0).
+    const [step, para] = b.r ? [2.9, 0.3] : [3.1, 1];
+    const floors = stand ? 0 : Math.max(1, Math.round((b.h - para) / step)), fh = Math.max(2.4, (b.h - para) / floors);
+    // На склоне этажи считаются от высшей точки земли; под ней, со стороны склона, — ещё этаж (его ряд —
+    // как первый этаж: витрины, цоколь), если перепад больше ~2/3 этажа. Сверху склона он в земле.
+    const extra = stand || b.mh ? 0 : Math.floor((gmax - gmin) / fh + 0.35);
+    const fac = FACADES[b.s] ? b.s : 2;
+    // Панельные дома: короткие стены длинного дома — глухие торцы.
+    let longest = 0;
+    for (let i = 0; i < pts.length; i++) longest = Math.max(longest, Math.hypot(pts[(i + 1) % pts.length][0] - pts[i][0], pts[(i + 1) % pts.length][1] - pts[i][1]));
     for (const ring of [pts, ...holes]) {
     const rc_ = stand && ring !== pts ? seats : col;
     let u = 0;
@@ -633,8 +948,9 @@ export function buildBuildingChunk(world, list, mats) {
       const len = Math.hypot(x2 - x1, z2 - z1);
       if (len < 0.01 || (ring === pts && skip.has(i))) continue;
       const nx = (z2 - z1) / len, nz = -(x2 - x1) / len;
-      const u1 = u, u2 = u + len / 3.2 / 4;
-      const vb = (base - gmax) / 3.1 / 4, vt = b.h / 3.1 / 4;
+      const band = (fac === 0 || fac === 7) && len < 16 && len < longest * 0.4 ? END_WALL : fac;
+      const u1 = u, u2 = u + len / FACADES[band].w;
+      const vb = (base - gmax) / fh + extra, vt = b.h / fh + extra;
       // a=(p1,base) b=(p2,base) c=(p2,top) d=(p1,top); треугольники (a,c,b) и (a,d,c)
       const quad = [
         [x1, base, z1, u1, vb], [x2, top, z2, u2, vt], [x2, base, z2, u2, vb],
@@ -644,9 +960,8 @@ export function buildBuildingChunk(world, list, mats) {
         wp.push(x, y, z);
         wn.push(nx, 0, nz);
         wc.push(rc_.r, rc_.g, rc_.b);
-        // Без окон: все вершины в чистое место текстуры (простенок).
-        if (stand) wuv.push(0.02, 0.1);
-        else wuv.push(uu, vv);
+        wuv.push(uu, vv);
+        wf.push(band, floors && floors + extra);
       }
       u = u2;
     }
@@ -663,11 +978,18 @@ export function buildBuildingChunk(world, list, mats) {
       gableRoof(pts, top, col, new THREE.Color(HOUSE_ROOFS[(hash >> 3) % HOUSE_ROOFS.length]).multiplyScalar(k), rp, rc);
       continue;
     }
+    // Малоэтажный послевоенный: прямоугольный — двускатная крыша, Г/П-образный — вальмовая (скаты от
+    // каждой стены), иначе ниже — плоская.
+    if (b.s === 11 && !holes.length) {
+      const roofCol = new THREE.Color(LOWRISE_ROOFS[(hash >> 3) % LOWRISE_ROOFS.length]).multiplyScalar(k);
+      if (rectFill(pts) > 0.85) { gableRoof(pts, top, col, roofCol, rp, rc); continue; }
+      if (hipRoof(pts, top, roofCol, rp, rc)) continue;
+    }
 
     const contour = pts.map(([x, z]) => new THREE.Vector2(x, z));
     const tris = THREE.ShapeUtils.triangulateShape(contour, holes.map((h) => h.map(([x, z]) => new THREE.Vector2(x, z))));
     pts = [...pts, ...holes.flat()]; // индексы треугольников — по контуру и дырам подряд
-    const rcol = new THREE.Color(RECOLOR[b.lm]?.[1] ?? ROOF[b.s]).multiplyScalar(k);
+    const rcol = new THREE.Color(RECOLOR[b.lm]?.[1] ?? ROOFS[b.s] ?? ROOFS[2]).multiplyScalar(k);
     for (let [a, c, d] of tris) {
       // Нормаль крыши должна смотреть вверх.
       const ux = pts[c][0] - pts[a][0], uz = pts[c][1] - pts[a][1];
@@ -692,6 +1014,7 @@ export function buildBuildingChunk(world, list, mats) {
   walls.setAttribute('normal', new THREE.Float32BufferAttribute(wn, 3));
   walls.setAttribute('color', new THREE.Float32BufferAttribute(wc, 3));
   walls.setAttribute('uv', new THREE.Float32BufferAttribute(wuv, 2));
+  walls.setAttribute('aFac', new THREE.Float32BufferAttribute(wf, 2));
   const roofs = new THREE.BufferGeometry();
   roofs.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
   roofs.setAttribute('color', new THREE.Float32BufferAttribute(rc, 3));

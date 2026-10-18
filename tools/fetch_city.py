@@ -11,6 +11,7 @@
 import json
 import math
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -305,9 +306,17 @@ def is_raised(tags):
     return tags.get("building") in ("bridge", "roof") or layer >= 1
 
 
-def building_style(tags, wid):
-    """0 — панель, 1 — кирпич, 2 — штукатурка (охра), 3 — бетон/пром, 4 — храм, 5 — глухой бетон (трибуны, навесы),
-    6 — частный дом (ставит mark_village_houses)."""
+PUBLIC_TAGS = {"commercial", "retail", "office", "school", "university", "college", "kindergarten", "hospital",
+               "public", "civic", "government", "supermarket", "train_station", "hotel"}
+
+
+def building_style(tags, wid, h, pts):
+    """Серия фасада (в браузере — своя полоса текстуры и палитра):
+    0 — панельная пятиэтажка, 1 — кирпичная хрущёвка, 2 — штукатурка (сталинка, старый центр), 3 — бетон/пром,
+    4 — храм, 5 — глухой бетон (трибуны, навесы), 6 — частный дом (ставит mark_village_houses),
+    7 — панельная девятиэтажка с лоджиями, 8 — кирпичный многоэтажный, 9 — новостройка, 10 — общественное здание,
+    11 — малоэтажный послевоенный (2–3 этажа, штукатурка розовая/зелёная/горчичная, скатная крыша).
+    Данных о фасадах в OSM почти нет: серия угадывается по этажности, форме контура и году, материал — если указан."""
     b = tags.get("building")
     if b in ("stadium", "grandstand"):
         return 5
@@ -318,12 +327,32 @@ def building_style(tags, wid):
         return 2  # постройки при храме без отметки «храм» — обычный оштукатуренный дом
     if b in ("industrial", "warehouse", "garage", "garages", "shed", "service", "roof"):
         return 3
-    if mat == "brick":
-        return 1
-    if mat in ("panel", "concrete"):
-        return 0
-    if b in ("apartments", "residential", "dormitory"):
-        return wid % 2  # без данных — панель или кирпич
+    n = round((h - 1) / 3.1)
+    year = int(parse_num(tags.get("start_date", "")[:4]) or 0)
+    w, L = obb_size(pts)
+    r = wid % 100 / 100  # без данных — выбор по хешу, но детерминированно
+    if b in PUBLIC_TAGS or tags.get("amenity") in ("school", "kindergarten", "hospital", "university", "college"):
+        return 9 if n >= 8 or year >= 2000 else 10
+    if year >= 1995 or n >= 17:
+        return 9
+    if mat in ("plaster", "wood"):
+        return 2
+    if n >= 12:
+        return 9 if r < 0.5 else 7
+    if n >= 8:
+        if mat == "brick":
+            return 8
+        return 7 if mat in ("panel", "concrete") or r < 0.65 else 8
+    if n >= 5 and L > 2 * w:
+        # Хрущёвки и брежневки: длинные, 10–15 м шириной.
+        if mat == "brick":
+            return 1
+        return 0 if mat in ("panel", "concrete") or r < 0.45 else 1
+    # Двух-трёхэтажные многоквартирные — в Ижевске в основном послевоенные (Орджоникидзе, соцгорода).
+    if 2 <= n <= 3 and w >= 8 and b in ("apartments", "residential", "dormitory"):
+        return 11
+    if n >= 3 and w > 9 and b in ("apartments", "residential", "yes", "dormitory"):
+        return 2 if r < 0.6 else 1
     return 2 if wid % 3 else 1
 
 
@@ -378,7 +407,7 @@ def building_entry(pts, tags, eid, lm, holes=()):
     h = round(building_height(tags, eid, area), 1)
     mh = building_base(tags, h)
     return {
-        "p": pts, "h": h, "s": building_style(tags, eid),
+        "p": pts, "h": h, "s": building_style(tags, eid, h, pts),
         **({"holes": [[(round(x, 2), round(z, 2)) for x, z in hole] for hole in holes]} if holes else {}),
         **({"mh": mh} if mh else {}),
         **({"name": osm_name(tags)} if osm_name(tags) else {}),
@@ -391,6 +420,8 @@ def building_entry(pts, tags, eid, lm, holes=()):
         "_btag": tags.get("building"),
         "_levels": parse_num(tags.get("building:levels")),
         "_area": poly_area(pts),
+        "_tags": tags,
+        "_id": eid,
     }
 
 
@@ -822,6 +853,105 @@ def classify_bridges(roads, road_nodes, waterways, rails):
 
 # ---------------------------------------------------------------- частный сектор
 
+# ---------------------------------------------------------------- ГИС ЖКХ
+
+GIS = os.path.join(RAW, "gis_izhevsk.json")  # выжимка tools/gis_extract.py; нет файла — без неё
+GIS_K = 0.76  # общая площадь дома / (площадь контура × этажи), подобрано по домам с этажностью в OSM
+STREET_TYPES = re.compile(r"\b(ул|улица|пер|переулок|пр-кт|проспект|пр-д|проезд|пл|площадь|тракт|б-р|бульвар|ш|шоссе|им|имени|"
+                          r"мкр|микрорайон|наб|набережная|тер|кв-л|квартал|туп|тупик|аллея|линия)\b\.?")
+
+
+def addr_key(street, num):
+    """Адрес для сравнения OSM с ГИС: улица без типа (слова по алфавиту), номер без «д.», корпус — «к»."""
+    st = re.sub(r"[^\w]+", " ", STREET_TYPES.sub(" ", street.lower().replace("ё", "е")))
+    n = re.sub(r"^д\.?", "", num.lower().replace(" ", ""))
+    n = n.replace("корп.", "к").replace("корпус", "к").replace("стр.", "с").replace(",", "")
+    return " ".join(sorted(st.split())), n
+
+
+def gis_levels(est):
+    """Этажность из площади: до 6 — как есть (±1 этаж), выше — разброс ±15%, тянем к типовым 9 и 10."""
+    if est < 6.5:
+        return max(1, round(est))
+    if est < 10.5:
+        return 9
+    if est < 11.5:
+        return 10
+    return min(30, round(est))
+
+
+IZHEVSK_REL = 954515  # граница городского округа: в тайлах по рамке карты она неполная — докачивается целиком
+
+
+def izhevsk_rings():
+    """Контуры городского округа Ижевск (локальные метры). Адреса ГИС — только ижевские, а в сёлах внутри
+    карты свои «Ленина, 17»: без границы они получали этажность ижевских многоэтажек."""
+    root = ET.fromstring(fetch(f"https://api.openstreetmap.org/api/0.6/relation/{IZHEVSK_REL}/full", f"rel_{IZHEVSK_REL}.xml"))
+    nd = {int(e.get("id")): (float(e.get("lat")), float(e.get("lon"))) for e in root.iter("node")}
+    wy = {int(e.get("id")): [int(n.get("ref")) for n in e.findall("nd")] for e in root.iter("way")}
+    rel = next(e for e in root.iter("relation") if int(e.get("id")) == IZHEVSK_REL)
+    outer = [wy[int(m.get("ref"))] for m in rel.findall("member")
+             if m.get("type") == "way" and m.get("role") in ("outer", "") and int(m.get("ref")) in wy]
+    return [[project(*nd[n]) for n in r] for r in stitch(outer)]
+
+
+def apply_gis(buildings):
+    """Сведения ГИС ЖКХ по адресу: многоквартирный дом без этажности в OSM получает этажность по площади
+    (площадь контура — сумма всех зданий с этим адресом: корпуса одного дома); частный дом из ГИС —
+    признак для mark_village_houses. Серия фасада пересчитывается под новую высоту."""
+    if not os.path.exists(GIS):
+        print("gis: нет data/raw/gis_izhevsk.json — без ГИС ЖКХ")
+        return
+    gis = {}
+    for h in json.load(open(GIS, encoding="utf-8")):
+        k = addr_key(h["s"], h["n"])
+        if k not in gis or h["t"] == "mkd":
+            gis[k] = h
+    city, cells = izhevsk_rings(), {}
+
+    def in_city(x, z):  # с точностью до клетки 50 м: граница по полям и лесу, дома на ней редки
+        c = (int(x // 50), int(z // 50))
+        if c not in cells:
+            cells[c] = any(point_in(c[0] * 50 + 25, c[1] * 50 + 25, r) for r in city)
+        return cells[c]
+
+    by_addr = {}
+    for b in buildings:
+        t = b.get("_tags", {})
+        # Храмы, промзона, навесы — не жильё, даже если адрес совпал (храм при частном доме и т. п.).
+        if "addr:street" in t and "addr:housenumber" in t and not b.get("lm") and not b.get("pw") and b["s"] not in (3, 4, 5):
+            h = gis.get(addr_key(t["addr:street"], t["addr:housenumber"]))
+            if h and t.get("addr:city", "Ижевск") == "Ижевск" and in_city(*b["p"][0]):
+                by_addr.setdefault(id(h), (h, []))[1].append(b)
+    lv_set = houses = 0
+    for h, bs in by_addr.values():
+        if h["t"] != "mkd":
+            for b in bs:
+                b["_gis"] = "house"
+            houses += len(bs)
+            continue
+        foot = sum(b["_area"] for b in bs)
+        for b in bs:
+            b["_gis"] = "mkd"
+            restyle = lambda: building_style({**b["_tags"], "building": "apartments"}, b["_id"], b["h"], b["p"])
+            if not b["_auto_h"] or h["a"] <= 0 or foot <= 30 or b.get("mh"):
+                b["s"] = restyle()  # жилой по ГИС, даже если в OSM просто building=yes
+                continue
+            est = h["a"] / (foot * GIS_K)
+            # Маленький контур и много этажей — адрес висит на пристройке (тамбур, подстанция), а сам
+            # дом нарисован без адреса: площадь дома делится не на тот контур.
+            if est > 5.5 and foot < 250:
+                b["s"] = restyle()
+                continue
+            lv = gis_levels(est)
+            b["h"] = round(lv * 3.1 + 1.0, 1)
+            b["_levels"] = lv
+            b["_auto_h"] = False
+            b["s"] = restyle()
+            lv_set += 1
+    print(f"gis: matched {sum(len(bs) for _, bs in by_addr.values())} buildings, levels {lv_set}, private {houses}")
+
+
 HOUSE_TAGS = {"house", "detached", "semidetached_house", "bungalow", "cabin", "farm", "terrace"}
 SMALL = 220        # м²: «маленький дом»
 NEIGHBORS = 8      # столько маленьких домов в радиусе — это посёлок/частный сектор
@@ -860,7 +990,9 @@ def mark_village_houses(buildings):
     for b in small:
         if b.get("_fuel") or b["_btag"] in ("garage", "garages", "shed", "roof", "kiosk", "service", "industrial", "retail", "commercial"):
             continue
-        explicit = b["_btag"] in HOUSE_TAGS
+        if b.get("_gis") == "mkd":
+            continue
+        explicit = b["_btag"] in HOUSE_TAGS or b.get("_gis") == "house"
         # Форма дома: не гаражный бокс (крошечный) и не ряд гаражей/сараев (длинный и узкий).
         w, L = obb_size(b["p"])
         if not explicit and (b["_area"] < 35 or w < 5 or L > 2.6 * w):
@@ -1011,6 +1143,7 @@ def build_city():
             if b["_auto_h"]:
                 b["h"] = 4.1
     classify_bridges(roads, road_nodes, waterways, rails)
+    apply_gis(buildings)
     mark_village_houses(buildings)
     buildings = cut_passages(buildings, roads, road_nodes)
     aligned = align_tram_tracks()
@@ -1103,7 +1236,8 @@ def main():
     city = build_city()
     city["dem"] = download_dem(city["bounds"])
     city["origin"] = [LAT0, LON0]
-    city["attribution"] = "© OpenStreetMap contributors (ODbL); рельеф: Terrain Tiles (Mapzen / AWS, SRTM)"
+    city["attribution"] = ("© OpenStreetMap contributors (ODbL); рельеф: Terrain Tiles (Mapzen / AWS, SRTM); "
+                         "этажность и тип жилых домов: ГИС ЖКХ")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(city, f, ensure_ascii=False, separators=(",", ":"))
