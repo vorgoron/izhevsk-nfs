@@ -405,6 +405,76 @@ export class DustFX {
   }
 }
 
+// Удар машин: сноп искр и осколков стекла из точки контакта — разлетаются от удара и вверх, падают,
+// отскакивают от асфальта и гаснут. Один пул на все удары.
+const HITS = 240, HIT_LIFE = 0.7;
+
+export class HitFX {
+  constructor(scene) {
+    this.pos = new Float32Array(HITS * 3);
+    this.col = new Float32Array(HITS * 3);
+    this.base = new Float32Array(HITS * 3);
+    this.vel = new Float32Array(HITS * 3);
+    this.floor = new Float32Array(HITS);
+    this.life = new Float32Array(HITS);
+    this.max = new Float32Array(HITS);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3).setUsage(THREE.DynamicDrawUsage));
+    this.points = new THREE.Points(geo, new THREE.PointsMaterial({
+      size: 0.22, map: glowDot(), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+    this.next = 0;
+    this.alive = 0;
+  }
+
+  // (x, y, z) — точка удара, (nx, nz) — куда отлетает, strength 0..1.
+  burst(x, y, z, nx, nz, strength) {
+    const n = Math.round(12 + 50 * strength);
+    for (let k = 0; k < n; k++) {
+      const i = this.next;
+      this.next = (this.next + 1) % HITS;
+      const glass = Math.random() < 0.3;
+      const sp = (2 + Math.random() * 7) * (0.5 + strength);
+      const a = Math.random() * Math.PI * 2, side = Math.random() * 0.9;
+      // Конус вокруг нормали: в основном наружу и вверх, немного вбок.
+      const tx = -nz, tz = nx, sx = Math.cos(a) * side;
+      this.pos.set([x, y, z], i * 3);
+      this.vel.set([(nx + tx * sx) * sp, (0.4 + Math.random() * 0.9) * sp * 0.6, (nz + tz * sx) * sp], i * 3);
+      this.base.set(glass ? [0.75, 0.85, 0.95] : [1, 0.55 + Math.random() * 0.3, 0.15], i * 3);
+      this.floor[i] = y - 0.55;
+      this.life[i] = this.max[i] = HIT_LIFE * (0.4 + Math.random() * 0.8) * (glass ? 1.6 : 1);
+    }
+    this.alive = HIT_LIFE * 2;
+  }
+
+  update(dt) {
+    if (this.alive <= 0) return; // нечего обновлять
+    this.alive -= dt;
+    for (let i = 0; i < HITS; i++) {
+      const j = i * 3;
+      if (this.life[i] <= 0) { this.col[j] = this.col[j + 1] = this.col[j + 2] = 0; continue; }
+      this.life[i] -= dt;
+      this.vel[j + 1] -= 12 * dt;
+      this.pos[j] += this.vel[j] * dt;
+      this.pos[j + 1] += this.vel[j + 1] * dt;
+      this.pos[j + 2] += this.vel[j + 2] * dt;
+      if (this.pos[j + 1] < this.floor[i]) {
+        this.pos[j + 1] = this.floor[i];
+        this.vel[j + 1] *= -0.3;
+        this.vel[j] *= 0.5;
+        this.vel[j + 2] *= 0.5;
+      }
+      const t = Math.max(0, this.life[i] / this.max[i]);
+      for (let c = 0; c < 3; c++) this.col[j + c] = this.base[j + c] * t;
+    }
+    this.points.geometry.attributes.position.needsUpdate = true;
+    this.points.geometry.attributes.color.needsUpdate = true;
+  }
+}
+
 // Выхлоп из трубы: клубы растут, поднимаются, сносятся назад и тают. На холостых — редкие светлые
 // облачка, под газом — чаще и гуще; заглох (пустой бак, вода) — нет. Точки разного размера:
 // PointsMaterial с атрибутом aSize (туман и прозрачность остаются от штатного материала).

@@ -192,7 +192,7 @@ export class Sound {
     o.stop(t0 + dur + 0.05);
   }
 
-  #thump(strength) {
+  #thump(strength, bus = this.carBus) {
     const ctx = this.ctx, t = ctx.currentTime;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
@@ -202,7 +202,7 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.9 * strength, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-    src.connect(f).connect(g).connect(this.carBus);
+    src.connect(f).connect(g).connect(bus);
     src.start(t, Math.random());
     src.stop(t + 0.4);
     const o = ctx.createOscillator();
@@ -211,7 +211,7 @@ export class Sound {
     const og = ctx.createGain();
     og.gain.setValueAtTime(0.8 * strength, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    o.connect(og).connect(this.carBus);
+    o.connect(og).connect(bus);
     o.start(t);
     o.stop(t + 0.35);
   }
@@ -273,6 +273,7 @@ export class Sound {
   // от курса игрока, высота мотора — от скорости и газа, со сдвигом Доплера.
   traffic(dt, traffic, car) {
     const honks = traffic.honks.splice(0); // копятся, только пока их не забрали
+    const bangs = traffic.bangs.splice(0);
     if (!this.ctx || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime;
     const set = (param, v, tc = 0.08) => param.setTargetAtTime(v, t, tc);
@@ -287,6 +288,11 @@ export class Sound {
     }
     near.sort((a, b) => a.d - b.d);
     const loud = (d) => Math.min(1, (10 / Math.max(d, 1)) ** 1.1);
+    // Удары машин трафика между собой и о стены (свои удары игрока — от car.impact в update).
+    for (const b of bangs) {
+      const s = b.s * loud(Math.hypot(b.x - px, b.z - pz));
+      if (s > 0.03) this.#thump(Math.min(1, 0.3 + b.s) * s, this.trafficBus);
+    }
 
     // Голос остаётся за машиной, пока она в числе ближайших; свободные берут новых — с нуля громкости.
     const top = near.slice(0, TRAFFIC_VOICES);

@@ -37,7 +37,11 @@ const FLIP_K = 100, FLIP_C = 11, FLIP_ACC = 30; // 1/с², 1/с; рад/с² —
 // Поворот в воздухе боковыми соплами, рад/с на полном руле; курс полёта поворачивается вместе с машиной.
 const AIR_YAW = 0.9;
 // Выше этой высоты над поверхностью машины трафика не задевают — пролетаем.
-const CLEAR_ALT = 1.6;
+export const CLEAR_ALT = 1.6;
+// Удар со стороны: момент инерции кузова на единицу массы, м² (брусок 4,3 × 1,8 м); закрутка гаснет
+// (YAW_DAMP, 1/с), шины после удара держат хуже (skid 0..1 срезает сцепление на SKID_GRIP, проходит за ~1 с).
+export const YAW_K = (4.3 ** 2 + 1.8 ** 2) / 12;
+const YAW_DAMP = 2.2, YAW_MAX = 4, SKID_GRIP = 0.85;
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
 const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
@@ -69,6 +73,8 @@ export class Car {
     this.flipP = 0;         // угол оборота backflip (нос вверх), рад
     this.alt = 0;           // высота над поверхностью
     this.airSteer = 0;      // руль в воздухе (−1..1) — для боковых сопел
+    this.yawV = 0;          // закрутка от удара, рад/с (как рост heading)
+    this.skid = 0;          // после удара шины скользят, 0..1
   }
 
   // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы).
@@ -89,6 +95,7 @@ export class Car {
     this.bodyRoll = this.bodyRollV = 0;
     this.air = null;
     this.flip = this.flipP = this.alt = 0;
+    this.yawV = this.skid = 0;
     this.heading = heading;
     this.y = this.world.ground(x, z);
   }
@@ -166,8 +173,13 @@ export class Car {
     this.airSteer = air ? this.steer : 0;
     const yawRate = air ? this.steer * AIR_YAW : this.steer * STEER_RATE * speedFactor * driftBoost * Math.sign(vf || 1);
     this.heading -= yawRate * dt;
+    // Закрутка от удара: кузов поворачивается сам, а скорость остаётся прежней — машину несёт боком.
+    this.heading += this.yawV * dt;
+    this.yawV *= Math.exp(-YAW_DAMP * dt);
+    this.skid = Math.max(0, this.skid - dt);
 
-    if (!air) vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip * (1 - (1 - OFF_GRIP) * off)) * dt);
+    const skidGrip = 1 - SKID_GRIP * this.skid;
+    if (!air) vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip * (1 - (1 - OFF_GRIP) * off)) * skidGrip * dt);
     const f2 = this.forward, r2 = this.right;
     this.vel.set(f2.x * vf + r2.x * vr, f2.y * vf + r2.y * vr);
     // Сглаженное продольное ускорение — для камеры (отстаёт при разгоне).
@@ -254,6 +266,20 @@ export class Car {
       this.impact = Math.max(this.impact, Math.min(1, -vn / 20));
     }
     return hard;
+  }
+
+  // Удар машиной трафика: импульс на единицу массы (jx, jz), приложенный в точке (px, pz). Меняет скорость,
+  // закручивает вокруг центра, срывает шины в занос и качает кузов. Сила — от изменения скорости.
+  push(jx, jz, px, pz) {
+    this.vel.x += jx;
+    this.vel.y += jz;
+    const rx = px - this.pos.x, rz = pz - this.pos.y;
+    this.yawV = Math.max(-YAW_MAX, Math.min(YAW_MAX, this.yawV - (rx * jz - rz * jx) / YAW_K));
+    const j = Math.hypot(jx, jz);
+    this.skid = Math.max(this.skid, Math.min(1, j / 8));
+    const r = this.right;
+    this.bodyRollV += Math.max(-1.5, Math.min(1.5, (jx * r.x + jz * r.y) * 0.08));
+    this.impact = Math.max(this.impact, Math.min(1, j / 14));
   }
 
   // Раз в кадр, после столкновений с машинами: зажат и стоишь, хотя жмёшь газ/назад, больше

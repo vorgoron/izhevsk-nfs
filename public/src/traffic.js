@@ -2,7 +2,8 @@
 // односторонние улицы, торможение перед впереди идущими и перед игроком, столкновения.
 import * as THREE from 'three';
 import { MODELS, vehicleParts, prism, withArches, wheelArches, ARCH_GAP } from './vehicles.js';
-import { ExhaustFX } from './effects.js';
+import { ExhaustFX, HitFX } from './effects.js';
+import { CLEAR_ALT, YAW_K as PLAYER_K } from './car.js';
 
 // Скорость по классу дороги, м/с. Нет в списке — трафика там нет (дворы, проезды).
 const SPEED = {
@@ -17,6 +18,15 @@ const GRID = 100; // м: клетка сетки рёбер
 const CORNER = 9; // м: столько до узла и после него поворот идёт по кривой, а не углом
 const BUS_PALETTE = ['#f2c230', '#e8e8e8', '#3d8f4f', '#d9442f'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
+// Удары: массы в тоннах (игрок — легковушка), упругость (кузова мнутся — отскок слабый), трение
+// скольжения металла о металл. Удар сильнее HARD м/с по нормали сбивает машину с полосы: она едет
+// свободно — скользит (поперёк кузова шины тормозят сильнее, вдоль — водитель жмёт тормоз),
+// крутится, отскакивает от стен и других машин, а встав, возвращается в свою полосу.
+const PLAYER_M = 1.2, CAR_M = 1.1, BUS_M = 9;
+const RESTITUTION = 0.25, MU = 0.35, HARD = 3, KNOCK_DV = 1.2;
+const SLIDE_LAT = 8, SLIDE_LON = 5, SPIN_DRAG = 2.5; // м/с², м/с², рад/с²
+// Кузов трафика качается на подвеске от удара: жёсткость, демпфер, предел крена/тангажа.
+const WOB_K = 60, WOB_C = 6, WOB_MAX = 0.14;
 
 // ---------------------------------------------------------------- модели: одна геометрия, цвет кузова — от инстанса
 
@@ -101,6 +111,9 @@ export class Traffic {
           r: bus ? 1.3 : 1.1,
           circles: bus ? [-4.5, -1.5, 1.5, 4.5] : [-1.2, 1.2], // коллайдеры вдоль кузова
           maxSpeed: bus ? 11 : 17 * (MODELS[kind.key]?.stats.kmh ?? 160) / 160,
+          mass: bus ? BUS_M : CAR_M,
+          yk: (kind.len ** 2 + (bus ? 2.5 : 1.8) ** 2) / 12, // момент инерции на единицу массы
+          knock: null, blend: null, roll: 0, rollV: 0, pitch: 0, pitchV: 0,
           mood: 0.85 + ((n * 37) % 30) / 100, // кто-то едет бодрее
           edge: null, next: null, s: 0, speed: 0,
           x: 0, z: 0, heading: 0, dx: 0, dz: 1, hit: 0, stuck: 0, ghost: 0, active: false,
@@ -121,6 +134,9 @@ export class Traffic {
     this.up = new THREE.Vector3(0, 1, 0);
     this.hidden = new THREE.Matrix4().makeScale(0, 0, 0);
     this.smoke = new ExhaustFX(scene, 400);
+    this.sparks = new HitFX(scene);
+    this.bangs = []; // удары машин трафика между собой — для звука (забирает Sound.traffic)
+    this.wallC = new THREE.Vector2();
   }
 
   // Направленный граф полос: двусторонняя улица — два ребра со сдвигом вправо.
@@ -187,7 +203,8 @@ export class Traffic {
       if (d < minD || d > SPAWN_MAX) continue;
       if (this.vehicles.some((o) => o.active && Math.hypot(o.x - x, o.z - z) < 14)) continue;
       Object.assign(v, { edge: e, next: this.#choose(e), prev: null, off, sk: 1, s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), acc: 0,
-        lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true });
+        lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true,
+        knock: null, blend: null, roll: 0, rollV: 0, pitch: 0, pitchV: 0 });
       return;
     }
     v.active = false;
@@ -203,6 +220,7 @@ export class Traffic {
     this.enabled = on;
     for (const m of this.meshes) m.visible = on;
     this.smoke.points.visible = on;
+    this.sparks.points.visible = on;
   }
 
   update(dt, car) {
@@ -210,9 +228,11 @@ export class Traffic {
     const px = car.pos.x, pz = car.pos.y;
     for (const v of this.vehicles) {
       if (!v.active || Math.hypot(v.x - px, v.z - pz) > DESPAWN) this.#spawn(v, px, pz, SPAWN_MIN);
-      if (v.active) this.#drive(v, dt, car);
+      if (v.active && v.knock) this.#tumble(v, dt);
+      else if (v.active) this.#drive(v, dt, car);
     }
     this.#separate();
+    this.#collideKnocked();
     this.#collidePlayer(car);
     this.#sync(dt, px, pz);
   }
@@ -258,7 +278,8 @@ export class Traffic {
     };
     {
       for (const o of this.vehicles) {
-        if (o !== v && o.active && check(o.x, o.z, o.len, true, o.dx, o.dz)) blockedByTraffic = true;
+        // Сбитая машина стоит поперёк как попало — препятствие при любом её курсе.
+        if (o !== v && o.active && check(o.x, o.z, o.len, !o.knock, o.dx, o.dz)) blockedByTraffic = true;
       }
     }
     const f = car.forward;
@@ -326,7 +347,18 @@ export class Traffic {
     v.z = z;
     // Курс — по касательной к пути, при перестроении чуть в сторону сдвига.
     const side = dt > 0 ? Math.atan2((v.off - off0) / dt, Math.max(v.speed, 2)) : 0;
-    let dh = Math.atan2(tx, tz) - Math.max(-0.2, Math.min(0.2, side)) - v.heading;
+    let want = Math.atan2(tx, tz) - Math.max(-0.2, Math.min(0.2, side));
+    // После удара: сдвиг от полосы и поворот кузова уходят плавно, быстрее на ходу.
+    const b = v.blend;
+    if (b) {
+      const k = Math.exp(-dt * (0.25 + v.speed * 0.3));
+      b.x *= k; b.z *= k; b.h *= k;
+      v.x += b.x;
+      v.z += b.z;
+      want += b.h;
+      if (Math.hypot(b.x, b.z) < 0.05 && Math.abs(b.h) < 0.01) v.blend = null;
+    }
+    let dh = want - v.heading;
     dh = Math.atan2(Math.sin(dh), Math.cos(dh));
     v.heading += dh * Math.min(1, dt * 10);
     v.dx = Math.sin(v.heading);
@@ -398,6 +430,7 @@ export class Traffic {
       const a = vs[i];
       for (let j = i + 1; j < vs.length; j++) {
         const b = vs[j];
+        if (a.knock || b.knock) continue; // этих разводит удар (#collideKnocked)
         const rx = b.x - a.x, rz = b.z - a.z;
         if (Math.abs(rx) > 14 || Math.abs(rz) > 14) continue;
         if (a.dx * b.dx + a.dz * b.dz < -0.3) continue; // встречные — на своих полосах
@@ -408,12 +441,56 @@ export class Traffic {
         rear.s = Math.max(0, rear.s - gap);
         rear.speed = 0;
         [rear.x, rear.z] = this.#pose(rear);
+        if (rear.blend) { rear.x += rear.blend.x; rear.z += rear.blend.z; }
       }
     }
   }
 
+  // Скорость машины трафика в точке (px, pz): по полосе — вдоль курса, сбитая — своя плюс вращение.
+  #pointVel(v, px, pz) {
+    if (!v.knock) return [v.dx * v.speed, v.dz * v.speed];
+    const { vx, vz, w } = v.knock;
+    return [vx + w * (pz - v.z), vz - w * (px - v.x)];
+  }
+
+  // Сбить машину с полосы: дальше она едет свободно со своей скоростью (#tumble).
+  #knockOut(v) {
+    if (v.knock) return;
+    v.knock = { vx: v.dx * v.speed, vz: v.dz * v.speed, w: 0, rest: 0 };
+    v.speed = 0;
+    v.blend = null;
+  }
+
+  // Импульс J (т·м/с) в точке (px, pz) машине трафика: скорость, вращение, качнуть кузов.
+  #push(v, jx, jz, px, pz) {
+    const k = v.knock, m = v.mass;
+    k.vx += jx / m;
+    k.vz += jz / m;
+    k.w = Math.max(-4, Math.min(4, k.w - ((px - v.x) * jz - (pz - v.z) * jx) / (m * v.yk)));
+    // В осях кузова: удар сбоку — крен, спереди/сзади — клевок.
+    const lat = (jx * v.dz - jz * v.dx) / m, lon = (jx * v.dx + jz * v.dz) / m;
+    v.rollV += lat * 0.12;
+    v.pitchV -= lon * 0.06;
+  }
+
+  // Решить удар двух тел по нормали n (от b к a), точка контакта p. ma, mb — массы, ka, kb — моменты
+  // инерции на единицу массы, ra, rb — плечи (от центров к p), vn и vt — относительная скорость точек
+  // по нормали и по касательной. Возвращает [Jx, Jz] — импульс, который получает a (b — обратный).
+  static #impulse(nx, nz, vn, vt, ma, ka, rax, raz, mb, kb, rbx, rbz) {
+    const tx = -nz, tz = nx;
+    const ca = rax * nz - raz * nx, cb = rbx * nz - rbz * nx;
+    const ta = rax * tz - raz * tx, tb = rbx * tz - rbz * tx;
+    const ia = 1 / ma, ib = mb === Infinity ? 0 : 1 / mb;
+    const dn = ia + ib + ca * ca * ia / ka + (ib ? cb * cb * ib / kb : 0);
+    const dt = ia + ib + ta * ta * ia / ka + (ib ? tb * tb * ib / kb : 0);
+    const j = -(1 + RESTITUTION) * vn / dn;
+    const jt = Math.max(-MU * j, Math.min(MU * j, -vt / dt));
+    return [nx * j + tx * jt, nz * j + tz * jt];
+  }
+
   #collidePlayer(car) {
     if (car.ghostVehicles > 0) return; // выезжаем из зажатия
+    if (car.alt > CLEAR_ALT) return;   // перелетаем
     const f = car.forward;
     for (const v of this.vehicles) {
       if (!v.active || Math.hypot(v.x - car.pos.x, v.z - car.pos.y) > 16) continue;
@@ -424,17 +501,145 @@ export class Traffic {
           const d = Math.hypot(cx - ox, cz - oz), min = PLAYER_R + v.r;
           if (d >= min || d < 1e-6) continue;
           const nx = (cx - ox) / d, nz = (cz - oz) / d;
-          // Относительная скорость вдоль нормали: трафик тяжёлый, отскакивает в основном игрок.
-          // Встаёт машина трафика только от удара (не от того, что о неё трутся — иначе стоит вечно).
-          const vn = (car.vel.x - v.dx * v.speed) * nx + (car.vel.y - v.dz * v.speed) * nz;
-          if (car.touchVehicle(nx, nz, min - d, vn)) {
-            // Протаранили — долгий гудок.
+          const px = ox + nx * v.r, pz = oz + nz * v.r; // точка контакта — на борту машины трафика
+          // Расталкиваем: машину на полосе не двигаем (её держит путь), сбитую — по массам.
+          const depth = min - d, share = v.knock ? v.mass / (v.mass + PLAYER_M) : 1;
+          car.contact = true;
+          car.pos.x += nx * depth * share;
+          car.pos.y += nz * depth * share;
+          if (v.knock) { v.x -= nx * depth * (1 - share); v.z -= nz * depth * (1 - share); }
+          // Относительная скорость точек контакта (с учётом вращения обоих).
+          const rpx = px - car.pos.x, rpz = pz - car.pos.y;
+          const ux = car.vel.x + car.yawV * rpz, uz = car.vel.y - car.yawV * rpx;
+          const [tx, tz] = this.#pointVel(v, px, pz);
+          const vn = (ux - tx) * nx + (uz - tz) * nz;
+          if (vn >= 0) continue;
+          if (vn > -HARD && !v.knock) {
+            // Лёгкое касание машины на полосе — только не даём въехать в неё.
+            car.vel.x -= vn * nx;
+            car.vel.y -= vn * nz;
+            continue;
+          }
+          const vt = (ux - tx) * -nz + (uz - tz) * nx;
+          const [jx, jz] = Traffic.#impulse(nx, nz, vn, vt, PLAYER_M, PLAYER_K, rpx, rpz,
+            v.mass, v.yk, px - v.x, pz - v.z);
+          car.push(jx / PLAYER_M, jz / PLAYER_M, px, pz);
+          const was = !!v.knock;
+          if (!was && Math.hypot(jx, jz) / v.mass < KNOCK_DV) {
+            // Автобус почти не сдвинуть: только встаёт.
+            v.speed *= 0.3;
+          } else {
+            this.#knockOut(v);
+            this.#push(v, -jx, -jz, px, pz);
+          }
+          if (vn < -HARD) {
+            // Протаранили — долгий гудок, искры.
             if (v.hit <= 0 && v.honkCool <= 0) {
               this.honks.push({ x: v.x, z: v.z, bus: v.bus, long: true });
               v.honkCool = 3;
             }
-            v.speed *= 0.3;
             v.hit = 2.5;
+            this.sparks.burst(px, car.y + 0.55, pz, nx, nz, Math.min(1, -vn / 20));
+          }
+        }
+      }
+    }
+  }
+
+  // Сбитая машина едет сама: скользит, крутится, тормозит, бьётся о стены. Встала — назад в полосу.
+  #tumble(v, dt) {
+    const k = v.knock;
+    // Скорость в осях кузова: вдоль (lon) и поперёк (lat, ось (−dz, dx)).
+    let lon = k.vx * v.dx + k.vz * v.dz, lat = -k.vx * v.dz + k.vz * v.dx;
+    lon -= Math.sign(lon) * Math.min(Math.abs(lon), SLIDE_LON * dt);
+    lat -= Math.sign(lat) * Math.min(Math.abs(lat), SLIDE_LAT * dt);
+    k.vx = v.dx * lon - v.dz * lat;
+    k.vz = v.dz * lon + v.dx * lat;
+    k.w -= Math.sign(k.w) * Math.min(Math.abs(k.w), SPIN_DRAG * dt);
+    v.x += k.vx * dt;
+    v.z += k.vz * dt;
+    v.heading += k.w * dt;
+    v.dx = Math.sin(v.heading);
+    v.dz = Math.cos(v.heading);
+    // Стены: отскок с закруткой от плеча удара.
+    for (const vo of v.circles) {
+      const c = this.wallC.set(v.x + v.dx * vo, v.z + v.dz * vo);
+      const bx = c.x, bz = c.y;
+      const n = this.world.collide(c, v.r);
+      if (!n) continue;
+      v.x += c.x - bx;
+      v.z += c.y - bz;
+      const px = c.x - n.x * v.r, pz = c.y - n.z * v.r;
+      const [ux, uz] = this.#pointVel(v, px, pz);
+      const vn = ux * n.x + uz * n.z;
+      if (vn >= 0) continue;
+      const vt = ux * -n.z + uz * n.x;
+      const [jx, jz] = Traffic.#impulse(n.x, n.z, vn, vt, v.mass, v.yk, px - v.x, pz - v.z, Infinity, 1, 0, 0);
+      this.#push(v, jx, jz, px, pz);
+      if (vn < -HARD) this.#bang(v, px, pz, n.x, n.z, -vn);
+    }
+    if (Math.hypot(k.vx, k.vz) < 0.3 && Math.abs(k.w) < 0.15) k.rest += dt;
+    else k.rest = 0;
+    if (k.rest > 1.2) this.#rejoin(v);
+  }
+
+  // Вернуть вставшую машину на полосу: место на ребре — проекция, а отличие от полосы (сдвиг и курс)
+  // уходит плавно, пока она трогается (blend в #drive).
+  #rejoin(v) {
+    const e = v.edge;
+    v.knock = null;
+    v.s = Math.max(0, Math.min(e.len, (v.x - e.ax) * e.dx + (v.z - e.az) * e.dz));
+    v.speed = 0;
+    v.hit = Math.max(v.hit, 1.5);
+    const [x, z, tx, tz] = this.#pose(v);
+    const h = v.heading - Math.atan2(tx, tz);
+    v.blend = { x: v.x - x, z: v.z - z, h: Math.atan2(Math.sin(h), Math.cos(h)) };
+  }
+
+  // Удар машины трафика обо что-то: искры и звук (если рядом с игроком — решает Sound.traffic).
+  #bang(v, px, pz, nx, nz, speed) {
+    const y = this.world.roadY(v.edge.road, px, pz) ?? this.world.ground(px, pz);
+    const s = Math.min(1, speed / 20);
+    this.sparks.burst(px, y + 0.55, pz, nx, nz, s);
+    this.bangs.push({ x: px, z: pz, s });
+  }
+
+  // Сбитые машины сталкиваются с остальными: удар по массам; задетая на полосе тоже слетает с неё,
+  // если толчок заметный (цепная авария), иначе сбитая отскакивает от неё, как от стены.
+  #collideKnocked() {
+    const vs = this.vehicles;
+    for (let i = 0; i < vs.length; i++) {
+      const a = vs[i];
+      if (!a.active || !a.knock) continue;
+      for (let j = 0; j < vs.length; j++) {
+        const b = vs[j];
+        if (j === i || !b.active || (b.knock && j < i)) continue; // пару сбитых — один раз
+        if (Math.abs(b.x - a.x) > 16 || Math.abs(b.z - a.z) > 16) continue;
+        for (const ao of a.circles) {
+          for (const bo of b.circles) {
+            const ax = a.x + a.dx * ao, az = a.z + a.dz * ao, bx = b.x + b.dx * bo, bz = b.z + b.dz * bo;
+            const d = Math.hypot(ax - bx, az - bz), min = a.r + b.r;
+            if (d >= min || d < 1e-6) continue;
+            const nx = (ax - bx) / d, nz = (az - bz) / d;
+            const px = bx + nx * b.r, pz = bz + nz * b.r;
+            const depth = min - d, share = b.knock ? b.mass / (a.mass + b.mass) : 1;
+            a.x += nx * depth * share; a.z += nz * depth * share;
+            if (b.knock) { b.x -= nx * depth * (1 - share); b.z -= nz * depth * (1 - share); }
+            const [uax, uaz] = this.#pointVel(a, px, pz), [ubx, ubz] = this.#pointVel(b, px, pz);
+            const vn = (uax - ubx) * nx + (uaz - ubz) * nz;
+            if (vn >= 0) continue;
+            const vt = (uax - ubx) * -nz + (uaz - ubz) * nx;
+            let [jx, jz] = Traffic.#impulse(nx, nz, vn, vt, a.mass, a.yk, px - a.x, pz - a.z, b.mass, b.yk, px - b.x, pz - b.z);
+            if (b.knock || Math.hypot(jx, jz) / b.mass >= KNOCK_DV) {
+              this.#knockOut(b);
+              this.#push(b, -jx, -jz, px, pz);
+              b.hit = 2.5;
+            } else {
+              [jx, jz] = Traffic.#impulse(nx, nz, vn, vt, a.mass, a.yk, px - a.x, pz - a.z, Infinity, 1, 0, 0);
+              b.speed *= 0.5;
+            }
+            this.#push(a, jx, jz, px, pz);
+            if (vn < -HARD) this.#bang(a, px, pz, nx, nz, -vn);
           }
         }
       }
@@ -454,7 +659,16 @@ export class Traffic {
       const hf = w.ground(v.x + fx * a, v.z + fz * a, y), hb = w.ground(v.x - fx * a, v.z - fz * a, y);
       const hl = w.ground(v.x - rx * b, v.z - rz * b, y), hr = w.ground(v.x + rx * b, v.z + rz * b, y);
       p.set(v.x, Math.max(w.ground(v.x, v.z, y), (hf + hb) / 2), v.z);
-      e.set(-Math.atan2(hf - hb, 2 * a), v.heading, Math.atan2(hl - hr, 2 * b));
+      // Качка на подвеске после удара — пружина с демпфером.
+      if (v.roll || v.rollV || v.pitch || v.pitchV) {
+        const sdt = Math.min(dt, 1 / 30);
+        v.rollV += (-v.roll * WOB_K - v.rollV * WOB_C) * sdt;
+        v.pitchV += (-v.pitch * WOB_K - v.pitchV * WOB_C) * sdt;
+        v.roll = Math.max(-WOB_MAX, Math.min(WOB_MAX, v.roll + v.rollV * sdt));
+        v.pitch = Math.max(-WOB_MAX, Math.min(WOB_MAX, v.pitch + v.pitchV * sdt));
+        if (Math.abs(v.roll) + Math.abs(v.rollV) + Math.abs(v.pitch) + Math.abs(v.pitchV) < 1e-3) v.roll = v.rollV = v.pitch = v.pitchV = 0;
+      }
+      e.set(-Math.atan2(hf - hb, 2 * a) + v.pitch, v.heading, Math.atan2(hl - hr, 2 * b) + v.roll);
       this.quat.setFromEuler(e);
       this.mat4.compose(p, this.quat, one);
       for (const m of v.meshes) m.setMatrixAt(v.idx, this.mat4);
@@ -464,6 +678,7 @@ export class Traffic {
       }
     }
     this.smoke.step(dt);
+    this.sparks.update(dt);
     for (const m of this.meshes) m.instanceMatrix.needsUpdate = true;
   }
 }
