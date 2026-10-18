@@ -40,8 +40,10 @@ export class Menu {
       <button data-act="fps">Кадров в секунду <b data-v="fps"></b><kbd>L</kbd></button>
       <button data-act="map">Миникарта <b data-v="bigMap"></b><kbd>M</kbd></button>
       ${fs ? '<button data-act="fullscreen">Во весь экран <b data-v="fullscreen"></b><kbd>F</kbd></button>' : ''}
+      <button data-page="tricks">Трюки <b data-v="tricks"></b><i>›</i></button>
       <div class="keys">
         <kbd>W A S D</kbd> / стрелки — ехать · <kbd>Пробел</kbd> ручник · <kbd>Shift</kbd> нитро<br>
+        <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>W</kbd> kickflip · <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>S</kbd> backflip<br>
         мышь — повернуть камеру
       </div>
       </div>
@@ -50,6 +52,21 @@ export class Menu {
       <input data-name maxlength="10" autocomplete="nickname" enterkeyhint="done" spellcheck="false">
       <p class="hint">До 10 знаков. Его видят другие игроки над вашей машиной и на её номере.</p>
       <button data-page="main" class="go">‹ Готово <kbd>Esc</kbd></button>
+      </div>
+      <div class="page" data-page="tricks" hidden>
+      <h2>Трюки</h2>
+      <p class="hint">Набор — как суперудар: три нажатия подряд, быстро, не дольше 0,7 с. Газ или тормоз нажать
+        заново, даже если уже держите.</p>
+      <div class="tricks">
+        <div><b>Kickflip</b> — подскок на струях и оборот вбок; в какую сторону рулишь, туда и крутится
+          <span class="combo only-keys"><kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>W</kbd> или <kbd>↑</kbd></span>
+          <span class="combo only-touch">ручник · ручник · газ</span></div>
+        <div><b>Backflip</b> — подскок и оборот назад через крышу
+          <span class="combo only-keys"><kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>S</kbd> или <kbd>↓</kbd></span>
+          <span class="combo only-touch">ручник · ручник · тормоз</span></div>
+        <div>В полёте руль поворачивает машину боковыми соплами. Подскок — выше машин и автобусов, их можно перелететь.</div>
+      </div>
+      <button data-page="main" class="go">‹ Назад <kbd>Esc</kbd></button>
       </div>
       <div class="page" data-page="volume" hidden>
       <h2>Громкость</h2>
@@ -91,12 +108,13 @@ export class Menu {
       invite: s.copied ? 'ссылка скопирована' : s.city ? 'своя комната' : 'ссылка',
       room: s.room,
       race: s.shared ? 'со всеми в комнате' : '',
+      tricks: 'kickflip, backflip',
     };
     s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'bigMap', 'fps', 'net', 'name', 'room', 'race'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'bigMap', 'fps', 'net', 'name', 'room', 'race', 'tricks'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;
@@ -108,7 +126,7 @@ export class Menu {
     this.el.querySelector('.volumes').classList.toggle('off', !s.sound);
   }
 
-  // Показать страницу меню: 'main' или 'volume'.
+  // Показать страницу меню: 'main', 'name', 'volume' или 'tricks'.
   page(name) {
     // Уходим со страницы имени — сохранить введённое (change не всегда успевает, например по Esc).
     if (document.activeElement === this.nameIn) this.nameIn.blur();

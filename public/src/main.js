@@ -351,14 +351,17 @@ async function main() {
   let starting = true;
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
-  // Трюки — набором нажатий, как суперудар в файтинге: пробел, пробел, вперёд — не дольше COMBO_MS.
+  // Трюки — набором нажатий, как суперудар в файтинге: пробел, пробел, вперёд / назад — не дольше COMBO_MS.
   // Нажатия, а не удержание: едешь с зажатым газом — отпусти и нажми снова.
-  const TRICKS = [{ seq: ['Space', 'Space', 'Up'], run: (dir) => car.kickflip(dir) }];
+  const TRICKS = [
+    { seq: ['Space', 'Space', 'Up'], run: (dir) => car.kickflip(dir) },
+    { seq: ['Space', 'Space', 'Down'], run: () => car.backflip() },
+  ];
   const COMBO_MS = 700;
   const combo = [];
   const press = (code) => {
     if (starting || menu.isOpen || garage.isOpen || race.state === 'countdown') return;
-    const k = code === 'KeyW' || code === 'ArrowUp' ? 'Up' : code;
+    const k = code === 'KeyW' || code === 'ArrowUp' ? 'Up' : code === 'KeyS' || code === 'ArrowDown' ? 'Down' : code;
     const t = performance.now();
     combo.push({ k, t });
     if (combo.length > 4) combo.shift();

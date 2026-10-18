@@ -23,11 +23,17 @@ function stepRoll(o, yaw, speed, dt) {
   o.rollV += ((target - o.roll) * ROLL_STIFF - o.rollV * ROLL_DAMP) * sdt;
   o.roll += o.rollV * sdt;
 }
-// Kickflip (как у Roadster): подскок на струях и полный оборот вокруг продольной оси в воздухе.
-// Скорость подскока, м/с, и тяжесть, м/с²: полёт ~1,4 с, высота ~5 м — выше автобуса. Оборот кончается чуть
-// раньше посадки (доля FLIP_SPIN полёта), чтобы машина успела встать на колёса. Вращение — вокруг
+// Трюки (как у Roadster): подскок на струях и полный оборот в воздухе — kickflip вокруг продольной
+// оси (вбок), backflip вокруг поперечной (нос вверх и назад через крышу).
+// Скорость подскока, м/с, и тяжесть, м/с²: полёт ~1,65 с, высота ~5 м — выше автобуса; тяжесть меньше
+// земной — машина «висит» на струях, чтобы оборот успел пройти не спеша. Вращение — вокруг
 // точки на высоте FLIP_AXIS над днищем, а не вокруг низа колёс.
-const FLIP_VY = 13.8, FLIP_G = 19, FLIP_SPIN = 0.85, FLIP_AXIS = 0.7;
+// Оборот ведут струи, как регулятор: желаемый угол плавно доходит до 2π за долю FLIP_SPIN полёта, а сам
+// угол тянется к нему пружиной с демпфером (FLIP_K, FLIP_C) — без рывков в начале и в конце, с перелётом
+// ~11° за полный оборот и возвратом назад; к посадке успокаивается (ошибка ~0,1°). Угловое ускорение
+// пружины — это и есть работа струй (air.acc для JetFX), поэтому видны и поправки.
+const FLIP_VY = 12.3, FLIP_G = 15, FLIP_SPIN = 0.5, FLIP_AXIS = 0.7;
+const FLIP_K = 100, FLIP_C = 11, FLIP_ACC = 30; // 1/с², 1/с; рад/с² — ускорение, при котором струи на полной тяге
 // Поворот в воздухе боковыми соплами, рад/с на полном руле; курс полёта поворачивается вместе с машиной.
 const AIR_YAW = 0.9;
 // Выше этой высоты над поверхностью машины трафика не задевают — пролетаем.
@@ -59,7 +65,8 @@ export class Car {
     this.fuel = 1;          // бак, 0..1
     this.refueling = false; // выставляет Fuel
     this.air = null;        // в прыжке: { t, vy, dur, dir }
-    this.flip = 0;          // угол оборота трюка, рад
+    this.flip = 0;          // угол оборота kickflip (крен), рад
+    this.flipP = 0;         // угол оборота backflip (нос вверх), рад
     this.alt = 0;           // высота над поверхностью
     this.airSteer = 0;      // руль в воздухе (−1..1) — для боковых сопел
   }
@@ -81,7 +88,7 @@ export class Car {
     this.pitch = 0;
     this.bodyRoll = this.bodyRollV = 0;
     this.air = null;
-    this.flip = this.alt = 0;
+    this.flip = this.flipP = this.alt = 0;
     this.heading = heading;
     this.y = this.world.ground(x, z);
   }
@@ -90,12 +97,15 @@ export class Car {
   get right() { return new THREE.Vector2(-Math.cos(this.heading), Math.sin(this.heading)); }
   get speed() { return this.vel.dot(this.forward); }
 
-  // Начать kickflip; dir — в какую сторону крутиться (±1). Только с земли и не в воде.
-  kickflip(dir) {
+  // Начать трюк: kind 'kick' (dir — в какую сторону крутиться, ±1) или 'back'. Только с земли и не в воде.
+  #jump(kind, dir = 1) {
     if (this.air || this.sink > 0 || this.drowned) return false;
-    this.air = { t: 0, vy: FLIP_VY, dur: 2 * FLIP_VY / FLIP_G, dir: dir || 1, u: 0 }; // u — доля оборота, 0..1
+    // a, w — угол и угловая скорость оборота; acc — угловое ускорение в долях полной тяги (± — раскрутка/торможение).
+    this.air = { kind, t: 0, vy: FLIP_VY, dur: 2 * FLIP_VY / FLIP_G, dir, a: 0, w: 0, acc: 0 };
     return true;
   }
+  kickflip(dir) { return this.#jump('kick', dir || 1); }
+  backflip() { return this.#jump('back'); }
 
   update(dt, input) {
     // В воде: мотор заглох, руль не слушается, машина тонет. drowned — пора начинать сначала.
@@ -176,14 +186,20 @@ export class Car {
       air.t += dt;
       air.vy -= FLIP_G * dt;
       this.y += air.vy * dt;
-      const u = air.u = Math.min(1, air.t / (air.dur * FLIP_SPIN));
-      this.flip = air.dir * Math.PI * (1 - Math.cos(Math.PI * u)); // 0 → 2π, плавно разгоняется и тормозит
+      const u = Math.min(1, air.t / (air.dur * FLIP_SPIN));
+      const want = Math.PI * (1 - Math.cos(Math.PI * u)); // 0 → 2π, плавно разгоняется и тормозит
+      const acc = FLIP_K * (want - air.a) - FLIP_C * air.w;
+      air.w += acc * dt;
+      air.a += air.w * dt;
+      air.acc = acc / FLIP_ACC;
+      if (air.kind === 'back') this.flipP = air.a;
+      else this.flip = air.dir * air.a;
       if (air.vy < 0 && this.y <= ground) {
         // Посадка: на колёса, кузов качнуло, удар (звук и тряска камеры — от impact).
         this.y = ground;
         this.air = null;
-        this.flip = 0;
-        this.bodyRollV += air.dir * 1.5;
+        this.flip = this.flipP = 0;
+        if (air.kind === 'kick') this.bodyRollV += air.dir * 1.5;
         this.impact = Math.max(this.impact, 0.3);
         this.landings = (this.landings ?? 0) + 1; // для пара при посадке (JetFX); респаун в прыжке — не посадка
       }
@@ -273,7 +289,14 @@ export class Car {
     const m = this.model;
     m.position.set(this.pos.x, this.y, this.pos.y);
     m.rotation.order = 'YXZ';
-    m.rotation.set(this.pitch, this.heading, this.roll + this.flip);
+    m.rotation.set(this.pitch - this.flipP, this.heading, this.roll + this.flip);
+    if (this.flipP) {
+      // Backflip: та же ось на высоте FLIP_AXIS, поворот вокруг поперечной оси — сдвиг вперёд и вверх.
+      const s = Math.sin(this.flipP) * FLIP_AXIS;
+      m.position.x += Math.sin(this.heading) * s;
+      m.position.z += Math.cos(this.heading) * s;
+      m.position.y += (1 - Math.cos(this.flipP)) * FLIP_AXIS;
+    }
     if (this.flip) {
       // Ось оборота — на высоте FLIP_AXIS: сдвигаем модель так, чтобы эта точка стояла на месте.
       const s = Math.sin(this.flip) * FLIP_AXIS;

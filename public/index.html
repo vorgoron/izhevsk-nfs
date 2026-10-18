@@ -194,6 +194,11 @@
     #menu .volumes input { width: 100%; min-width: 0; margin: 0; height: 28px; accent-color: #ffd23f; cursor: pointer; }
     #menu .volumes output { text-align: right; color: #ffd23f; font-weight: 700; font-variant-numeric: tabular-nums; }
     #menu .keys { margin-top: 10px; font-size: 12.5px; line-height: 1.8; opacity: .7; }
+    #menu .tricks { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.06);
+      font-size: 14px; line-height: 1.45; }
+    #menu .tricks b { color: #ffd23f; }
+    #menu .tricks .combo { display: block; margin-top: 4px; font-weight: 600; }
+    body.touch #menu .only-keys, body:not(.touch) #menu .only-touch { display: none; }
     body.touch #menu kbd, body.touch #menu .keys { display: none; }
     body.touch #menu .box { padding: calc(10px + env(safe-area-inset-top)) 14px 12px; gap: 4px; }
     body.touch #menu .page { gap: 4px; }

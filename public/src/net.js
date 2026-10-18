@@ -193,7 +193,7 @@ export class Net {
     if (this.me && (this.sendT -= dt) <= 0) {
       this.sendT = SEND_EVERY;
       const f = (v, n = 2) => +v.toFixed(n);
-      const s = [f(car.pos.x), f(car.y), f(car.pos.y), f(car.heading, 3), f(car.pitch, 3), f(wrap(car.roll + car.flip), 3),
+      const s = [f(car.pos.x), f(car.y), f(car.pos.y), f(car.heading, 3), f(wrap(car.pitch - car.flipP), 3), f(wrap(car.roll + car.flip), 3),
         f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now())].join(',');
       const data = { n: this.name, s, m: this.model };
       if (this.color) data.c = this.color;
@@ -297,7 +297,7 @@ export class Net {
     m.visible = true;
     m.position.set(L(a.x, c.x), L(a.y, c.y), L(a.z, c.z));
     m.rotation.order = 'YXZ';
-    m.rotation.set(L(a.p, c.p), lerpAngle(a.h, c.h, k), lerpAngle(a.r, c.r, k)); // крен — по кругу: трюк крутит на 360°
+    m.rotation.set(lerpAngle(a.p, c.p, k), lerpAngle(a.h, c.h, k), lerpAngle(a.r, c.r, k)); // тангаж и крен — по кругу: трюки крутят на 360°
     if (m.userData.body) m.userData.body.rotation.z = L(a.br, c.br);
     g.spin += (L(a.sp, c.sp) / 0.34) * dt;
     const steer = L(a.st, c.st);
