@@ -1161,6 +1161,129 @@ export function buildBillboardChunk(world, info, mats) {
   return [frames, faces];
 }
 
+// ---------------------------------------------------------------- остановки
+
+// Знак 5.16: белая кайма, синий квадрат, белое поле, чёрный автобус сбоку (передом вправо).
+function stopSignTexture(renderer) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#f4f4f0';
+  g.fillRect(0, 0, 256, 256);
+  g.fillStyle = '#1f5fb4';
+  g.beginPath();
+  g.roundRect(9, 9, 238, 238, 16);
+  g.fill();
+  g.fillStyle = '#f4f4f0';
+  g.fillRect(44, 44, 168, 168);
+  g.fillStyle = '#16181a';
+  g.beginPath();
+  g.roundRect(56, 90, 144, 76, [10, 18, 8, 8]);
+  g.fill();
+  g.fillStyle = '#f4f4f0';
+  for (let x = 64; x < 160; x += 24) g.fillRect(x, 100, 19, 28); // боковые окна
+  g.fillRect(162, 100, 26, 42); // дверь со стеклом
+  for (const x of [88, 168]) { g.beginPath(); g.arc(x, 166, 18, 0, 7); g.fill(); } // вырезы арок
+  g.fillStyle = '#16181a';
+  for (const x of [88, 168]) { g.beginPath(); g.arc(x, 166, 13, 0, 7); g.fill(); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+
+// Павильон 4 × 1.6 м: каркас, крыша, скамья, стёкла сзади и по бокам; открытая сторона — +z (к дороге).
+// Знак — отдельно, лицом вдоль x (навстречу движению в обе стороны).
+const PAV = { curb: 1.1, front: 0.8, back: -0.75, h: 2.5 };
+const SIGN = { s: 0.7, y: 2.4 }; // сторона щитка, высота его центра
+export function stopMaterials(renderer) {
+  const posts = [-1.95, 1.95].flatMap((x) => [PAV.back, 0.7].map((z) =>
+    part(new THREE.BoxGeometry(0.08, PAV.h, 0.08).translate(x, 0.12 + PAV.h / 2, z), '#3f6e8c')));
+  const frame = mergeGeos([
+    part(new THREE.BoxGeometry(4.6, 0.5, 2.4).translate(0, -0.13, 0.15), '#a19d93'), // площадка, низ — в склон
+    ...posts,
+    part(new THREE.BoxGeometry(4.3, 0.12, 1.95).translate(0, 2.68, 0.05), '#2e3840'), // крыша
+    part(new THREE.BoxGeometry(4.3, 0.26, 0.05).translate(0, 2.6, 1.04), '#2c5d8f'),  // синий козырёк
+    ...[0.35, 2.52].map((y) => part(new THREE.BoxGeometry(3.9, 0.06, 0.05).translate(0, y, PAV.back), '#3f6e8c')),
+    part(new THREE.BoxGeometry(2.6, 0.05, 0.38).translate(0, 0.55, -0.5), '#8a5a35'), // скамья
+    ...[-1.1, 1.1].map((x) => part(new THREE.BoxGeometry(0.06, 0.43, 0.3).translate(x, 0.335, -0.5), '#3a3f44')),
+  ], ['color']);
+  const glass = mergeGeos([
+    new THREE.BoxGeometry(3.84, 2.1, 0.02).translate(0, 1.43, PAV.back),
+    ...[-1.95, 1.95].map((x) => new THREE.BoxGeometry(0.02, 2.1, 1.35).translate(x, 1.43, -0.06)),
+  ]);
+  return {
+    frame, glass,
+    // Стойка с заглушкой и щиток-пластина (кромка серая), лицо — отдельной плоскостью с каждой стороны.
+    post: mergeGeos([
+      part(new THREE.CylinderGeometry(0.04, 0.045, 2.9, 8).translate(0, 1.35, 0), '#8d9196'),
+      part(new THREE.CylinderGeometry(0.05, 0.05, 0.05, 8).translate(0, 2.82, 0), '#6e7276'),
+      part(new THREE.BoxGeometry(0.03, SIGN.s, SIGN.s).translate(0.06, SIGN.y, 0), '#b9bcbf'),
+      ...[SIGN.y - 0.22, SIGN.y + 0.22].map((y) => part(new THREE.BoxGeometry(0.05, 0.05, 0.06).translate(0.03, y, 0), '#6e7276')), // хомуты
+    ], ['color']),
+    faces: [[Math.PI / 2, 0.077], [-Math.PI / 2, 0.043]].map(([r, x]) =>
+      new THREE.PlaneGeometry(SIGN.s - 0.02, SIGN.s - 0.02).rotateY(r).translate(x, SIGN.y, 0)),
+    frameMat: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    glassMat: new THREE.MeshLambertMaterial({ color: '#a9cfdc', transparent: true, opacity: 0.3, depthWrite: false }),
+    sign: new THREE.MeshLambertMaterial({ map: stopSignTexture(renderer) }),
+  };
+}
+
+const STOP_SHELTER = 0.6; // доля павильонов там, где навес в OSM не размечен
+
+// Автобусные остановки квадрата из OSM (точки у тротуара). Павильон — лицом к ближайшей дороге,
+// в PAV.curb от края (точка OSM бывает за тротуаром — так павильон стоял далеко), знак — у бордюра. Навес — по тегу
+// shelter; не влез (дом, вода, другая дорога, под путепроводом) — остаётся только знак.
+export function buildStopChunk(world, info, mats) {
+  const { data } = info;
+  if (!data.stops.length) return null;
+  const { free, inBuilding } = spotChecks(world, data);
+  const clearAt = (x, z) => {
+    const nr = world.nearestRoad(x, z, 4);
+    return !(nr && nr.d < 0.3) && !world.isWater(x, z) && !inBuilding(x, z) && free(x, z)
+      && world.ground(x, z) < world.terrain(x, z) + 2;
+  };
+  const pavs = [], signs = [];
+  for (const [x, z, sh] of data.stops) {
+    const r = world.nearestRoad(x, z, 50); // ≤ 30 м ищет только в одной клетке индекса
+    if (!r) continue;
+    const s = r.seg, half = s.w / 2, d = r.d + half;
+    const L = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1, dx = (s.bx - s.ax) / L, dz = (s.bz - s.az) / L;
+    // Нормаль от оси дороги к остановке; точка на самой оси — справа по ходу.
+    let nx = -dz, nz = dx;
+    if (d > 0.3) { nx = (x - r.px) / d; nz = (z - r.pz) / d; }
+    const ang = Math.atan2(dx, dz) + Math.PI / 2; // лицо знака — вдоль дороги
+    const curb = (u) => [r.px + nx * (half + 0.6) + dx * u, r.pz + nz * (half + 0.6) + dz * u];
+    let sign = curb(0);
+    const hash = Math.imul(Math.round(x * 10) ^ Math.round(z * 10) * 7919, 2654435761) >>> 0;
+    if (sh === 1 || (sh === 2 && (hash % 1000) / 1000 < STOP_SHELTER)) {
+      const off = half + PAV.curb + PAV.front;
+      const px = r.px + nx * off, pz = r.pz + nz * off;
+      const corners = [[-2.3, -1.05], [2.3, -1.05], [2.3, 1.35], [-2.3, 1.35], [0, 0]].map(([u, v]) =>
+        [px - nz * u - nx * v, pz + nx * u - nz * v]);
+      if (corners.every(([qx, qz]) => clearAt(qx, qz))) {
+        pavs.push([px, world.terrain(px, pz), pz, Math.atan2(-nx, -nz)]); // +z модели — к дороге
+        // Знак — за торцом павильона по ходу движения ближней полосы (правостороннее).
+        sign = curb((nx * -dz + nz * dx >= 0 ? 1 : -1) * 2.7);
+      }
+    }
+    if (clearAt(...sign)) signs.push([sign[0], world.terrain(...sign), sign[1], ang]);
+  }
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+  const up = new THREE.Vector3(0, 1, 0);
+  const inst = (geo, mat, spots, shadow) => {
+    const mesh = new THREE.InstancedMesh(geo, mat, spots.length);
+    spots.forEach(([x, y, z, a], i) => mesh.setMatrixAt(i, m.compose(p.set(x, y, z), q.setFromAxisAngle(up, a), one)));
+    mesh.computeBoundingSphere();
+    mesh.castShadow = shadow;
+    return mesh;
+  };
+  const out = [];
+  if (pavs.length) out.push(inst(mats.frame, mats.frameMat, pavs, true), inst(mats.glass, mats.glassMat, pavs, false));
+  if (signs.length) out.push(inst(mats.post, mats.frameMat, signs, true), ...mats.faces.map((f) => inst(f, mats.sign, signs, false)));
+  return out.length ? out : null;
+}
+
 // ---------------------------------------------------------------- миникарта
 
 export const MINIMAP_SCALE = 0.5; // пикселей на метр (1 px = 2 м)

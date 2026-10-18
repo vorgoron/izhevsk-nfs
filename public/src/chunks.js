@@ -1,8 +1,9 @@
-// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья, столбы, щиты строятся по мере
+// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья, столбы, щиты, остановки строятся по мере
 // приближения (не больше нескольких квадратов за кадр) и выгружаются, когда игрок уехал.
 import * as THREE from 'three';
 import {
   buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, buildPoleChunk, buildBillboardChunk,
+  buildStopChunk, stopMaterials,
   drawMinimapTile, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
 
@@ -15,7 +16,7 @@ export class ChunkManager {
     this.texSize = texSize;
     this.loaded = new Map(); // ключ → { group, terrain }
     this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials(),
-      ads: billboardMaterials(renderer) };
+      ads: billboardMaterials(renderer), stops: stopMaterials(renderer) };
   }
 
   #key(ci, cj) { return ci * 10000 + cj; }
@@ -53,6 +54,8 @@ export class ChunkManager {
     if (poles) group.add(tag(poles, 'столбы'));
     const ads = buildBillboardChunk(w, info, this.mats.ads);
     if (ads) group.add(...ads.map((o) => tag(o, 'щиты')));
+    const stops = buildStopChunk(w, info, this.mats.stops);
+    if (stops) group.add(...stops.map((o) => tag(o, 'остановки')));
     this.scene.add(group);
     this.loaded.set(this.#key(ci, cj), group);
   }
@@ -65,7 +68,8 @@ export class ChunkManager {
       if (o.material === this.mats.ads.face) { o.geometry.dispose(); return; }
       if (!o.isInstancedMesh) o.geometry.dispose();
       else o.dispose();
-      if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls) {
+      if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls
+        && o.material !== this.mats.stops.sign) {
         o.material.map.dispose();
         o.material.dispose();
       }

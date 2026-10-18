@@ -678,6 +678,24 @@ def tram_routes(aligned):
     return out
 
 
+# ---------------------------------------------------------------- остановки
+
+def transport_stops(inside):
+    """Автобусные и троллейбусные остановки: [x, z, навес (1 — есть, 0 — нет, 2 — не размечен)].
+    Точки highway=bus_stop / platform у тротуара; повторы ближе 15 м — одна. Трамвайные пока не берём."""
+    out = []
+    for nid, t in node_tags.items():
+        if t.get("train") == "yes" or t.get("highway") != "bus_stop" and (
+                t.get("public_transport") != "platform" or t.get("tram") == "yes"):
+            continue
+        x, z = project(*nodes[nid])
+        if not inside([(x, z)]) or any(math.dist((x, z), o[:2]) < 15 for o in out):
+            continue
+        out.append([round(x, 1), round(z, 1), {"yes": 1, "no": 0}.get(t.get("shelter"), 2)])
+    print(f"stops: {len(out)}")
+    return out
+
+
 # ---------------------------------------------------------------- заправки-точки
 
 def add_point_fuel_stations(fuel, areas, buildings, roads, road_nodes, inside):
@@ -1026,6 +1044,7 @@ def build_city():
         "waterways": waterways,
         "fuel": fuel,
         "trams": tram_routes(aligned),
+        "stops": transport_stops(inside),
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()
