@@ -57,8 +57,10 @@ export class Breakables {
     if (!items) return;
     this.owners.delete(owner);
     const gone = new Set(items);
-    for (const it of items) {
-      const k = this.#cell(it.x, it.z), list = this.grid.get(k);
+    // По клеткам, а не по предметам: два предмета в одной клетке — второй найдёт её уже удалённой.
+    for (const k of new Set(items.map((it) => this.#cell(it.x, it.z)))) {
+      const list = this.grid.get(k);
+      if (!list) continue;
       const rest = list.filter((o) => !gone.has(o));
       if (rest.length) this.grid.set(k, rest);
       else this.grid.delete(k);
