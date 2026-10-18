@@ -1153,16 +1153,19 @@ export function buildTreeChunk(world, info, mats) {
     if (!spots.length) return;
     const trunks = new THREE.InstancedMesh(trunkGeo, mats.trunk, spots.length);
     const crowns = new THREE.InstancedMesh(crownGeo, mats.crown, spots.length);
+    const solid = []; // для breakables.js: ствол — препятствие [x, y, z, масштаб]
     spots.forEach(([x, z], i) => {
-      const k = 0.7 + rand() * 0.7;
+      const k = 0.7 + rand() * 0.7, y = world.terrain(x, z) - 0.2;
       q.setFromAxisAngle(up, rand() * 6.28);
-      m.compose(p.set(x, world.terrain(x, z) - 0.2, z), q, s.set(k, k * (0.85 + rand() * 0.4), k));
+      m.compose(p.set(x, y, z), q, s.set(k, k * (0.85 + rand() * 0.4), k));
+      solid.push([x, y, z, k]);
       trunks.setMatrixAt(i, m);
       crowns.setMatrixAt(i, m);
       crowns.setColorAt(i, color(c));
     });
     for (const t of [trunks, crowns]) t.computeBoundingSphere();
     crowns.castShadow = true;
+    trunks.userData.spots = solid;
     out.push(trunks, crowns);
   };
   // Берёзы, липы, тополя условно — разными оттенками зелёного; ели — тёмные сине-зелёные.
@@ -1257,6 +1260,7 @@ export function buildPoleChunk(world, info, mats) {
   spots.forEach(([x, y, z, a], i) => mesh.setMatrixAt(i, m.compose(p.set(x, y, z), q.setFromAxisAngle(up, a), one)));
   mesh.computeBoundingSphere();
   mesh.castShadow = true;
+  mesh.userData.spots = spots; // для breakables.js
   return mesh;
 }
 
@@ -1474,6 +1478,7 @@ export function buildBillboardChunk(world, info, mats) {
   });
   frames.computeBoundingSphere();
   frames.castShadow = true;
+  frames.userData.spots = spots; // для breakables.js: плакаты щита i — вершины 8i…8i+7
   const fg = new THREE.BufferGeometry();
   fg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   fg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));

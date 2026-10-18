@@ -15,6 +15,7 @@ export class ChunkManager {
     this.radius = radius;
     this.texSize = texSize;
     this.loaded = new Map(); // ключ → { group, terrain }
+    this.breakables = null;  // выставляет main.js: столбы и щиты квадратов ломаются
     this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials(),
       ads: billboardMaterials(renderer), stops: stopMaterials(renderer), fences: fenceMaterials(renderer) };
   }
@@ -50,10 +51,13 @@ export class ChunkManager {
     if (rails) group.add(tag(rails, 'рельсы'));
     const trees = buildTreeChunk(w, info, this.mats.trees);
     if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
+    for (const t of trees) if (t.userData.spots) this.breakables?.addTrees(t);
     const poles = buildPoleChunk(w, info, this.mats.poles);
     if (poles) group.add(tag(poles, 'столбы'));
     const ads = buildBillboardChunk(w, info, this.mats.ads);
     if (ads) group.add(...ads.map((o) => tag(o, 'щиты')));
+    if (poles) this.breakables?.addPoles(poles);
+    if (ads) this.breakables?.addBoards(...ads);
     const stops = buildStopChunk(w, info, this.mats.stops);
     if (stops) group.add(...stops.map((o) => tag(o, 'остановки')));
     const fences = buildFenceChunk(w, info, this.mats.fences);
@@ -66,6 +70,7 @@ export class ChunkManager {
     this.scene.remove(group);
     group.traverse((o) => {
       if (!o.isMesh) return;
+      if (o.isInstancedMesh) this.breakables?.remove(o);
       // Общие материалы и геометрии деревьев не трогаем; своё — геометрии и текстура земли.
       if (o.material === this.mats.ads.face) { o.geometry.dispose(); return; }
       if (!o.isInstancedMesh) o.geometry.dispose();

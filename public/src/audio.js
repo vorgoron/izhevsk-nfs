@@ -216,6 +216,41 @@ export class Sound {
     o.stop(t + 0.35);
   }
 
+  // Снесли столб, светофор или щит (Breakables.smashes): треск и звон металла, удар — свой, от car.impact.
+  // Снесённое сбитой машиной трафика вдали — тише.
+  smash(list, car) {
+    if (!list.length || !this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    for (const b of list) {
+      const s = b.s * Math.min(1, (12 / Math.max(Math.hypot(b.x - car.pos.x, b.z - car.pos.y), 1)) ** 1.1);
+      if (s < 0.03) continue;
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.setValueAtTime(2600, t);
+      f.frequency.exponentialRampToValueAtTime(700, t + 0.3);
+      f.Q.value = 0.8;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.7 * s, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      src.connect(f).connect(g).connect(this.carBus);
+      src.start(t, Math.random());
+      src.stop(t + 0.5);
+      for (const freq of [430, 655, 1170]) { // звон стойки — негармоничные обертоны
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = freq * (0.95 + Math.random() * 0.1);
+        const og = ctx.createGain();
+        og.gain.setValueAtTime(0.12 * s, t);
+        og.gain.exponentialRampToValueAtTime(0.001, t + 0.6 + Math.random() * 0.4);
+        o.connect(og).connect(this.carBus);
+        o.start(t);
+        o.stop(t + 1.1);
+      }
+    }
+  }
+
   // Струи трюка: шум с полосой, уходящей вниз, — «пшш» на взлёте.
   #whoosh() {
     const ctx = this.ctx, t = ctx.currentTime;

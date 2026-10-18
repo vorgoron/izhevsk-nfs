@@ -12,6 +12,7 @@ import { Sound } from './audio.js';
 import { Radio } from './radio.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
+import { Breakables } from './breakables.js';
 import { Sky, HORIZON } from './sky.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
@@ -112,6 +113,9 @@ async function main() {
     for (const o of scene.children.slice(n)) o.userData.perf = label;
     return r;
   };
+  // Столбы, щиты (из квадратов) и светофоры ломаются от удара.
+  const breakables = owned('обломки', () => new Breakables(world, scene));
+  chunks.breakables = breakables;
   const footbridges = buildFootbridges(world, new THREE.MeshLambertMaterial({ color: '#9a968e' }));
   footbridges.userData.perf = 'мосты';
   scene.add(footbridges);
@@ -170,6 +174,7 @@ async function main() {
   const queues = owned('очереди', () => new Queues(world, fuel, scene));
   const traffic = owned('трафик', () => new Traffic(world, scene));
   const signals = owned('светофоры', () => new Signals(world, traffic, scene));
+  breakables.addSignals(signals);
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
   const garage = new Garage(choice, {
@@ -233,7 +238,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, garage, fuel, queues, chunks, net }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -753,6 +758,7 @@ async function main() {
     const inp = race.state === 'countdown' || garage.isOpen ? {} : input();
     while (acc >= STEP) {
       car.update(STEP, inp);
+      breakables.collide(car);
       acc -= STEP;
     }
     chunks.update(car.pos.x, car.pos.y, isTouch ? 1 : 2);
@@ -773,12 +779,14 @@ async function main() {
     net.progress = race.shared && race.state !== 'countdown' && net.race?.t === race.startAt ? race.progress(car) : null;
     net.update(dt, car);
     traffic.update(dt, car);
+    breakables.update(dt, car, traffic);
     nitroFx.update(dt, car);
     jetFx.update(dt, car);
     dustFx.update(dt, car);
     exhaustFx.update(dt, car);
     sound.update(dt, car, inp, race);
     sound.traffic(dt, traffic, car);
+    sound.smash(breakables.smashes.splice(0), car);
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);
     skyDome.update(dt, camera, car.pos.x, car.pos.y);
