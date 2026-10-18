@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { carGlows, glowMaterial } from './night.js';
 
 // Профили: [z, y] — z вперёд (перед машины при +len/2), y вверх, от земли.
 // body — кузов, cabin — салон (оба под краску, cabin уже кузова и сужается к крыше).
@@ -443,6 +444,11 @@ export function buildPlayerModel(key, color) {
   g.userData.plateHost = meshes[1];
   g.userData.plateSpots = plateSpots(spec, parts.detail);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  // Ночью — ореолы фар и фонарей (свет на дорогу у своей машины — прожектор в main.js).
+  const glow = new THREE.Mesh(carGlows(parts.lights), glowMaterial());
+  glow.position.y = -ROLL_CENTER;
+  glow.frustumCulled = false;
+  body.add(glow);
   return g;
 }
 

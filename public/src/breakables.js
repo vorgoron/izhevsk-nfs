@@ -73,13 +73,18 @@ export class Breakables {
   }
 
   // Фонарные столбы квадрата (buildPoleChunk): один InstancedMesh, геометрия от основания.
+  // Пятно света под фонарём (glow[1], свои матрицы) гаснет и возвращается вместе со столбом.
   addPoles(mesh) {
-    this.#add(mesh, mesh.userData.spots.map(([x, y, z, a], i) => ({
-      kind: KINDS.pole, x, y, z, a,
-      hide: () => hideInstance(mesh, i),
-      show: (m) => showInstance(mesh, i, m),
-      make: () => new THREE.Mesh(mesh.geometry, mesh.material),
-    })));
+    const pool = mesh.userData.glow?.[1];
+    this.#add(mesh, mesh.userData.spots.map(([x, y, z, a], i) => {
+      let pm = null;
+      return {
+        kind: KINDS.pole, x, y, z, a,
+        hide: () => { if (pool) pm = hideInstance(pool, i); return hideInstance(mesh, i); },
+        show: (m) => { if (pm) showInstance(pool, i, pm); pm = null; showInstance(mesh, i, m); },
+        make: () => new THREE.Mesh(mesh.geometry, mesh.material),
+      };
+    }));
   }
 
   // Деревья квадрата (buildTreeChunk): стволы — препятствие, радиус по масштабу дерева.

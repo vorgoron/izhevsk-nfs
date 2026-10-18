@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { MODELS, vehicleParts, prism, withArches, wheelArches, ARCH_GAP } from './vehicles.js';
 import { ExhaustFX, HitFX } from './effects.js';
 import { CLEAR_ALT, YAW_K as PLAYER_K } from './car.js';
+import { carGlows, busGlows, glowMaterial } from './night.js';
 
 // Скорость по классу дороги, м/с. Нет в списке — трафика там нет (дворы, проезды).
 const SPEED = {
@@ -89,11 +90,12 @@ export class Traffic {
       const p = vehicleParts(MODELS[key], { wheelsInDetail: true });
       return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0,
         meshes: [new THREE.InstancedMesh(p.paint, lit, count), new THREE.InstancedMesh(p.detail, lit, count),
-          new THREE.InstancedMesh(p.lights, glow, count)] };
+          new THREE.InstancedMesh(p.lights, glow, count), new THREE.InstancedMesh(carGlows(p.lights, { beam: true }), glowMaterial(), count)] };
     });
     const bus = busGeometry();
     kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0,
-      meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES)] });
+      meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES),
+        new THREE.InstancedMesh(busGlows(), glowMaterial(), BUSES)] });
     this.meshes = kinds.flatMap((k) => k.meshes);
     const c = new THREE.Color();
     this.vehicles = [];
@@ -124,8 +126,7 @@ export class Traffic {
     for (const m of this.meshes) {
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
-      m.castShadow = true;
-      m.receiveShadow = true;
+      m.castShadow = m.receiveShadow = m.material !== glowMaterial(); // ночное свечение фар — без теней
       m.frustumCulled = false; // инстансы разбросаны по карте, сфера геометрии им не подходит
       scene.add(m);
     }

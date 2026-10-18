@@ -6,7 +6,7 @@ const CAMERAS = ['сзади', 'из салона', 'сверху'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, fps, bigMap, fullscreen };
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, bigMap, fullscreen };
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
   // shared (гонка общая — в своей комнате на связи).
@@ -36,6 +36,7 @@ export class Menu {
       <button data-page="volume">Громкость <b data-v="volume"></b><i>›</i></button>
       <button data-act="radio">Радио <b data-v="radio"></b><kbd>B</kbd></button>
       <button data-act="traffic">Трафик <b data-v="traffic"></b><kbd>T</kbd></button>
+      <button data-act="night">Время суток <b data-v="night"></b><kbd>Y</kbd></button>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
       <button data-act="fps">Кадров в секунду <b data-v="fps"></b><kbd>L</kbd></button>
       <button data-act="map">Миникарта <b data-v="bigMap"></b><kbd>M</kbd></button>
@@ -99,6 +100,7 @@ export class Menu {
       radio: s.radio ?? 'выкл',
       traffic: s.traffic ? 'вкл' : 'выкл',
       camera: CAMERAS[s.camera],
+      night: s.night ? 'ночь' : 'день',
       fps: s.fps ? `до ${s.fps}` : 'без предела',
       bigMap: s.bigMap ? 'крупная' : 'обычная',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
@@ -114,7 +116,7 @@ export class Menu {
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'bigMap', 'fps', 'net', 'name', 'room', 'race', 'tricks'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'bigMap', 'fps', 'net', 'name', 'room', 'race', 'tricks'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;

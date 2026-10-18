@@ -53,7 +53,7 @@ export class ChunkManager {
     if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
     for (const t of trees) if (t.userData.spots) this.breakables?.addTrees(t);
     const poles = buildPoleChunk(w, info, this.mats.poles);
-    if (poles) group.add(tag(poles, 'столбы'));
+    if (poles) group.add(tag(poles, 'столбы'), ...poles.userData.glow.map((o) => tag(o, 'столбы')));
     const ads = buildBillboardChunk(w, info, this.mats.ads);
     if (ads) group.add(...ads.map((o) => tag(o, 'щиты')));
     if (poles) this.breakables?.addPoles(poles);

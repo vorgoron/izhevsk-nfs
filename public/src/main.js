@@ -14,6 +14,7 @@ import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
 import { Breakables } from './breakables.js';
 import { Sky, HORIZON } from './sky.js';
+import { DayNight } from './night.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
 import { Trams } from './trams.js';
@@ -91,7 +92,8 @@ async function main() {
   scene.fog = new THREE.Fog(sky, 250, 1600);
   const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.5, 4000);
 
-  scene.add(new THREE.HemisphereLight('#dfe9f5', '#5a5444', 1.4));
+  const hemi = new THREE.HemisphereLight('#dfe9f5', '#5a5444', 1.4);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
   sun.castShadow = true;
   sun.shadow.mapSize.setScalar(isTouch ? 1024 : 2048);
@@ -170,6 +172,11 @@ async function main() {
   progress(0.95, 'Трафик, заправки, светофоры…');
   await frame();
   const skyDome = owned('небо', () => new Sky(scene, world.baseTerrain(0, 0)));
+  // Ночь: фары своей машины — прожектор без теней (днём выключен, см. DayNight).
+  const headlight = new THREE.SpotLight('#ffeccc', 0, 90, 0.62, 0.55, 1.1);
+  scene.add(headlight, headlight.target);
+  const dayNight = new DayNight({ scene, hemi, sun, dir: SUN_DIR, sky: skyDome, ads: chunks.mats.ads, headlight });
+  const HEAD_POS = new THREE.Vector3(), HEAD_AIM = new THREE.Vector3();
   const fuel = owned('заправки', () => new Fuel(world, scene));
   const queues = owned('очереди', () => new Queues(world, fuel, scene));
   const traffic = owned('трафик', () => new Traffic(world, scene));
@@ -238,7 +245,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -313,6 +320,7 @@ async function main() {
       if (!p || !net.startRace(p.from, p.to)) race.start(car.pos.x, car.pos.y);
     },
     camera: () => { camMode = (camMode + 1) % 3; },
+    night: () => dayNight.toggle(),
     fps: () => {
       fpsCap = FPS_CAPS[(FPS_CAPS.indexOf(fpsCap) + 1) % FPS_CAPS.length];
       try { localStorage.setItem('fps', fpsCap); } catch {}
@@ -342,7 +350,7 @@ async function main() {
       get: (k) => sound.vol[k],
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, bigMap: $('minimap').classList.contains('big'),
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.night, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared }),
     setName: (v) => net.setName(v),
@@ -351,7 +359,7 @@ async function main() {
   $('menu-btn').addEventListener('click', actions.menu);
   $('race-btn').addEventListener('click', actions.race);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
-    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen' };
+    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night' }; // Y — «Н» в русской раскладке
 
   let starting = true;
   const keys = new Set();
@@ -790,6 +798,13 @@ async function main() {
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);
     skyDome.update(dt, camera, car.pos.x, car.pos.y);
+    dayNight.update(dt);
+    if (headlight.visible) {
+      const m = car.model, front = (m.userData.length || 4.2) / 2;
+      m.updateMatrixWorld();
+      headlight.position.copy(m.localToWorld(HEAD_POS.set(0, 0.75, front - 0.2)));
+      headlight.target.position.copy(m.localToWorld(HEAD_AIM.set(0, -0.6, front + 22)));
+    }
     sun.target.position.set(car.pos.x, car.y, car.pos.y);
     sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 300);
     updateHud();

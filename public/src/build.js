@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { MARKED_CLASSES, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
+import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
 
 const AREA_COLORS = {
   water: '#3d6f8e', park: '#4f6b3a', grass: '#6c8448', sand: '#cdbb8a', industrial: '#7a7670', paved: '#9a968e',
@@ -505,12 +506,14 @@ const FACADES = [
 const END_WALL = 12;
 
 // Маска «не красить в цвет стены» (стекло, рамы, вставки): рисуется параллельно атласу, потом
-// уходит в альфу атласа (0.5 — свой цвет, 1 — умножить на цвет стены).
-let rawMask = null;
+// уходит в альфу атласа (0.5 — свой цвет, 1 — умножить на цвет стены, 0.25 — стекло: свой цвет,
+// ночью может светиться). Маска стекла — тоже параллельно: прямоугольники стёкол, а стеклом
+// считаются только тёмные пиксели в них (переплёт и ограждения балконов поверх — не стекло).
+let rawMask = null, glassMask = null;
 const raw = (x, y, w, h) => rawMask.fillRect(x, y, w, h);
 
-// Стекло: тёмное с разбросом; переплёт и подоконник светлые. Светящихся окон нет: ночи в игре нет,
-// а окно атласа повторяется на каждом этаже — горел бы целый столбец.
+// Стекло: тёмное с разбросом; переплёт и подоконник светлые. Ночью окна светятся каждое по-своему
+// (facadeMaterial): какое горит — решает хеш окна, а не атлас, иначе горел бы целый столбец.
 function glass(g, x, y, w, h, rnd, { mull = true, sill = true, frame = '#f4f4f0' } = {}) {
   const sh = 45 + rnd() * 40;
   raw(x - 3, y - 3, w + 6, h + 6);
@@ -518,6 +521,7 @@ function glass(g, x, y, w, h, rnd, { mull = true, sill = true, frame = '#f4f4f0'
   g.fillRect(x - 3, y - 3, w + 6, h + 6);
   g.fillStyle = `rgb(${sh * 0.8},${sh},${sh * 1.15})`;
   g.fillRect(x, y, w, h);
+  glassMask.fillRect(x, y, w, h);
   g.fillStyle = 'rgba(255,255,255,0.18)'; // блик сверху
   g.fillRect(x, y, w, h * 0.3);
   g.fillStyle = frame;
@@ -668,11 +672,16 @@ function facadeAtlas(renderer) {
   mc.height = c.height;
   rawMask = mc.getContext('2d', { willReadFrequently: true });
   rawMask.fillStyle = '#fff';
+  const gc = document.createElement('canvas');
+  gc.width = c.width;
+  gc.height = c.height;
+  glassMask = gc.getContext('2d', { willReadFrequently: true });
+  glassMask.fillStyle = '#fff';
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   FACADES.forEach((f, k) => {
     for (const ground of [false, true]) {
-      for (const x of [g, rawMask]) {
+      for (const x of [g, rawMask, glassMask]) {
         x.save();
         x.translate(0, (2 * k + (ground ? 1 : 0)) * FA.R);
         x.beginPath(); x.rect(0, 0, FA.W, FA.R); x.clip();
@@ -682,12 +691,17 @@ function facadeAtlas(renderer) {
       f.draw(g, ground, rnd);
       g.restore();
       rawMask.restore();
+      glassMask.restore();
     }
   });
   const img = g.getImageData(0, 0, c.width, c.height), mask = rawMask.getImageData(0, 0, c.width, c.height).data;
-  for (let i = 3; i < mask.length; i += 4) if (mask[i] > 127) img.data[i] = 128;
+  const gm = glassMask.getImageData(0, 0, c.width, c.height).data, d = img.data;
+  for (let i = 3; i < mask.length; i += 4) {
+    if (mask[i] > 127) d[i] = 128;
+    if (gm[i] > 127 && Math.max(d[i - 3], d[i - 2], d[i - 1]) < 150 && d[i - 1] >= d[i - 3]) d[i] = 64;
+  }
   g.putImageData(img, 0, 0);
-  rawMask = null;
+  rawMask = glassMask = null;
   const t = new THREE.CanvasTexture(c);
   t.premultiplyAlpha = false;
   t.colorSpace = THREE.SRGBColorSpace;
@@ -695,7 +709,8 @@ function facadeAtlas(renderer) {
   return t;
 }
 
-// Стены: uv = (метры вдоль стены / w полосы, этажи от уровня земли); атрибут aFac = (полоса, число этажей).
+// Стены: uv = (метры вдоль стены / w полосы, этажи от уровня земли); атрибут aFac = (полоса + доля-зерно
+// дома < 0.5, число этажей). Зерно — чтобы у одинаковых домов горели разные окна.
 // Ниже земли (цоколь на склоне) и выше последнего этажа (парапет) — гладкая стена. Повтор — fract в
 // шейдере, выборка через textureGrad по непрерывным uv: иначе на стыке плиток мип-уровень скачет (шов).
 function facadeMaterial(renderer) {
@@ -704,23 +719,40 @@ function facadeMaterial(renderer) {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec2 aFac;\nvarying vec2 vFac;')
       .replace('#include <uv_vertex>', '#include <uv_vertex>\nvFac = aFac;');
+    sh.uniforms.uNight = NIGHT;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vFac;')
+      .replace('#include <common>', '#include <common>\nvarying vec2 vFac;\nuniform float uNight;')
       .replace('#include <map_fragment>', `
-        float tintMask = 1.0;
+        float tintMask = 1.0, glassMask = 0.0;
         vec2 fu = vMapUv;
-        float nb = ${2 * FACADES.length}.0;
+        float nb = ${2 * FACADES.length}.0, stripe = floor(vFac.x);
         vec4 sampledDiffuseColor = vec4(fu.y < 0.0 ? 0.85 : 1.0);
         if (fu.y >= 0.0 && fu.y < vFac.y) {
           float row = fu.y < 1.0 ? 1.0 : 0.0;
-          vec2 t = vec2(fract(fu.x), 1.0 - (2.0 * vFac.x + 1.0 + row - fract(fu.y)) / nb);
+          vec2 t = vec2(fract(fu.x), 1.0 - (2.0 * stripe + 1.0 + row - fract(fu.y)) / nb);
           vec2 sc = vec2(1.0, 1.0 / nb);
           sampledDiffuseColor = textureGrad(map, t, dFdx(fu) * sc, dFdy(fu) * sc);
           tintMask = smoothstep(0.6, 0.9, sampledDiffuseColor.a);
+          glassMask = 1.0 - smoothstep(0.3, 0.42, sampledDiffuseColor.a);
           sampledDiffuseColor.a = 1.0;
         }
         diffuseColor *= sampledDiffuseColor;`)
-      .replace('#include <color_fragment>', 'diffuseColor.rgb *= mix(vec3(1.0), vColor, tintMask);');
+      .replace('#include <color_fragment>', 'diffuseColor.rgb *= mix(vec3(1.0), vColor, tintMask);')
+      // Ночью горит часть окон (плитками атласа); первый этаж (витрины) — чаще.
+      // Тёплые и холодные, разной яркости; горящее окно не освещается, а светится само.
+      .replace('#include <emissivemap_fragment>', `
+        if (uNight > 0.0 && glassMask > 0.0) {
+          // Всё в хеше — целые: дробная часть vFac.x после интерполяции дрожит, и окно рябило бы.
+          vec2 win = floor(fu); // окно — плитка этажа: в одних сериях в плитке два окна, в других одно посередине
+          float seed = floor(fract(vFac.x) * 2100.0 + 0.5);
+          float h = fract(sin(dot(win, vec2(12.9898, 78.233)) + seed * 0.917 + stripe * 3.7) * 43758.5453);
+          float h2 = fract(h * 157.31);
+          float on = step(fu.y < 1.0 ? 0.45 : 0.68, h);
+          vec3 lamp = mix(vec3(1.0, 0.72, 0.38), vec3(0.85, 0.9, 1.0), step(0.8, h2)) * (0.55 + 0.6 * fract(h2 * 31.7));
+          float lit = on * glassMask * uNight;
+          diffuseColor.rgb *= 1.0 - lit;
+          totalEmissiveRadiance += lamp * lit;
+        }`);
   };
   return m;
 }
@@ -961,7 +993,7 @@ export function buildBuildingChunk(world, list, mats) {
         wn.push(nx, 0, nz);
         wc.push(rc_.r, rc_.g, rc_.b);
         wuv.push(uu, vv);
-        wf.push(band, floors && floors + extra);
+        wf.push(band + 0.01 + (hash % 997) / 2100, floors && floors + extra);
       }
       u = u2;
     }
@@ -1198,7 +1230,15 @@ export function poleMaterials() {
     part(new THREE.BoxGeometry(0.75, 0.17, 0.32).rotateZ(-0.1).translate(ex + 0.22, ey - 0.02, 0), '#4b5054'),
     part(new THREE.BoxGeometry(0.52, 0.05, 0.24).rotateZ(-0.1).translate(ex + 0.25, ey - 0.12, 0), '#f2ead0'),
   ], ['color']);
-  return { geo, mat: new THREE.MeshLambertMaterial({ vertexColors: true }) };
+  // Стекло светильника (самое светлое в вершинных цветах) ночью светится.
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uNight = NIGHT;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uNight;')
+      .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += vec3(1.0, 0.85, 0.6) * 1.6 * uNight * step(0.7, vColor.r);');
+  };
+  return { geo, mat, glowGeo: poleGlowGeometry() };
 }
 
 const POLE_STEP = { primary: 32, secondary: 34, tertiary: 36, residential: 42, unclassified: 42 }; // м вдоль улицы
@@ -1261,6 +1301,17 @@ export function buildPoleChunk(world, info, mats) {
   mesh.computeBoundingSphere();
   mesh.castShadow = true;
   mesh.userData.spots = spots; // для breakables.js
+  // Свет фонарей ночью. Ореолы — те же экземпляры, что столбы (снесённый гаснет вместе со своим);
+  // пятна — свои, на высоте земли под светильником, их прячет и возвращает breakables.js.
+  const glow = new THREE.InstancedMesh(mats.glowGeo.halo, glowMaterial(), spots.length);
+  glow.instanceMatrix = mesh.instanceMatrix;
+  const pool = new THREE.InstancedMesh(mats.glowGeo.pool, glowMaterial(), spots.length);
+  spots.forEach(([x, y, z, a], i) => {
+    const px = x + Math.cos(a) * POLE_POOL_X, pz = z - Math.sin(a) * POLE_POOL_X;
+    pool.setMatrixAt(i, m.makeTranslation(px, world.ground(px, pz, y + 2) + 0.3, pz));
+  });
+  glow.frustumCulled = pool.frustumCulled = false;
+  mesh.userData.glow = [glow, pool];
   return mesh;
 }
 
