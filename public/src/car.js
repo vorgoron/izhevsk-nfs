@@ -23,6 +23,15 @@ function stepRoll(o, yaw, speed, dt) {
   o.rollV += ((target - o.roll) * ROLL_STIFF - o.rollV * ROLL_DAMP) * sdt;
   o.roll += o.rollV * sdt;
 }
+// Kickflip (как у Roadster): подскок на струях и полный оборот вокруг продольной оси в воздухе.
+// Скорость подскока, м/с, и тяжесть, м/с²: полёт ~1,4 с, высота ~5 м — выше автобуса. Оборот кончается чуть
+// раньше посадки (доля FLIP_SPIN полёта), чтобы машина успела встать на колёса. Вращение — вокруг
+// точки на высоте FLIP_AXIS над днищем, а не вокруг низа колёс.
+const FLIP_VY = 13.8, FLIP_G = 19, FLIP_SPIN = 0.85, FLIP_AXIS = 0.7;
+// Поворот в воздухе боковыми соплами, рад/с на полном руле; курс полёта поворачивается вместе с машиной.
+const AIR_YAW = 0.9;
+// Выше этой высоты над поверхностью машины трафика не задевают — пролетаем.
+const CLEAR_ALT = 1.6;
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
 const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
@@ -49,6 +58,10 @@ export class Car {
     this.dry = new THREE.Vector2(); // последняя точка на суше
     this.fuel = 1;          // бак, 0..1
     this.refueling = false; // выставляет Fuel
+    this.air = null;        // в прыжке: { t, vy, dur, dir }
+    this.flip = 0;          // угол оборота трюка, рад
+    this.alt = 0;           // высота над поверхностью
+    this.airSteer = 0;      // руль в воздухе (−1..1) — для боковых сопел
   }
 
   // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы).
@@ -67,6 +80,8 @@ export class Car {
     this.drowned = false;
     this.pitch = 0;
     this.bodyRoll = this.bodyRollV = 0;
+    this.air = null;
+    this.flip = this.alt = 0;
     this.heading = heading;
     this.y = this.world.ground(x, z);
   }
@@ -75,9 +90,17 @@ export class Car {
   get right() { return new THREE.Vector2(-Math.cos(this.heading), Math.sin(this.heading)); }
   get speed() { return this.vel.dot(this.forward); }
 
+  // Начать kickflip; dir — в какую сторону крутиться (±1). Только с земли и не в воде.
+  kickflip(dir) {
+    if (this.air || this.sink > 0 || this.drowned) return false;
+    this.air = { t: 0, vy: FLIP_VY, dur: 2 * FLIP_VY / FLIP_G, dir: dir || 1, u: 0 }; // u — доля оборота, 0..1
+    return true;
+  }
+
   update(dt, input) {
     // В воде: мотор заглох, руль не слушается, машина тонет. drowned — пора начинать сначала.
-    const wet = this.sink > 0 || this.world.isWater(this.pos.x, this.pos.y);
+    // Над водой в прыжке — ещё не в воде.
+    const wet = this.sink > 0 || (!this.air && this.world.isWater(this.pos.x, this.pos.y));
     if (wet) {
       this.sink += dt;
       this.drowned = this.sink > SINK_TIME;
@@ -109,7 +132,10 @@ export class Car {
     const top = (nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed) * (1 - (1 - OFF_SPEED) * off);
     const accel = this.accel * (1 - (1 - OFF_ACCEL) * off);
 
-    if (input.up) {
+    const air = this.air;
+    if (air) {
+      // В воздухе колёса не держат: ни газа, ни тормоза — летим по инерции, поворачивают только сопла.
+    } else if (input.up) {
       vf += (nitroOn ? accel * 1.8 : accel) * Math.max(0, 1 - vf / top) * dt;
     } else if (input.down) {
       if (vf > 0.5) vf -= BRAKE * dt;
@@ -120,17 +146,18 @@ export class Car {
     vf -= vf * Math.abs(vf) * 0.0004 * dt; // сопротивление воздуха
     vf -= vf * OFF_DRAG * off * dt;        // грунт тормозит
     if (vf > top + 1) vf -= Math.min(vf - top, 14 * dt); // съехал с дороги на скорости — сбрасываем до предела грунта
-    if (input.brake) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 9 * dt);
+    if (input.brake && !air) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 9 * dt);
 
     // Руль: плавно к цели, на скорости — меньше угол.
     const target = input.steer ?? (input.right ? 1 : 0) - (input.left ? 1 : 0);
     this.steer += (target - this.steer) * Math.min(1, dt * 8);
     const speedFactor = Math.min(1, Math.abs(vf) / 6) / (1 + Math.abs(vf) / 45);
     const driftBoost = input.brake ? 1.5 : 1;
-    const yawRate = this.steer * STEER_RATE * speedFactor * driftBoost * Math.sign(vf || 1);
+    this.airSteer = air ? this.steer : 0;
+    const yawRate = air ? this.steer * AIR_YAW : this.steer * STEER_RATE * speedFactor * driftBoost * Math.sign(vf || 1);
     this.heading -= yawRate * dt;
 
-    vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip * (1 - (1 - OFF_GRIP) * off)) * dt);
+    if (!air) vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip * (1 - (1 - OFF_GRIP) * off)) * dt);
     const f2 = this.forward, r2 = this.right;
     this.vel.set(f2.x * vf + r2.x * vr, f2.y * vf + r2.y * vr);
     // Сглаженное продольное ускорение — для камеры (отстаёт при разгоне).
@@ -145,21 +172,40 @@ export class Car {
     // От текущей высоты: под мостом настил над головой не считается поверхностью.
     const y0 = this.y;
     const ground = g.ground(this.pos.x, this.pos.y, y0);
-    this.y += (ground - this.y) * Math.min(1, dt * 15);
+    if (air) {
+      air.t += dt;
+      air.vy -= FLIP_G * dt;
+      this.y += air.vy * dt;
+      const u = air.u = Math.min(1, air.t / (air.dur * FLIP_SPIN));
+      this.flip = air.dir * Math.PI * (1 - Math.cos(Math.PI * u)); // 0 → 2π, плавно разгоняется и тормозит
+      if (air.vy < 0 && this.y <= ground) {
+        // Посадка: на колёса, кузов качнуло, удар (звук и тряска камеры — от impact).
+        this.y = ground;
+        this.air = null;
+        this.flip = 0;
+        this.bodyRollV += air.dir * 1.5;
+        this.impact = Math.max(this.impact, 0.3);
+        this.landings = (this.landings ?? 0) + 1; // для пара при посадке (JetFX); респаун в прыжке — не посадка
+      }
+    } else {
+      this.y += (ground - this.y) * Math.min(1, dt * 15);
+    }
+    this.alt = this.y - ground;
     const hf = g.ground(this.pos.x + f2.x * 1.6, this.pos.y + f2.y * 1.6, y0);
     const hb = g.ground(this.pos.x - f2.x * 1.6, this.pos.y - f2.y * 1.6, y0);
     const hl = g.ground(this.pos.x - r2.x * 0.9, this.pos.y - r2.y * 0.9, y0);
     const hr = g.ground(this.pos.x + r2.x * 0.9, this.pos.y + r2.y * 0.9, y0);
     const k = Math.min(1, dt * 10);
-    this.pitch += (-Math.atan2(hf - hb, 3.2) - this.pitch) * k;
-    this.roll += (Math.atan2(hl - hr, 1.8) - this.roll) * k; // от рельефа — вся машина
+    // В воздухе — ровно, рельеф под колёсами не наклоняет.
+    this.pitch += ((air ? 0 : -Math.atan2(hf - hb, 3.2)) - this.pitch) * k;
+    this.roll += ((air ? 0 : Math.atan2(hl - hr, 1.8)) - this.roll) * k; // от рельефа — вся машина
     // Кузов кренится наружу поворота от бокового ускорения (скорость × угловая скорость) и
     // покачивается на подвеске — пружина с демпфером, после поворота чуть перекачивается обратно.
     const sus = { roll: this.bodyRoll, rollV: this.bodyRollV };
     stepRoll(sus, -yawRate, vf, dt);
     this.bodyRoll = sus.roll; this.bodyRollV = sus.rollV;
     // Кочки на грунте: мелкая тряска кузова, сильнее на скорости.
-    if (off > 0.05) {
+    if (off > 0.05 && !air) {
       const b = off * Math.min(1, Math.abs(vf) / 12) * 0.025;
       this.pitch += (Math.random() - 0.5) * b;
       this.roll += (Math.random() - 0.5) * b;
@@ -179,6 +225,7 @@ export class Car {
   // vn — относительная скорость по нормали. Лёгкое касание только расталкивает, удар — отскок,
   // потеря скорости и тряска. Возвращает true при ударе.
   touchVehicle(nx, nz, depth, vn) {
+    if (this.alt > CLEAR_ALT) return false; // перелетаем
     this.contact = true;
     this.pos.x += nx * depth;
     this.pos.y += nz * depth;
@@ -226,7 +273,14 @@ export class Car {
     const m = this.model;
     m.position.set(this.pos.x, this.y, this.pos.y);
     m.rotation.order = 'YXZ';
-    m.rotation.set(this.pitch, this.heading, this.roll);
+    m.rotation.set(this.pitch, this.heading, this.roll + this.flip);
+    if (this.flip) {
+      // Ось оборота — на высоте FLIP_AXIS: сдвигаем модель так, чтобы эта точка стояла на месте.
+      const s = Math.sin(this.flip) * FLIP_AXIS;
+      m.position.x += Math.cos(this.heading) * s;
+      m.position.z -= Math.sin(this.heading) * s;
+      m.position.y += (1 - Math.cos(this.flip)) * FLIP_AXIS;
+    }
     if (m.userData.body) m.userData.body.rotation.z = this.bodyRoll;
     this.wheelSpin += (vf / 0.34) * dt;
     for (const { pivot, w, front } of m.userData.wheels) {

@@ -439,6 +439,7 @@ export function buildPlayerModel(key, color) {
   }
   g.userData.paint = paintMat;
   g.userData.length = parts.length;
+  g.userData.width = spec.width;
   g.userData.plateHost = meshes[1];
   g.userData.plateSpots = plateSpots(spec, parts.detail);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });

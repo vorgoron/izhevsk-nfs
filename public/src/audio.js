@@ -216,6 +216,25 @@ export class Sound {
     o.stop(t + 0.35);
   }
 
+  // Струи трюка: шум с полосой, уходящей вниз, — «пшш» на взлёте.
+  #whoosh() {
+    const ctx = this.ctx, t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 0.8;
+    f.frequency.setValueAtTime(2500, t);
+    f.frequency.exponentialRampToValueAtTime(400, t + 0.6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.7, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    src.connect(f).connect(g).connect(this.carBus);
+    src.start(t, Math.random());
+    src.stop(t + 0.75);
+  }
+
   // Трамвайный звонок: два коротких «дзынь».
   bell() {
     if (!this.ctx || this.ctx.state !== 'running') return;
@@ -355,6 +374,10 @@ export class Sound {
     if (car.sink > 0 && !this.prev.sink) this.#splash();
     if (car.sink > 0.3 && Math.random() < dt * 9) this.#tone(180 + Math.random() * 260, t, 0.08, 'sine', 0.12);
     this.prev.sink = car.sink;
+
+    // ---- трюк: шипение струй на взлёте (посадку озвучивает удар ниже)
+    if (car.air && !this.prev.air) this.#whoosh();
+    this.prev.air = !!car.air;
 
     // ---- удар о стену: impact подскакивает в момент столкновения
     if (car.impact > this.prev.impact + 0.05) this.#thump(Math.min(1, 0.3 + car.impact));

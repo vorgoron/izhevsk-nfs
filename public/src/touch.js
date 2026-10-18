@@ -5,7 +5,7 @@ export const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart'
 
 const STEER_PX = 70; // на сколько пикселей тянуть до полного поворота руля
 
-export function setupTouch({ keys, analog, actions }) {
+export function setupTouch({ keys, analog, actions, press }) {
   if (!isTouch) return;
   document.body.classList.add('touch');
 
@@ -38,6 +38,7 @@ export function setupTouch({ keys, analog, actions }) {
       e.preventDefault();
       b.setPointerCapture(e.pointerId);
       keys.add(code);
+      press(code); // набор для трюков: ручник, ручник, газ
       b.classList.add('on');
     });
     for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, up);

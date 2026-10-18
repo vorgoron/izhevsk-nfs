@@ -101,6 +101,200 @@ export class NitroFX {
   }
 }
 
+// Струи трюка (kickflip, как у Roadster): холодный газ, не пламя. Тонкая светлая сердцевина у сопла
+// (конус, к концу тает в чёрное — при сложении это прозрачность) и поток мелких белых клубов вдоль оси
+// сопла — он и делает струю видимой. Два сопла в днище толкают при взлёте и мягко сажают перед посадкой;
+// четыре боковых (по два с борта, спереди и сзади) крутят оборот: момент вокруг продольной оси даёт
+// только вертикальная составляющая, поэтому сопла наклонены — на одном борту бьют вниз, на другом
+// вверх (оба борта крутят в одну сторону). На раскрутке и на торможении наклоны противоположные,
+// тяга — по угловому ускорению: сильнее всего в начале и в конце оборота, в середине машина крутится
+// по инерции и сопла почти гаснут. Руль в воздухе поворачивает машину ими же, горизонтально и
+// накрест — переднее с одного борта и заднее с другого. Всё крутится вместе с машиной. На взлёте —
+// кольцо дыма; после посадки — много пара: облако, стелющееся по земле, и ещё STEAM_TIME пар идёт
+// из-под днища, стихая; клубы пара поднимаются (rise) и долго тают.
+const JET_PUFFS = 1600, STREAM_RATE = 90; // шт; клубов в секунду из одного сопла на полной тяге
+const ROLL_TILT = 0.6; // рад (~35°): наклон боковых сопел на обороте
+const STEAM_TIME = 1.4, STEAM_RATE = 110; // с; клубов в секунду из-под днища сразу после посадки
+const DOWN = new THREE.Vector3(0, -1, 0);
+
+export class JetFX {
+  constructor(scene) {
+    // Сердцевина длиной 1 вдоль −y, широкий край у сопла; масштаб по y — длина.
+    const core = (r) => {
+      const g = new THREE.ConeGeometry(r, 1, 10, 4, true).rotateX(Math.PI).translate(0, -0.5, 0);
+      const p = g.attributes.position, c = new Float32Array(p.count * 3);
+      for (let i = 0; i < p.count; i++) {
+        const f = (1 + p.getY(i)) ** 1.5; // 1 у сопла → 0 на конце
+        c.set([0.85 * f, 0.93 * f, f], i * 3);
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+      return g;
+    };
+    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const downGeo = core(0.1), sideGeo = core(0.075);
+    // Сопло: { mesh, dir — ось струи в координатах машины, len — длина сердцевины, side/front — для боковых }.
+    const nozzle = (geo, len, dir, extra) => {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      return { mesh, len, dir: new THREE.Vector3(...dir), k: 0, carry: 0, ...extra };
+    };
+    this.down = [0, 1].map(() => nozzle(downGeo, 1.9, [0, -1, 0]));
+    this.side = [[1, true], [-1, true], [1, false], [-1, false]].map(([side, front]) => {
+      return nozzle(sideGeo, 1.4, [side, 0, 0], { side, front });
+    });
+    this.all = [...this.down, ...this.side];
+
+    // Клубы: точки разного размера (атрибут aSize, как у выхлопа).
+    const n = JET_PUFFS;
+    this.pos = new Float32Array(n * 3);
+    this.col = new Float32Array(n * 4);
+    this.size = new Float32Array(n);
+    this.vel = new Float32Array(n * 3);
+    this.life = new Float32Array(n);
+    this.max = new Float32Array(n);
+    this.s0 = new Float32Array(n);
+    this.s1 = new Float32Array(n);
+    this.a = new Float32Array(n);
+    this.rise = new Float32Array(n); // всплытие, м/с² (пар — тёплый)
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
+    const pm = new THREE.PointsMaterial({ size: 1, map: glowDot(), vertexColors: true, transparent: true, depthWrite: false });
+    pm.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('void main() {', 'attribute float aSize;\nvoid main() {')
+        .replace('gl_PointSize = size;', 'gl_PointSize = size * aSize;');
+    };
+    this.points = new THREE.Points(geo, pm);
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+    this.next = 0;
+    this.wasAir = false;
+    this.landings = 0;
+    this.steamT = 0;
+    this.q = new THREE.Vector3();
+    this.p = new THREE.Vector3();
+    this.d = new THREE.Vector3();
+  }
+
+  // Новая машина: нижние сопла под передней и задней частью днища, боковые — на бортах.
+  attach(model) {
+    const len = model.userData.length ?? 4.2, w = (model.userData.width ?? 1.7) / 2;
+    this.down[0].mesh.position.set(0, 0.3, len * 0.28);
+    this.down[1].mesh.position.set(0, 0.3, -len * 0.28);
+    for (const s of this.side) s.mesh.position.set(s.side * w, 0.65, (s.front ? 1 : -1) * len * 0.36);
+    for (const n of this.all) model.add(n.mesh);
+  }
+
+  #puff(x, y, z, vx, vy, vz, life, s0, s1, a, rise = 0) {
+    const i = this.next;
+    this.next = (this.next + 1) % JET_PUFFS;
+    this.pos.set([x, y, z], i * 3);
+    this.vel.set([vx, vy, vz], i * 3);
+    this.max[i] = this.life[i] = life;
+    this.s0[i] = s0;
+    this.s1[i] = s1;
+    this.a[i] = a;
+    this.rise[i] = rise;
+  }
+
+  update(dt, car) {
+    const air = car.air;
+    // Тяга нижних: на взлёте — полная и слабеет за 0,35 с; при снижении у земли — тормозящие струи.
+    const thrust = !air ? 0 : air.t < 0.35 ? 1 - air.t / 0.35 * 0.6 : air.vy < 0 && car.alt < 2.2 ? 0.55 : 0;
+    for (const n of this.down) n.k = thrust;
+    // Оборот идёт как dir·π(1 − cos πu): угловое ускорение ∝ c = cos(πu) — от +1 (раскрутка) к −1 (торможение).
+    // Момент вокруг оси z от струи на борту side·x с вертикальной составляющей ey: −side·ey, поэтому
+    // для момента знака dir·c струя бьёт вниз (ey < 0) на борту side = dir·sign(c) и вверх на другом.
+    const c = air && air.u < 1 ? Math.cos(Math.PI * air.u) : 0;
+    const roll = Math.abs(c) ** 0.7; // тяга по ускорению, чуть дольше заметна у краёв
+    // Руль вправо (курс уменьшается, нос к −x): нос толкает левое переднее, хвост — правое заднее.
+    const st = car.airSteer;
+    for (const s of this.side) {
+      const yaw = Math.abs(st) > 0.15 && (s.front ? s.side : -s.side) === Math.sign(st) ? Math.min(1, Math.abs(st)) : 0;
+      s.k = Math.max(roll, yaw);
+      // Наклон — от доли «оборотной» тяги: рулим без оборота — сопло горизонтально.
+      const tilt = s.k > 0 ? ROLL_TILT * (roll / s.k) * -s.side * (air?.dir ?? 1) * Math.sign(c) : 0;
+      s.dir.set(s.side * Math.cos(tilt), Math.sin(tilt), 0);
+      s.mesh.quaternion.setFromUnitVectors(DOWN, s.dir); // −y сердцевины → по оси струи
+    }
+
+    const m = car.model.matrixWorld, p = this.p, d = this.d, t = performance.now() / 1000;
+    for (const [i, n] of this.all.entries()) {
+      n.mesh.visible = n.k > 0.06;
+      if (!n.mesh.visible) { n.carry = 0; continue; }
+      const wob = 1 + 0.12 * Math.sin(t * 47 + i * 1.7); // дрожит плавно, без скачков размера
+      n.mesh.scale.set(0.7 + 0.3 * n.k, n.len * n.k * wob, 0.7 + 0.3 * n.k);
+      // Поток клубов из сопла вдоль его оси (ось — в мир вместе с поворотом и оборотом машины).
+      n.carry += STREAM_RATE * n.k * dt;
+      if (n.carry < 1) continue;
+      p.copy(n.mesh.position).applyMatrix4(m);
+      d.copy(n.dir).transformDirection(m);
+      for (; n.carry >= 1; n.carry--) {
+        const v = (13 + 6 * n.k) * (0.85 + Math.random() * 0.3), j = () => (Math.random() - 0.5) * 0.12;
+        this.#puff(p.x + j(), p.y + j(), p.z + j(), car.vel.x * 0.5 + d.x * v, d.y * v, car.vel.y * 0.5 + d.z * v,
+          0.45 + Math.random() * 0.2, 0.45, 1.9, 0.75 * n.k);
+      }
+    }
+    // Взлёт: кольцо дыма по земле во все стороны.
+    if (air && !this.wasAir) {
+      for (let k = 0; k < 50; k++) {
+        const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 5;
+        this.#puff(car.pos.x, car.y + 0.3, car.pos.y, car.vel.x * 0.3 + Math.cos(a) * s, 0.3 + Math.random() * 1.5, car.vel.y * 0.3 + Math.sin(a) * s,
+          1.5 * (0.6 + Math.random() * 0.6), 1.2, 3.2, 0.5);
+      }
+    }
+    this.wasAir = !!air;
+    // Посадка: облако пара, расходится по земле во все стороны, потом пар ещё идёт из-под днища.
+    const landed = (car.landings ?? 0) !== this.landings;
+    this.landings = car.landings ?? 0;
+    if (landed) {
+      this.steamT = STEAM_TIME;
+      for (let k = 0; k < 110; k++) {
+        const a = Math.random() * Math.PI * 2, s = 4 + Math.random() * 6;
+        this.#puff(car.pos.x + Math.cos(a) * 0.8, car.y + 0.2 + Math.random() * 0.4, car.pos.y + Math.sin(a) * 0.8,
+          car.vel.x * 0.4 + Math.cos(a) * s, 0.2 + Math.random() * 0.8, car.vel.y * 0.4 + Math.sin(a) * s,
+          2 + Math.random() * 1.2, 1, 4.2, 0.5, 0.7);
+      }
+    }
+    if (this.steamT > 0) {
+      const k = this.steamT / STEAM_TIME, m = car.model.matrixWorld, q = this.q;
+      const len = car.model.userData.length ?? 4.2, w = (car.model.userData.width ?? 1.7) / 2;
+      this.steamT -= dt;
+      this.steamCarry = (this.steamCarry ?? 0) + STEAM_RATE * k * dt;
+      for (; this.steamCarry >= 1; this.steamCarry--) {
+        // Из-под днища в случайной точке, наружу от середины машины.
+        q.set((Math.random() * 2 - 1) * w, 0.25, (Math.random() - 0.5) * len).applyMatrix4(m);
+        const dx = q.x - car.pos.x, dz = q.z - car.pos.y, dl = Math.hypot(dx, dz) || 1, s = 1.5 + Math.random() * 2.5;
+        this.#puff(q.x, q.y, q.z, car.vel.x * 0.6 + dx / dl * s, 0.4 + Math.random() * 0.8, car.vel.y * 0.6 + dz / dl * s,
+          1.8 + Math.random() * 0.9, 0.8, 3.4, 0.42 * (0.4 + 0.6 * k), 1);
+      }
+    }
+
+    const floor = car.y - car.alt + 0.15; // клубы не уходят в землю
+    for (let i = 0; i < JET_PUFFS; i++) {
+      const j = i * 3, c = i * 4;
+      if (this.life[i] <= 0) { this.col[c + 3] = 0; this.size[i] = 0; continue; }
+      this.life[i] -= dt;
+      const drag = Math.exp(-2.2 * dt);
+      this.vel[j] *= drag;
+      this.vel[j + 1] = this.vel[j + 1] * drag + this.rise[i] * dt;
+      this.vel[j + 2] *= drag;
+      this.pos[j] += this.vel[j] * dt;
+      this.pos[j + 1] = Math.max(floor, this.pos[j + 1] + this.vel[j + 1] * dt);
+      this.pos[j + 2] += this.vel[j + 2] * dt;
+      const age = 1 - Math.max(0, this.life[i] / this.max[i]); // 0 → 1
+      this.size[i] = this.s0[i] + (this.s1[i] - this.s0[i]) * Math.sqrt(age);
+      this.col.set([0.92, 0.95, 1, this.a[i] * Math.min(1, age * 10) * (1 - age)], c);
+    }
+    const g = this.points.geometry;
+    g.attributes.position.needsUpdate = true;
+    g.attributes.color.needsUpdate = true;
+    g.attributes.aSize.needsUpdate = true;
+  }
+}
+
 // «Линии скорости»: короткие белые штрихи от центра к краям экрана, только на нитро.
 function speedLines() {
   const c = document.createElement('canvas');

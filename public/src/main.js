@@ -16,7 +16,7 @@ import { Sky, HORIZON } from './sky.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
 import { Trams } from './trams.js';
-import { NitroFX, DustFX, ExhaustFX } from './effects.js';
+import { NitroFX, JetFX, DustFX, ExhaustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
@@ -138,14 +138,17 @@ async function main() {
     car.setModel(m, MODELS[key].stats);
     net.setVehicle(key, color);
     nitroFx.attach(m);
+    jetFx.attach(m);
     exhaustFx.attach(m);
     car.update(0, {}); // поставить новую модель на место старой
   };
   const nitroFx = owned('эффекты', () => new NitroFX(scene));
+  const jetFx = owned('эффекты', () => new JetFX(scene));
   const dustFx = owned('эффекты', () => new DustFX(scene));
   const exhaustFx = owned('эффекты', () => new ExhaustFX(scene));
   exhaustFx.attach(car.model);
   nitroFx.attach(car.model);
+  jetFx.attach(car.model);
   const race = new Race(world, scene);
 
   // Старт у Центральной площади.
@@ -348,6 +351,25 @@ async function main() {
   let starting = true;
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
+  // Трюки — набором нажатий, как суперудар в файтинге: пробел, пробел, вперёд — не дольше COMBO_MS.
+  // Нажатия, а не удержание: едешь с зажатым газом — отпусти и нажми снова.
+  const TRICKS = [{ seq: ['Space', 'Space', 'Up'], run: (dir) => car.kickflip(dir) }];
+  const COMBO_MS = 700;
+  const combo = [];
+  const press = (code) => {
+    if (starting || menu.isOpen || garage.isOpen || race.state === 'countdown') return;
+    const k = code === 'KeyW' || code === 'ArrowUp' ? 'Up' : code;
+    const t = performance.now();
+    combo.push({ k, t });
+    if (combo.length > 4) combo.shift();
+    for (const { seq, run } of TRICKS) {
+      const tail = combo.slice(-seq.length);
+      if (tail.length < seq.length || tail.some((c, i) => c.k !== seq[i]) || t - tail[0].t > COMBO_MS) continue;
+      // Сторона оборота — куда рулишь; руль прямо — наугад.
+      const st = analog.steer ?? (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+      if (run(Math.sign(st) || (Math.random() < 0.5 ? -1 : 1))) combo.length = 0;
+    }
+  };
   addEventListener('keydown', (e) => {
     // Печатают в поле (имя в меню) — буквы не управляют игрой, работает только Esc.
     if (e.target.closest?.('input:not([type=range])') && e.code !== 'Escape') return;
@@ -355,11 +377,12 @@ async function main() {
     sound.unlock();
     if (e.code !== 'KeyB') radio.unlock();
     if (starting) return; // экран «Поехали»: клавиши игры не работают
+    if (!e.repeat) press(e.code);
     // Esc в гараже закрывает гараж (garage.js гасит событие), а не открывает меню.
     if (!e.repeat && !e.defaultPrevented && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
   });
-  setupTouch({ keys, analog, actions });
+  setupTouch({ keys, analog, actions, press });
   $('minimap').addEventListener('click', actions.map);
   addEventListener('keyup', (e) => keys.delete(e.code));
   addEventListener('blur', () => keys.clear());
@@ -748,6 +771,7 @@ async function main() {
     net.update(dt, car);
     traffic.update(dt, car);
     nitroFx.update(dt, car);
+    jetFx.update(dt, car);
     dustFx.update(dt, car);
     exhaustFx.update(dt, car);
     sound.update(dt, car, inp, race);
