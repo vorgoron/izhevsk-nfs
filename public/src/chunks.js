@@ -1,9 +1,9 @@
-// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья, столбы, щиты, остановки строятся по мере
+// Подгрузка города квадратами вокруг игрока: земля, дороги, дома, деревья, столбы, щиты, остановки, заборы строятся по мере
 // приближения (не больше нескольких квадратов за кадр) и выгружаются, когда игрок уехал.
 import * as THREE from 'three';
 import {
   buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, buildPoleChunk, buildBillboardChunk,
-  buildStopChunk, stopMaterials,
+  buildStopChunk, stopMaterials, buildFenceChunk, fenceMaterials,
   drawMinimapTile, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
 
@@ -16,7 +16,7 @@ export class ChunkManager {
     this.texSize = texSize;
     this.loaded = new Map(); // ключ → { group, terrain }
     this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials(),
-      ads: billboardMaterials(renderer), stops: stopMaterials(renderer) };
+      ads: billboardMaterials(renderer), stops: stopMaterials(renderer), fences: fenceMaterials(renderer) };
   }
 
   #key(ci, cj) { return ci * 10000 + cj; }
@@ -56,6 +56,8 @@ export class ChunkManager {
     if (ads) group.add(...ads.map((o) => tag(o, 'щиты')));
     const stops = buildStopChunk(w, info, this.mats.stops);
     if (stops) group.add(...stops.map((o) => tag(o, 'остановки')));
+    const fences = buildFenceChunk(w, info, this.mats.fences);
+    if (fences) group.add(...fences.map((o) => tag(o, 'заборы')));
     this.scene.add(group);
     this.loaded.set(this.#key(ci, cj), group);
   }
@@ -69,7 +71,7 @@ export class ChunkManager {
       if (!o.isInstancedMesh) o.geometry.dispose();
       else o.dispose();
       if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls
-        && o.material !== this.mats.stops.sign) {
+        && o.material !== this.mats.stops.sign && !this.mats.fences.owns(o.material)) {
         o.material.map.dispose();
         o.material.dispose();
       }

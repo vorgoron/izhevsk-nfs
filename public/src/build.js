@@ -1607,6 +1607,240 @@ export function buildStopChunk(world, info, mats) {
   return out.length ? out : null;
 }
 
+// ---------------------------------------------------------------- заборы
+
+// Вид забора: t — толщина (0 — одна плоскость с прозрачностью), len — метров на повтор текстуры вдоль,
+// vm — метров на повтор по высоте (null — текстура на всю высоту), tint — оттенки (по забору).
+const FENCE = {
+  bars: { t: 0, len: 2.5, vm: null, tint: ['#2f3a30', '#2a2b2c', '#3b4756', '#585d58', '#24452f'] },
+  mesh: { t: 0, len: 2.5, vm: null, tint: ['#a5a9aa', '#8c968a'] },
+  wood: { t: 0.06, len: 2, vm: null, tint: ['#ffffff', '#e2d6c4', '#cbbda6', '#f0e2c8'] },
+  prof: { t: 0.04, len: 1.15, vm: null, tint: ['#3f7050', '#7b3a2e', '#3c5f82', '#93989b', '#6b5440', '#9a8b4f'] },
+  panel: { t: 0.16, len: 4, vm: null, tint: ['#ffffff', '#ece8e0', '#dcd8cf'] },
+  brick: { t: 0.4, len: 2, vm: 1, tint: ['#ffffff', '#e9dcd2', '#d8c9be'] },
+  hedge: { t: 0.9, len: 2, vm: 1, tint: ['#ffffff', '#dce8d2'] },
+  jersey: { t: 0.6, len: 2, vm: null, tint: ['#ffffff'] },
+};
+const FENCE_PIECE = 5;  // м: забор дробится, чтобы идти по рельефу (меш рельефа — треугольники 15 м)
+const FENCE_SINK = 0.3; // м: низ уходит в землю — на склоне не висит
+
+function fenceTexture(kind, renderer) {
+  const W = 256, H = kind === 'brick' || kind === 'hedge' ? 128 : 256;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d');
+  const rnd = mulberry(kind.length * 977);
+  if (kind === 'bars') { // решётка: столб у края, две поперечины, прутья через ~12 см
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, 10, H);
+    g.fillRect(0, 22, W, 9);
+    g.fillRect(0, H - 34, W, 9);
+    for (let x = 16; x < W; x += 12) g.fillRect(x, 14, 4, H - 22);
+    for (let x = 16; x < W; x += 12) g.fillRect(x - 1, 8, 6, 8); // пики
+  } else if (kind === 'mesh') { // рабица на столбах
+    g.strokeStyle = '#fff';
+    g.lineWidth = 2;
+    for (let k = -H; k < W + H; k += 14) {
+      g.beginPath(); g.moveTo(k, 6); g.lineTo(k + H, H + 6 - 6); g.stroke();
+      g.beginPath(); g.moveTo(k, H); g.lineTo(k + H, 6); g.stroke();
+    }
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, 9, H);
+    g.fillRect(0, 4, W, 4);
+  } else if (kind === 'wood') { // доски с зазорами и две прожилины
+    g.fillStyle = '#4a3a2a';
+    g.fillRect(0, 0, W, H);
+    for (let x = 0; x < W; x += 16) {
+      const v = 120 + rnd() * 40 | 0;
+      g.fillStyle = `rgb(${v},${v * 0.78 | 0},${v * 0.55 | 0})`;
+      g.fillRect(x + 1, 4 + rnd() * 6, 13, H);
+      g.fillStyle = 'rgba(40,30,20,0.25)';
+      for (let k = 0; k < 3; k++) g.fillRect(x + 2 + rnd() * 10, 0, 1, H);
+    }
+    g.fillStyle = 'rgba(60,45,30,0.5)';
+    g.fillRect(0, 50, W, 8);
+    g.fillRect(0, H - 60, W, 8);
+  } else if (kind === 'prof') { // гофр трапецией: полка, наклон, впадина
+    const grd = g.createLinearGradient(0, 0, W, 0);
+    [[0, '#d8d8d8'], [0.15, '#f2f2f2'], [0.3, '#d0d0d0'], [0.38, '#a8a8a8'], [0.62, '#b4b4b4'], [0.7, '#e2e2e2'], [1, '#d8d8d8']]
+      .forEach(([o, col]) => grd.addColorStop(o, col));
+    g.fillStyle = grd;
+    g.fillRect(0, 0, W, H);
+  } else if (kind === 'panel') { // плита ПО-2: ромбы рельефа, рамка, столб у края
+    g.fillStyle = '#bdb9b0';
+    g.fillRect(0, 0, W, H);
+    const top = 34, bot = H - 14;
+    g.fillStyle = '#c9c5bc';
+    g.fillRect(8, top, W - 8, bot - top);
+    const nx = 8, ny = 4, cw = (W - 16) / nx, ch = (bot - top - 8) / ny;
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < ny; j++) {
+        const cx = 12 + cw * (i + 0.5), cy = top + 4 + ch * (j + 0.5);
+        g.beginPath();
+        g.moveTo(cx, cy - ch / 2 + 3); g.lineTo(cx + cw / 2 - 3, cy); g.lineTo(cx, cy + ch / 2 - 3); g.lineTo(cx - cw / 2 + 3, cy);
+        g.closePath();
+        g.fillStyle = '#d7d3ca';
+        g.fill();
+        g.strokeStyle = '#9f9b93';
+        g.lineWidth = 2;
+        g.stroke();
+      }
+    }
+    g.fillStyle = '#a9a59d';
+    g.fillRect(0, 0, 8, H);
+    g.fillRect(0, top - 6, W, 6);
+    for (let k = 0; k < 400; k++) { // пятна и потёки
+      g.fillStyle = `rgba(${rnd() < 0.5 ? '90,85,75' : '230,226,218'},${0.08 + rnd() * 0.1})`;
+      g.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 4, 1 + rnd() * 12);
+    }
+  } else if (kind === 'brick') { // кирпич на 1 м высоты: 13 рядов
+    g.fillStyle = '#8f8a82';
+    g.fillRect(0, 0, W, H);
+    const rh = H / 13, bw = W / 8;
+    for (let j = 0; j < 13; j++) {
+      for (let i = -1; i < 9; i++) {
+        const r = 150 + rnd() * 35 | 0;
+        g.fillStyle = `rgb(${r},${r * 0.45 | 0},${r * 0.33 | 0})`;
+        g.fillRect(i * bw + (j % 2) * bw / 2 + 1, j * rh + 1, bw - 2, rh - 2);
+      }
+    }
+  } else if (kind === 'hedge') { // листва
+    g.fillStyle = '#34502a';
+    g.fillRect(0, 0, W, H);
+    for (let k = 0; k < 2500; k++) {
+      const v = rnd();
+      g.fillStyle = `rgb(${40 + v * 50 | 0},${70 + v * 60 | 0},${30 + v * 30 | 0})`;
+      g.fillRect(rnd() * W, rnd() * H, 2 + rnd() * 3, 2 + rnd() * 3);
+    }
+  } else { // jersey: бетонные блоки со швом, красно-белая полоса поверху
+    g.fillStyle = '#b8b4ac';
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = '#d8d4cc';
+    g.fillRect(0, 0, W, 50);
+    for (let x = 0; x < W; x += 64) { g.fillStyle = (x / 64) % 2 ? '#c8352c' : '#efefea'; g.fillRect(x, 0, 64, 26); }
+    g.fillStyle = '#86827b';
+    g.fillRect(0, 0, 3, H);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  if (FENCE[kind].vm) tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+
+function mulberry(a) {
+  return () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+export function fenceMaterials(renderer) {
+  const mats = {};
+  for (const [k, f] of Object.entries(FENCE)) {
+    const map = fenceTexture(k, renderer);
+    mats[k] = new THREE.MeshLambertMaterial(f.t
+      ? { map, vertexColors: true }
+      : { map, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide });
+  }
+  const all = new Set(Object.values(mats));
+  return { ...mats, owns: (m) => all.has(m) };
+}
+
+// Заборы квадрата (из OSM, проёмы под ворота и дороги вырезаны при сборке): каждый кусок — свой
+// квадрат по середине куска. Тонкие (решётка, сетка) — одна плоскость, остальные — с толщиной:
+// две стороны, верх и торцы. Не рисуем куски в домах и в воде.
+export function buildFenceChunk(world, info, mats) {
+  const { x0, z0, x1, z1, data } = info;
+  if (!data.fences.length) return null;
+  const { inBuilding } = spotChecks(world, data);
+  const geo = {};
+  const put = (k) => (geo[k] ??= { pos: [], nor: [], uv: [], col: [] });
+  const c = new THREE.Color();
+  for (const f of data.fences) {
+    const F = FENCE[f.k], g = put(f.k), t = F.t / 2, h = f.h;
+    const p0 = f.p[0];
+    const hash = Math.imul(Math.round(p0[0] * 10) ^ Math.round(p0[1] * 10) * 7919, 2654435761) >>> 0;
+    c.set(F.tint[hash % F.tint.length]);
+    const vTop = F.vm ? (h + FENCE_SINK) / F.vm : 1, vBot = F.vm ? 0 : -FENCE_SINK / h;
+    // Четырёхугольник a-b-c-d (против часовой снаружи), нормаль n, uv по углам.
+    const quad = (a, b, cc, d, n, uvs) => {
+      for (const i of [0, 1, 2, 0, 2, 3]) {
+        g.pos.push(...[a, b, cc, d][i]);
+        g.nor.push(...n);
+        g.uv.push(...uvs[i]);
+        g.col.push(c.r, c.g, c.b);
+      }
+    };
+    let s = 0;
+    for (let i = 1; i < f.p.length; i++) {
+      const [ax, az] = f.p[i - 1], [bx, bz] = f.p[i];
+      const L = Math.hypot(bx - ax, bz - az);
+      if (L < 0.05) continue;
+      const ux = (bx - ax) / L, uz = (bz - az) / L, nx = -uz, nz = ux;
+      const n = Math.ceil(L / FENCE_PIECE);
+      // На изломах толстые продлеваются на полтолщины — без щели на углу.
+      const ext0 = i > 1 ? t : 0, ext1 = i < f.p.length - 1 ? t : 0;
+      for (let k = 0; k < n; k++) {
+        const ta = k ? (L * k) / n : -ext0, tb = k < n - 1 ? (L * (k + 1)) / n : L + ext1;
+        const mx = ax + ux * (ta + tb) / 2, mz = az + uz * (ta + tb) / 2;
+        if (mx < x0 || mx >= x1 || mz < z0 || mz >= z1) continue;
+        if (inBuilding(mx, mz) || world.isWater(mx, mz)) continue;
+        const pax = ax + ux * ta, paz = az + uz * ta, pbx = ax + ux * tb, pbz = az + uz * tb;
+        const ya = world.terrain(pax, paz), yb = world.terrain(pbx, pbz);
+        const ua = (s + ta) / F.len, ub = (s + tb) / F.len;
+        const uvs = [[ua, vBot], [ub, vBot], [ub, vTop], [ua, vTop]];
+        if (!t) {
+          quad([pax, ya - FENCE_SINK, paz], [pbx, yb - FENCE_SINK, pbz], [pbx, yb + h, pbz], [pax, ya + h, paz], [nx, 0, nz], uvs);
+          continue;
+        }
+        const side = (sg) => {
+          const ox = nx * t * sg, oz = nz * t * sg;
+          const A = [pax + ox, ya - FENCE_SINK, paz + oz], B = [pbx + ox, yb - FENCE_SINK, pbz + oz];
+          const C = [pbx + ox, yb + h, pbz + oz], D = [pax + ox, ya + h, paz + oz];
+          // Снаружи против часовой: со стороны +n идём A→B, со стороны −n — B→A.
+          if (sg > 0) quad(A, B, C, D, [nx, 0, nz], uvs);
+          else quad(B, A, D, C, [-nx, 0, -nz], [uvs[1], uvs[0], uvs[3], uvs[2]]);
+        };
+        side(1);
+        side(-1);
+        const tv = F.vm ? 2 * t / F.vm : 0.02;
+        quad([pax + nx * t, ya + h, paz + nz * t], [pbx + nx * t, yb + h, pbz + nz * t], [pbx - nx * t, yb + h, pbz - nz * t],
+          [pax - nx * t, ya + h, paz - nz * t], [0, 1, 0], [[ua, vTop - tv], [ub, vTop - tv], [ub, vTop], [ua, vTop]]);
+        // Торцы — у концов забора.
+        const cap = (x, y, z, sg) => {
+          const L0 = [x - nx * t, y - FENCE_SINK, z - nz * t], R0 = [x + nx * t, y - FENCE_SINK, z + nz * t];
+          const R1 = [x + nx * t, y + h, z + nz * t], L1 = [x - nx * t, y + h, z - nz * t];
+          const cu = [[0, vBot], [2 * t / F.len, vBot], [2 * t / F.len, vTop], [0, vTop]];
+          if (sg > 0) quad(R0, L0, L1, R1, [ux, 0, uz], cu);
+          else quad(L0, R0, R1, L1, [-ux, 0, -uz], cu);
+        };
+        if (i === 1 && k === 0) cap(pax, ya, paz, -1);
+        if (i === f.p.length - 1 && k === n - 1) cap(pbx, yb, pbz, 1);
+      }
+      s += L;
+    }
+  }
+  const out = [];
+  for (const [k, g] of Object.entries(geo)) {
+    if (!g.pos.length) continue;
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
+    bg.setAttribute('normal', new THREE.Float32BufferAttribute(g.nor, 3));
+    bg.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
+    bg.setAttribute('color', new THREE.Float32BufferAttribute(g.col, 3));
+    const m = new THREE.Mesh(bg, mats[k]);
+    m.castShadow = FENCE[k].t > 0;
+    m.receiveShadow = true;
+    out.push(m);
+  }
+  return out.length ? out : null;
+}
+
 // ---------------------------------------------------------------- миникарта
 
 export const MINIMAP_SCALE = 0.5; // пикселей на метр (1 px = 2 м)

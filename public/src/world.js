@@ -61,7 +61,7 @@ export class World {
     const at = (ci, cj) => {
       const k = ci * 10000 + cj;
       let d = this.chunkData.get(k);
-      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], water: null }));
+      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], fences: [], water: null }));
       return d;
     };
     const cell = (x, z) => [Math.floor((x - xmin) / this.chunk.sx), Math.floor((z - zmin) / this.chunk.sz)];
@@ -85,6 +85,7 @@ export class World {
     }
     for (const t of c.trees) at(...cell(t[0], t[1])).trees.push(t);
     for (const t of c.stops || []) at(...cell(t[0], t[1])).stops.push(t);
+    for (const f of c.fences || []) overlap(f.p, 0, (d) => d.fences.push(f)); // рисует квадрат середины куска
     for (const r of this.roads) {
       const pts = r.n.map((i) => this.nodes[i]);
       overlap(pts, r.w, (d) => d.lines.push(r));
@@ -107,7 +108,7 @@ export class World {
   chunkInfo(ci, cj) {
     const C = CHUNK_CELLS, { nx, nz, dx, dz, xmin, zmin } = this.mesh;
     const i0 = ci * C, j0 = cj * C, i1 = Math.min(nx, i0 + C), j1 = Math.min(nz, j0 + C);
-    const empty = { areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [] };
+    const empty = { areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], fences: [] };
     return { ci, cj, i0, j0, i1, j1, x0: xmin + i0 * dx, z0: zmin + j0 * dz, x1: xmin + i1 * dx, z1: zmin + j1 * dz,
       data: this.chunkData.get(ci * 10000 + cj) || empty };
   }
@@ -808,6 +809,13 @@ export class World {
       if ((b.mh ?? 0) < 2.5) { // под переходом и аркой проезжаем
         this.addCollider(b.p, b.x);
         for (const h of b.holes || []) this.addCollider(h); // двор/поле внутри — тоже стены
+      }
+    }
+    // Заборы — тоже стены (проёмы под ворота и дороги вырезаны при сборке).
+    for (const f of this.city.fences || []) {
+      for (let i = 1; i < f.p.length; i++) {
+        const a = f.p[i - 1], c = f.p[i];
+        this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1] }, 0);
       }
     }
   }

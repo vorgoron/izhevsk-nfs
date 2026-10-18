@@ -727,6 +727,182 @@ def transport_stops(inside):
     return out
 
 
+# ---------------------------------------------------------------- заборы
+
+# Вид забора в браузере: bars — металлическая решётка, mesh — сетка-рабица, wood — доски,
+# prof — профлист, panel — бетонные плиты, brick — кирпичная стена, hedge — живая изгородь,
+# jersey — бетонные блоки у дороги.
+FENCE_TYPE = {
+    "metal": "bars", "bars": "bars", "railing": "bars", "railings": "bars", "metal_bars": "bars", "steel": "bars",
+    "chain_link": "mesh", "wire": "mesh", "wire_mesh": "mesh", "mesh": "mesh", "chain": "mesh", "barbed_wire": "mesh",
+    "wood": "wood", "split_rail": "wood", "pickets": "wood", "palisade": "wood", "wooden": "wood",
+    "corrugated_metal": "prof", "metal_sheet": "prof",
+    "concrete": "panel", "wall": "panel", "brick": "brick", "stone": "brick",
+}
+FENCE_H = {"bars": 1.6, "mesh": 1.8, "wood": 1.8, "prof": 2.0, "panel": 2.4, "brick": 2.0, "hedge": 1.3, "jersey": 0.8}
+GATE_W = {"gate": 4.0, "lift_gate": 4.0, "swing_gate": 4.0, "sliding_gate": 5.0, "sally_port": 4.0,
+          "wicket_gate": 1.2, "kissing_gate": 1.2, "entrance": 1.5, "turnstile": 1.0, "full-height_turnstile": 1.0}
+
+
+def fence_kind(tags, ctx):
+    """ctx — 'industrial' (промзона, гаражи), 'village' (частный сектор) или None."""
+    b = tags["barrier"]
+    if b == "hedge":
+        return "hedge"
+    if b == "jersey_barrier":
+        return "jersey"
+    k = FENCE_TYPE.get(tags.get("fence_type")) or FENCE_TYPE.get(tags.get("material"))
+    if k:
+        return k
+    # Забор, нарисованный по контуру участка, сам говорит, что за ним.
+    if tags.get("landuse") in ("industrial", "garages", "railway", "construction") or "man_made" in tags:
+        ctx = "industrial"
+    elif tags.get("landuse") in ("allotments", "farmyard") or tags.get("place"):
+        ctx = "village"
+    elif "amenity" in tags or "leisure" in tags:
+        ctx = None
+    if b == "wall":
+        return "panel" if ctx == "industrial" else "brick"
+    return {"industrial": "panel", "village": None}.get(ctx, "bars")
+
+
+def fences(inside, roads, road_nodes, areas, buildings):
+    """Заборы, стены, изгороди: [{"k": вид, "h": высота, "p": точки}], уже с проёмами — ворота и
+    калитки (точки barrier=gate… на линии), тропинки через забор, дороги поперёк и сам забор на полотне."""
+    # Индекс осей дорог (кроме мостов и тоннелей: под мостом забор остаётся).
+    CELL = 50
+    rgrid = {}
+    for r in roads:
+        if r["br"] or r["tu"]:
+            continue
+        for i in range(1, len(r["n"])):
+            (ax, az), (bx, bz) = road_nodes[r["n"][i - 1]], road_nodes[r["n"][i]]
+            s = (ax, az, bx, bz, r["w"])
+            for gi in range(int(min(ax, bx) // CELL) - 1, int(max(ax, bx) // CELL) + 2):
+                for gj in range(int(min(az, bz) // CELL) - 1, int(max(az, bz) // CELL) + 2):
+                    rgrid.setdefault((gi, gj), []).append(s)
+    near = lambda x, z: rgrid.get((int(x // CELL), int(z // CELL)), ())
+
+    path_nodes = set()
+    for nds, tags in ways.values():
+        if tags.get("highway") in PATHS:
+            path_nodes.update(nds)
+
+    # Окружение: промзона (точка в участке industrial) или частный сектор (рядом частные дома).
+    AC = 200
+    agrid = {}
+    for a in areas:
+        if a["k"] != "industrial":
+            continue
+        xs, zs = [p[0] for p in a["p"]], [p[1] for p in a["p"]]
+        for gi in range(int(min(xs) // AC), int(max(xs) // AC) + 1):
+            for gj in range(int(min(zs) // AC), int(max(zs) // AC) + 1):
+                agrid.setdefault((gi, gj), []).append((min(xs), min(zs), max(xs), max(zs), a["p"]))
+    BC = 40
+    bgrid = {}
+    for b in buildings:
+        cx = sum(p[0] for p in b["p"]) / len(b["p"])
+        cz = sum(p[1] for p in b["p"]) / len(b["p"])
+        bgrid.setdefault((int(cx // BC), int(cz // BC)), []).append(b.get("r") == 1)
+
+    def context(x, z):
+        for x0, z0, x1, z1, p in agrid.get((int(x // AC), int(z // AC)), ()):
+            if x0 <= x <= x1 and z0 <= z <= z1 and point_in(x, z, p):
+                return "industrial"
+        houses = [v for i in (-1, 0, 1) for j in (-1, 0, 1) for v in bgrid.get((int(x // BC) + i, int(z // BC) + j), ())]
+        return "village" if sum(houses) >= 3 and sum(houses) * 2 >= len(houses) else None
+
+    out, total = [], 0.0
+    for wid, (nds, tags) in ways.items():
+        if tags.get("barrier") not in ("fence", "wall", "hedge", "jersey_barrier", "city_wall"):
+            continue
+        if tags.get("bridge") not in (None, "no") or tags.get("tunnel") not in (None, "no"):
+            continue
+        nds = [n for n in nds if n in nodes]
+        if len(nds) < 2:
+            continue
+        pts = [project(*nodes[n]) for n in nds]
+        if not inside(pts):
+            continue
+        acc = [0.0]
+        for i in range(1, len(pts)):
+            acc.append(acc[-1] + math.dist(pts[i - 1], pts[i]))
+        L = acc[-1]
+        if L < 1:
+            continue
+        gaps = []
+        for i, n in enumerate(nds):
+            t = node_tags.get(n, {})
+            w = GATE_W.get(t.get("barrier"))
+            if w:
+                w = min(max(parse_num(t.get("width")) or w, 0.8), 12)
+            elif n in path_nodes:
+                w = 1.6
+            if w:
+                gaps.append((acc[i] - w / 2, acc[i] + w / 2))
+        for i in range(1, len(pts)):
+            (ax, az), (bx, bz) = pts[i - 1], pts[i]
+            seg = acc[i] - acc[i - 1]
+            if seg < 1e-6:
+                continue
+            ux, uz = (bx - ax) / seg, (bz - az) / seg
+            cands = {s for k in range(int(seg // CELL) + 2)
+                     for s in near(ax + ux * min(k * CELL, seg), az + uz * min(k * CELL, seg))}
+            # Дорога поперёк: проём на ширину полотна с запасом, по косой — шире.
+            for cx, cz, dx, dz, rw in cands:
+                ex, ez = dx - cx, dz - cz
+                den = ux * ez - uz * ex
+                if abs(den) < 1e-9:
+                    continue
+                t = ((cx - ax) * ez - (cz - az) * ex) / den
+                el = math.hypot(ex, ez)
+                v = ((cx - ax) * uz - (cz - az) * ux) / den
+                if 0 <= t <= seg and 0 <= v <= 1:
+                    half = (rw / 2 + 0.8) / max(abs(den) / el, 0.35)
+                    gaps.append((acc[i - 1] + t - half, acc[i - 1] + t + half))
+            # Забор на самом полотне (широкая дорога, конец забора у бордюра) — убрать.
+            s = 0.0
+            while s <= seg:
+                x, z = ax + ux * s, az + uz * s
+                for cx, cz, dx, dz, rw in cands:
+                    ex, ez = dx - cx, dz - cz
+                    l2 = ex * ex + ez * ez or 1
+                    q = min(1, max(0, ((x - cx) * ex + (z - cz) * ez) / l2))
+                    if math.hypot(x - cx - ex * q, z - cz - ez * q) < rw / 2 + 0.2:
+                        gaps.append((acc[i - 1] + s - 0.5, acc[i - 1] + s + 0.5))
+                        break
+                s += 1.0
+        # Сплошные куски между проёмами.
+        gaps.sort()
+        solid, cur = [], 0.0
+        for g0, g1 in gaps:
+            if g0 > cur:
+                solid.append((cur, g0))
+            cur = max(cur, g1)
+        if cur < L:
+            solid.append((cur, L))
+        mx, mz = pts[len(pts) // 2]
+        kind = fence_kind(tags, context(mx, mz))
+        if kind is None:  # частный сектор: доски или профлист, по забору
+            kind = "wood" if wid % 3 else "prof"
+        h = parse_num(tags.get("height"))
+        h = round(min(max(h, 0.5), 4.0), 1) if h else FENCE_H[kind]
+
+        def at(s):
+            i = min(max(1, next((k for k in range(1, len(acc)) if acc[k] >= s), len(acc) - 1)), len(acc) - 1)
+            f = (s - acc[i - 1]) / ((acc[i] - acc[i - 1]) or 1)
+            return [round(pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f, 2), round(pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f, 2)]
+
+        for s0, s1 in solid:
+            if s1 - s0 < 1:
+                continue
+            p = [at(s0)] + [[round(x, 2), round(z, 2)] for (x, z), a in zip(pts, acc) if s0 < a < s1] + [at(s1)]
+            out.append({"k": kind, "h": h, "p": p})
+            total += s1 - s0
+    print(f"fences: {len(out)} pieces, {total / 1000:.0f} km")
+    return out
+
+
 # ---------------------------------------------------------------- заправки-точки
 
 def add_point_fuel_stations(fuel, areas, buildings, roads, road_nodes, inside):
@@ -1145,6 +1321,7 @@ def build_city():
     classify_bridges(roads, road_nodes, waterways, rails)
     apply_gis(buildings)
     mark_village_houses(buildings)
+    fence_list = fences(inside, roads, road_nodes, areas, buildings)
     buildings = cut_passages(buildings, roads, road_nodes)
     aligned = align_tram_tracks()
     for r in rails:
@@ -1178,6 +1355,7 @@ def build_city():
         "fuel": fuel,
         "trams": tram_routes(aligned),
         "stops": transport_stops(inside),
+        "fences": fence_list,
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()
