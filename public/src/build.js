@@ -1,6 +1,6 @@
 // Построение мешей города из World.
 import * as THREE from 'three';
-import { MARKED_CLASSES, SOFT_FENCES, TRAM_BED, World } from './world.js';
+import { MARKED_CLASSES, SOFT_FENCES, TRAM_BED, TRAM_GRASS, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
 
@@ -168,6 +168,8 @@ export function roadMaterials(renderer) {
     concrete: new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }),
     embank: new THREE.MeshLambertMaterial({ color: '#6f7d4f', side: THREE.DoubleSide }),
     trackbed: new THREE.MeshLambertMaterial({ map: trackbedTexture(renderer), side: THREE.DoubleSide }),
+    // Асфальт переезда под рельсами: отодвинут от камеры, чтобы настоящая лента дороги, где она есть, была поверх.
+    crossing: new THREE.MeshLambertMaterial({ color: '#3d3e41', side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }),
     // Рельсы лежат на 6 см выше расчётной высоты дороги, а лента асфальта между краями идёт по
     // прямой, а не по рельефу, и сама сдвинута к камере: без сдвига сильнее асфальта рельсы на
     // перекрёстке местами уходили под него.
@@ -385,9 +387,11 @@ export function buildRoadChunk(world, runs, mats) {
           if (Math.abs((ex * dx + ez * dz) / el) < 0.9) continue; // пересечение, а не вдоль
           const c = World.closest(sg, x0, z0);
           const lat = (c.px - x0) * -dz + (c.pz - z0) * dx; // >0 — слева (сторона +n)
-          if (Math.abs(lat) > half + 2.2) continue;
-          if (lat > 0) hl = Math.min(hl, Math.max(2.4, lat - 2));
-          else hr = Math.min(hr, Math.max(2.4, -lat - 2));
+          // Край — за полотном пути и газоном (TRAM_GRASS) между ним и дорогой.
+          const gap = TRAM_BED / 2 + TRAM_GRASS;
+          if (Math.abs(lat) > half + gap + 0.2) continue;
+          if (lat > 0) hl = Math.min(hl, Math.max(2.4, lat - gap));
+          else hr = Math.min(hr, Math.max(2.4, -lat - gap));
         }
       }
       return { dx, dz, m, sl, sr, hl, hr, Lp, Rp };
@@ -570,11 +574,12 @@ function medianEdge(world, road, x, z, nx, nz, half, y) {
   return [[x + ux * half, y, z + uz * half], [c.px - ux * w2, yb, c.pz - uz * w2]];
 }
 
-// Трамвайное полотно поперёк пути (u: 0…1 на TRAM_BED) и вдоль (v: SLEEPER_TILE м): посередине щебень
-// с бетонными шпалами, по краям трава (между соседними путями — газон, как на Карла Маркса).
+// Трамвайное полотно поперёк пути (u: 0…1 на BED_TEX м, ось пути — 0,5) и вдоль (v: SLEEPER_TILE м):
+// посередине щебень с бетонными шпалами, по краям трава — между путями и до дороги, как на Карла Маркса.
 const SLEEPER_TILE = 1.4; // м: две шпалы на повтор текстуры
+const BED_TEX = TRAM_BED + 2 * TRAM_GRASS; // м: ширина текстуры — полотно с газоном до дороги
 function trackbedTexture(renderer) {
-  const PX = 80, W = Math.round(TRAM_BED * PX), H = Math.round(SLEEPER_TILE * PX);
+  const PX = 80, W = Math.round(BED_TEX * PX), H = Math.round(SLEEPER_TILE * PX);
   const c = document.createElement('canvas');
   c.width = W;
   c.height = H;
@@ -585,29 +590,29 @@ function trackbedTexture(renderer) {
   const greens = ['#5f7440', '#6c8048', '#53683a', '#778a4f'];
   g.fillStyle = '#5d6e3d';
   g.fillRect(0, 0, W, H);
-  for (let i = 0; i < 500; i++) { // трава
+  for (let i = 0; i < 1000; i++) { // трава
     g.fillStyle = greens[i % 4];
     g.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 2, 2 + rnd() * 3);
   }
   // Щебень.
   g.fillStyle = '#57544f';
-  g.fillRect(X(-1.45), 0, X(1.45) - X(-1.45), H);
+  g.fillRect(X(-1.35), 0, X(1.35) - X(-1.35), H);
   for (let i = 0; i < 1400; i++) {
     const v = 55 + rnd() * 60 | 0;
     g.fillStyle = `rgb(${v},${v - 3},${v - 8})`;
-    g.fillRect(X(-1.45) + rnd() * (X(1.45) - X(-1.45)), rnd() * H, 1 + rnd() * 2, 1 + rnd() * 2);
+    g.fillRect(X(-1.35) + rnd() * (X(1.35) - X(-1.35)), rnd() * H, 1 + rnd() * 2, 1 + rnd() * 2);
   }
   // Шпалы: 2,6 м поперёк, 0,25 м вдоль, через 0,7 м; край чуть темнее.
   for (const v0 of [0.22, 0.92]) {
     const y = v0 * PX, h = 0.25 * PX;
     g.fillStyle = '#a9a69f';
-    g.fillRect(X(-1.3), y, X(1.3) - X(-1.3), h);
+    g.fillRect(X(-1.25), y, X(1.25) - X(-1.25), h);
     g.fillStyle = '#8f8c86';
-    g.fillRect(X(-1.3), y + h - 2, X(1.3) - X(-1.3), 2);
+    g.fillRect(X(-1.25), y + h - 2, X(1.25) - X(-1.25), 2);
   }
   // Трава прорастает в щебень и по краям шпал.
   for (let i = 0; i < 260; i++) {
-    const side = rnd() < 0.5 ? -1 : 1, m = side * (1.0 + rnd() * 0.5);
+    const side = rnd() < 0.5 ? -1 : 1, m = side * (0.95 + rnd() * 0.45);
     g.fillStyle = greens[i % 4];
     g.globalAlpha = 0.6 + rnd() * 0.4;
     g.fillRect(X(m), rnd() * H, 2 + rnd() * 3, 2 + rnd() * 3);
@@ -637,13 +642,20 @@ const RAIL_DECK = 4.4; // м: ширина плиты под путём, под�
 
 // Рельсы квадрата: две стальные полосы на каждом пути (трамвай и железная дорога), над землёй
 // или полотном дороги. Отрезки, середина которых в квадрате.
-export function buildRailChunk(world, info, mat, deckMat, bedMat) {
+export function buildRailChunk(world, info, mat, deckMat, bedMat, crossMat) {
   const { x0, z0, x1, z1, data } = info;
-  const pos = [], col = [], deck = [], bed = [], bedUv = [], curb = [];
-  // Верх полотна с текстурой (v — метры вдоль пути, шпалы не прыгают на стыках кусков).
+  const pos = [], col = [], deck = [], bed = [], bedUv = [], curb = [], cross = [];
+  // Верх полотна с текстурой (v — метры вдоль пути, шпалы не прыгают на стыках кусков). P, Q — ось
+  // [x, y, z, gx, gz]: края — по наклону полотна поперёк, вровень с асфальтом по обе стороны.
+  // P[5], P[6] — полуширина влево/вправо (с газоном до дороги), bx, bz — половина TRAM_BED влево.
+  const edge = (P, sg, bx, bz) => {
+    const k = ((sg > 0 ? P[5] : P[6]) / (TRAM_BED / 2)) * sg;
+    return [P[0] + bx * k, P[1] + (P[3] * bx + P[4] * bz) * k, P[2] + bz * k];
+  };
   const bedTop = (P, Q, sP, sQ, bx, bz) => {
-    quad(bed, [P[0] + bx, P[1], P[2] + bz], [Q[0] + bx, Q[1], Q[2] + bz], [Q[0] - bx, Q[1], Q[2] - bz], [P[0] - bx, P[1], P[2] - bz]);
-    const a = [0, sP / SLEEPER_TILE], b = [0, sQ / SLEEPER_TILE], c = [1, sQ / SLEEPER_TILE], d = [1, sP / SLEEPER_TILE];
+    quad(bed, edge(P, 1, bx, bz), edge(Q, 1, bx, bz), edge(Q, -1, bx, bz), edge(P, -1, bx, bz));
+    const u = (w) => 0.5 + w / BED_TEX;
+    const a = [u(-P[5]), sP / SLEEPER_TILE], b = [u(-Q[5]), sQ / SLEEPER_TILE], c = [u(Q[6]), sQ / SLEEPER_TILE], d = [u(P[6]), sP / SLEEPER_TILE];
     bedUv.push(...a, ...b, ...c, ...a, ...c, ...d);
   };
   const steel = new THREE.Color('#c3c7cc'), rust = new THREE.Color('#6b4a36');
@@ -666,10 +678,18 @@ export function buildRailChunk(world, info, mat, deckMat, bedMat) {
         const s = world.railLevel(sx, sz, dx, dz, tram), e = world.railLevel(ex, ez, dx, dz, tram);
         const sy = s.y, ey = e.y, st = world.terrain(sx, sz), et = world.terrain(ex, ez);
         if (sy - st < 1 && ey - et < 1) {
-          // Трамвайное полотно чуть выше дорог; на переезде через дорогу его нет — рельсы над асфальтом.
-          if (!s.bed && !e.bed) continue;
-          let [px, py, pz, pt, qx, qy, qz, qt] = [sx, sy, sz, st, ex, ey, ez, et];
+          // Трамвайное полотно вровень с краями дорог; на переезде через дорогу его нет — рельсы в асфальте.
+          const W = TRAM_BED / 2, at = (l, x, y, z) => [x, y, z, l.gx ?? 0, l.gz ?? 0, l.wl ?? W, l.wr ?? W];
+          let P = at(s, sx, sy, sz), Q = at(e, ex, ey, ez), pt = st, qt = et;
           let sP = sa + (L * k) / n, sQ = sa + (L * (k + 1)) / n;
+          const bx = -dz * TRAM_BED / 2, bz = dx * TRAM_BED / 2;
+          // Переезд: под рельсами асфальт по ширине полотна (лента улицы у путей обрезана, а поворотный
+          // путь пересекает её наискось — иначе дыра до земли).
+          const patch = (A, B) => quad(cross, [A[0] + bx, A[1], A[2] + bz], [B[0] + bx, B[1], B[2] + bz], [B[0] - bx, B[1], B[2] - bz], [A[0] - bx, A[1], A[2] - bz]);
+          if (!s.bed && !e.bed) {
+            if (tram && (s.cross || e.cross)) patch(P, Q);
+            continue;
+          }
           if (s.bed !== e.bed) {
             // Край переезда — делением отрезка пополам, полотно до него и торец.
             let lo = 0, hi = 1;
@@ -678,17 +698,18 @@ export function buildRailChunk(world, info, mat, deckMat, bedMat) {
               if (world.railLevel(sx + (ex - sx) * f, sz + (ez - sz) * f, dx, dz, tram).bed === s.bed) lo = f; else hi = f;
             }
             const f = s.bed ? lo : hi, cx = sx + (ex - sx) * f, cz = sz + (ez - sz) * f;
-            const cy = world.railLevel(cx, cz, dx, dz, tram).y, ct = world.terrain(cx, cz);
-            const sC = sP + (sQ - sP) * f;
-            if (s.bed) [qx, qy, qz, qt, sQ] = [cx, cy, cz, ct, sC];
-            else [px, py, pz, pt, sP] = [cx, cy, cz, ct, sC];
-            const hx = -dz * TRAM_BED / 2, hz = dx * TRAM_BED / 2;
-            quad(curb, [cx + hx, cy, cz + hz], [cx - hx, cy, cz - hz], [cx - hx, ct - 0.1, cz - hz], [cx + hx, ct - 0.1, cz + hz]);
+            const cl = world.railLevel(cx, cz, dx, dz, tram), ct = world.terrain(cx, cz);
+            const C = at(cl, cx, cl.y, cz), sC = sP + (sQ - sP) * f;
+            if (s.bed) { patch(C, Q); [Q, qt, sQ] = [C, ct, sC]; } else { patch(P, C); [P, pt, sP] = [C, ct, sC]; }
+            const a = edge(C, 1, bx, bz), b = edge(C, -1, bx, bz);
+            quad(curb, a, b, [b[0], ct - 0.1, b[2]], [a[0], ct - 0.1, a[2]]);
           }
-          const bx = -dz * TRAM_BED / 2, bz = dx * TRAM_BED / 2;
-          bedTop([px, py, pz], [qx, qy, qz], sP, sQ, bx, bz);
-          // Бок полотна — бетонный бордюр.
-          for (const sg of [1, -1]) quad(curb, [px + bx * sg, py, pz + bz * sg], [qx + bx * sg, qy, qz + bz * sg], [qx + bx * sg, qt - 0.1, qz + bz * sg], [px + bx * sg, pt - 0.1, pz + bz * sg]);
+          bedTop(P, Q, sP, sQ, bx, bz);
+          // Бок полотна — бетонный бордюр (виден только там, где рядом не асфальт).
+          for (const sg of [1, -1]) {
+            const a = edge(P, sg, bx, bz), b = edge(Q, sg, bx, bz);
+            quad(curb, a, b, [b[0], qt - 0.1, b[2]], [a[0], pt - 0.1, a[2]]);
+          }
           continue;
         }
         const onMedian = (px, pz, py) => { const m = world.medianY(px, pz); return m !== null && Math.abs(m - py) < 0.01; };
@@ -703,7 +724,9 @@ export function buildRailChunk(world, info, mat, deckMat, bedMat) {
         for (let k = 0; k < n; k++) {
           const t0 = (k / n) * L, t1 = ((k + 1) / n) * L;
           const sx = ax + dx * t0 + ox, sz = az + dz * t0 + oz, ex = ax + dx * t1 + ox, ez = az + dz * t1 + oz;
-          const sy = world.railGround(sx, sz, dx, dz, tram) + 0.06, ey = world.railGround(ex, ez, dx, dz, tram) + 0.06;
+          // На переезде рельс утоплен в асфальт — торчит на 1,5 см.
+          const top = (l) => l.y + (l.cross ? 0.015 : 0.06);
+          const sy = top(world.railLevel(sx, sz, dx, dz, tram)), ey = top(world.railLevel(ex, ez, dx, dz, tram));
           const wx = -dz * 0.045, wz = dx * 0.045;
           // Верх рельса (накатанный, светлый) и две боковины (ржавые) — низкий брусок.
           pos.push(sx - wx, sy, sz - wz, ex - wx, ey, ez - wz, ex + wx, ey, ez + wz, sx - wx, sy, sz - wz, ex + wx, ey, ez + wz, sx + wx, sy, sz + wz);
@@ -724,7 +747,7 @@ export function buildRailChunk(world, info, mat, deckMat, bedMat) {
   geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, mat);
   m.receiveShadow = true;
-  const extra = [[deck, deckMat, true], [curb, deckMat, false], [bed, bedMat, false, bedUv]].filter(([v, mt]) => v.length && mt);
+  const extra = [[deck, deckMat, true], [curb, deckMat, false], [bed, bedMat, false, bedUv], [cross, crossMat, false]].filter(([v, mt]) => v.length && mt);
   if (!extra.length) return m;
   const g = new THREE.Group();
   g.add(m);
