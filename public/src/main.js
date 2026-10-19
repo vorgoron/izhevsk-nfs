@@ -310,7 +310,7 @@ async function main() {
     if (!e.target.closest?.('.wheel, #radio')) radio.unlock();
   });
 
-  let camMode = 0; // 0 — за машиной, 1 — из салона, 2 — сверху
+  let camMode = 0; // 0 — за машиной, 1 — из салона, 2 — сверху, 3 — кино
   // Предел кадров в секунду, 0 — без предела. На экранах 120–144 Гц без предела игра рисует
   // вдвое больше кадров, чем нужно для плавности, — телефон греется.
   const FPS_CAPS = [60, 30, 0];
@@ -348,7 +348,7 @@ async function main() {
       if (!shared) race.start(car.pos.x, car.pos.y);
       track('race_start', { shared });
     },
-    camera: () => { camMode = (camMode + 1) % 3; },
+    camera: () => { camMode = (camMode + 1) % 4; cine.shot = null; cine.left = 0; },
     night: () => dayNight.toggle(),
     fps: () => {
       fpsCap = FPS_CAPS[(FPS_CAPS.indexOf(fpsCap) + 1) % FPS_CAPS.length];
@@ -489,6 +489,102 @@ async function main() {
   };
   for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) cv.addEventListener(ev, endDrag);
 
+  // ---------------------------------------------------------------- кинокамера
+
+  // Режим «кино» для роликов: планы сменяются склейкой каждые 4–7 с. Одни едут вместе с машиной
+  // (облёт, у колеса, спереди, кран), другие стоят на месте и провожают её (обочина, длинный фокус) —
+  // их ставят только на ходу, иначе машина в кадре так и не появится. План, который смотрит на машину
+  // сквозь стену, не берётся, а неподвижный — обрывается, как только машина заехала за дом.
+  const SHOTS = ['orbit', 'wheel', 'front', 'roadside', 'crane', 'tele'];
+  const cine = { shot: null, left: 0, t: 0, side: 1, heading: 0, fixed: new THREE.Vector3() };
+  // Видна ли машина из точки: идём от машины к камере с шагом 1.5 м, стена ближе 0.6 м — не видна.
+  const clearView = (x, z) => {
+    const dx = x - car.pos.x, dz = z - car.pos.y, n = Math.ceil(Math.hypot(dx, dz) / 1.5);
+    for (let i = 2; i <= n; i++) {
+      const p = new THREE.Vector2(car.pos.x + dx * i / n, car.pos.y + dz * i / n);
+      if (world.collide(p, 0.6)) return false;
+    }
+    return true;
+  };
+  function cineShot(dt, speed) {
+    // Курс машины сглаженный: камера у колеса и спереди не дёргается на каждой кочке.
+    const h = Math.atan2(car.forward.x, car.forward.y);
+    const dh = Math.atan2(Math.sin(h - cine.heading), Math.cos(h - cine.heading));
+    cine.heading += cine.shot ? dh * Math.min(1, dt * 3) : dh;
+    const fx = Math.sin(cine.heading), fz = Math.cos(cine.heading);
+    const c = new THREE.Vector3(car.pos.x, car.y + 0.8, car.pos.y);
+    // Точка рядом с машиной: вперёд, вбок (сторона — своя у каждого плана), вверх.
+    const at = (fwd, side, up) => new THREE.Vector3(c.x + fx * fwd + fz * side * cine.side, c.y + up, c.z + fz * fwd - fx * side * cine.side);
+
+    cine.left -= dt;
+    cine.t += dt;
+    const fixedShot = cine.shot === 'roadside' || cine.shot === 'tele';
+    const passed = fixedShot && (cine.fixed.x - c.x) * fx + (cine.fixed.z - c.z) * fz < -30; // уехала далеко за камеру
+    if (cine.left <= 0 || passed || (fixedShot && !clearView(cine.fixed.x, cine.fixed.z))) {
+      for (let tries = 0; tries < 8; tries++) {
+        const shot = SHOTS[Math.floor(Math.random() * SHOTS.length)];
+        if (shot === cine.shot) continue;
+        if ((shot === 'roadside' || shot === 'tele') && speed < 8) continue;
+        cine.side = Math.random() < 0.5 ? 1 : -1;
+        cine.t = 0;
+        // Неподвижные — впереди по ходу: машина успеет подъехать за время плана.
+        if (shot === 'roadside') cine.fixed.copy(at(15 + speed * 2, 6, 0.4));
+        if (shot === 'tele') cine.fixed.copy(at(40 + speed * 3, 14, 2.5));
+        const probe = shot === 'roadside' || shot === 'tele' ? cine.fixed : at(...{ orbit: [0, 7, 1.4], wheel: [-0.8, 1.6, 0], front: [10, 0, 0.6], crane: [-12, 0, 4] }[shot]);
+        if (!clearView(probe.x, probe.z)) continue;
+        cine.shot = shot;
+        cine.left = 4 + Math.random() * 3;
+        break;
+      }
+      if (cine.left <= 0) { cine.shot = 'crane'; cine.left = 4; cine.t = 0; } // всюду стены — кран над крышами
+    }
+
+    const t = cine.t;
+    // Вертикальный кадр (рилс) уже по горизонтали — камера отходит дальше, чтобы машина влезла целиком.
+    const wide = Math.max(1, 1 / camera.aspect);
+    let pos, look = c, fov = 50;
+    switch (cine.shot) {
+      case 'orbit': { // медленный облёт низко над асфальтом
+        const a = t * 0.3 * cine.side;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        pos = at(-7 * wide * sa, 7 * wide * ca, 0.6);
+        fov = 45;
+        break;
+      }
+      case 'wheel': // у заднего колеса, у самой земли, смотрит вперёд вдоль борта
+        pos = at(-1.2 - t * 0.15, 1.5 + (wide - 1), -0.35);
+        look = at(9, 0.3, -0.2);
+        fov = 60;
+        break;
+      case 'front': // спереди, машина едет прямо в камеру; камера понемногу отъезжает в сторону
+        pos = at((9 + Math.min(speed * 0.05, 3)) * wide, t * 0.35, 0.1);
+        fov = 42;
+        break;
+      case 'crane': // сзади и вверх: от машины к виду на город
+        pos = at(-10 - t * 1.2, 0, 2 + Math.min(t, 6) * 2.2);
+        look = at(6, 0, 0);
+        fov = 55;
+        break;
+      case 'roadside': // с обочины: машина проносится мимо
+        pos = cine.fixed;
+        fov = 50;
+        break;
+      case 'tele': { // длинный фокус: машина во весь кадр издалека, фон сжат
+        pos = cine.fixed;
+        const d = pos.distanceTo(c);
+        fov = THREE.MathUtils.radToDeg(2 * Math.atan(5 * wide / Math.max(d, 1)));
+        fov = Math.max(8, Math.min(40, fov));
+        break;
+      }
+    }
+    camera.position.copy(pos);
+    camera.position.y = Math.max(camera.position.y, world.ground(pos.x, pos.z, pos.y) + 0.35);
+    camera.lookAt(look);
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+    car.model.visible = true;
+  }
+
   function updateCamera(dt) {
     const speed = Math.abs(car.speed);
     sinceDrag += dt;
@@ -504,8 +600,10 @@ async function main() {
     // Разгон — камера отстаёт (тянется назад пропорционально ускорению), торможение — подъезжает;
     // нитро — ещё дальше, шире угол и лёгкая тряска.
     lag += (Math.max(-6, Math.min(16, car.accel_ ?? 0)) * 0.09 + (car.nitroOn ? 1.2 : 0) - lag) * Math.min(1, dt * 3);
-    const back = [8 + speed * 0.02 + lag, 0.2, 70][camMode];
-    const up = [3.3, 1.25, 55][camMode];
+    // В кино обычная камера всё равно считается, как «сзади»: вернёмся из кино — она уже на месте.
+    const mode = camMode === 3 ? 0 : camMode;
+    const back = [8 + speed * 0.02 + lag, 0.2, 70][mode];
+    const up = [3.3, 1.25, 55][mode];
     // Наклон: поднимаем камеру по дуге вокруг машины.
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
     const want = new THREE.Vector3(car.pos.x - f.x * back * cp, car.y + up + back * sp, car.pos.y - f.y * back * cp);
@@ -542,6 +640,7 @@ async function main() {
       return;
     }
     if (camera.view?.enabled) camera.clearViewOffset();
+    if (camMode === 3) return cineShot(dt, speed);
     const ov = window.game?.camOverride; // отладка: { pos: [x,y,z], look: [x,y,z] }
     if (ov) camera.position.set(...ov.pos);
     camera.lookAt(ov ? new THREE.Vector3(...ov.look) : lookAt);

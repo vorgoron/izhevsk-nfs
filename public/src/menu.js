@@ -4,7 +4,7 @@
 
 import { Wheel } from './wheel.js';
 
-const CAMERAS = ['сзади', 'из салона', 'сверху'];
+const CAMERAS = ['сзади', 'из салона', 'сверху', 'кино'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
