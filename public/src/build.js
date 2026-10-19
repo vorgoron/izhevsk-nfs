@@ -1,6 +1,6 @@
 // Построение мешей города из World.
 import * as THREE from 'three';
-import { MARKED_CLASSES, SOFT_FENCES, TRAM_BED, TRAM_GRASS, World } from './world.js';
+import { MARKED_CLASSES, SOFT_FENCES, TRAM_BED, TRAM_DROP, TRAM_GRASS, TRAM_TUCK, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
 import { SPECIES, LEAF, treeGeometry, LEAF_GLSL } from './trees.js';
@@ -359,8 +359,9 @@ export function buildRoadChunk(world, runs, mats) {
         m = Math.min(2, 1 / Math.max(0.3, (ax / al) * dx + (az / al) * dz));
       }
       // Полотно не заходит на трамвайные пути рядом (в OSM ось дороги часто ближе к путям, чем
-      // половина её ширины): край с той стороны отступает до 2 м от оси пути. На перекрёстке —
-      // нет: там пути идут по асфальту, а изгибы путей поворота давали дыры и рваный край.
+      // половина её ширины): край с той стороны отступает за полотно пути и газон. На перекрёстке
+      // тоже — иначе полная лента ложилась на газон уступами; пути поворота (не вдоль) не обрезают,
+      // дыры под ними закрывает асфальт переезда (buildRailChunk).
       const [x0, z0] = p;
       // Соседняя проезжая часть (twinEdges): внутренний край — ровно на общей линии посередине,
       // разметка (края sl, sr) ужимается до неё.
@@ -381,7 +382,7 @@ export function buildRoadChunk(world, runs, mats) {
         if (tr) { sr = tr; Rp = [x0 + dz * tr, z0 - dx * tr]; }
       }
       let hl = sl, hr = sr;
-      if (!road.br && !inside(ss[i])) {
+      if (!road.br) {
         for (const sg of world.railsNear(x0, z0)) {
           if (sg.k !== 'tram') continue;
           const ex = sg.bx - sg.ax, ez = sg.bz - sg.az, el = Math.hypot(ex, ez) || 1;
@@ -397,16 +398,10 @@ export function buildRoadChunk(world, runs, mats) {
       }
       return { dx, dz, m, sl, sr, hl, hr, Lp, Rp };
     });
-    // Край у путей сужается плавно в обе стороны: иначе от точки к точке он прыгал. Перекрёсток
-    // в это не входит — там полотно полной ширины и обрывается уступом, как бордюр у переезда.
-    const free = (i) => !inside(ss[i]);
+    // Край у путей сужается плавно в обе стороны: иначе от точки к точке он прыгал.
     for (const key of ['hl', 'hr']) {
-      for (let i = 1; i < pts.length; i++) {
-        if (free(i) && free(i - 1)) frame[i][key] = Math.min(frame[i][key], frame[i - 1][key] + TAPER * (ss[i] - ss[i - 1]));
-      }
-      for (let i = pts.length - 2; i >= 0; i--) {
-        if (free(i) && free(i + 1)) frame[i][key] = Math.min(frame[i][key], frame[i + 1][key] + TAPER * (ss[i + 1] - ss[i]));
-      }
+      for (let i = 1; i < pts.length; i++) frame[i][key] = Math.min(frame[i][key], frame[i - 1][key] + TAPER * (ss[i] - ss[i - 1]));
+      for (let i = pts.length - 2; i >= 0; i--) frame[i][key] = Math.min(frame[i][key], frame[i + 1][key] + TAPER * (ss[i + 1] - ss[i]));
     }
     let last = null; // вершины предыдущей точки и куда они уже записаны
     const emit = (i, vert, uv) => {
@@ -578,7 +573,7 @@ function medianEdge(world, road, x, z, nx, nz, half, y) {
 // Трамвайное полотно поперёк пути (u: 0…1 на BED_TEX м, ось пути — 0,5) и вдоль (v: SLEEPER_TILE м):
 // посередине щебень с бетонными шпалами, по краям трава — между путями и до дороги, как на Карла Маркса.
 const SLEEPER_TILE = 1.4; // м: две шпалы на повтор текстуры
-const BED_TEX = TRAM_BED + 2 * TRAM_GRASS; // м: ширина текстуры — полотно с газоном до дороги
+const BED_TEX = TRAM_BED + 2 * (TRAM_GRASS + TRAM_TUCK); // м: ширина текстуры — полотно с газоном до дороги и под её край
 function trackbedTexture(renderer) {
   const PX = 80, W = Math.round(BED_TEX * PX), H = Math.round(SLEEPER_TILE * PX);
   const c = document.createElement('canvas');
@@ -649,15 +644,30 @@ export function buildRailChunk(world, info, mat, deckMat, bedMat, crossMat) {
   // Верх полотна с текстурой (v — метры вдоль пути, шпалы не прыгают на стыках кусков). P, Q — ось
   // [x, y, z, gx, gz]: края — по наклону полотна поперёк, вровень с асфальтом по обе стороны.
   // P[5], P[6] — полуширина влево/вправо (с газоном до дороги), bx, bz — половина TRAM_BED влево.
-  const edge = (P, sg, bx, bz) => {
-    const k = ((sg > 0 ? P[5] : P[6]) / (TRAM_BED / 2)) * sg;
-    return [P[0] + bx * k, P[1] + (P[3] * bx + P[4] * bz) * k, P[2] + bz * k];
+  // Точка поперёк полотна в m м от оси (m > 0 — влево): ровно по наклону полотна до края щебня (TRAM_BED / 2),
+  // дальше газон уходит вниз — на TRAM_DROP к краю газона и ещё на TRAM_TUCK под край асфальта. Газон и
+  // асфальт на одной высоте мерцали при движении; ниже асфальта лента дороги всегда поверх.
+  const W = TRAM_BED / 2;
+  const off = (P, m, bx, bz) => {
+    const k = m / W, w = m > 0 ? P[5] : P[6], a = Math.abs(m);
+    const drop = a > W ? (TRAM_DROP * (a - W)) / (w + TRAM_TUCK - W) : 0;
+    return [P[0] + bx * k, P[1] + (P[3] * bx + P[4] * bz) * k - drop, P[2] + bz * k];
+  };
+  const outer = (P, sg) => (sg > 0 ? P[5] : P[6]) > W + 0.01; // с этой стороны газон до дороги
+  const edge = (P, sg, bx, bz) => off(P, sg * (outer(P, sg) ? (sg > 0 ? P[5] : P[6]) + TRAM_TUCK : W), bx, bz);
+  const u = (m) => 0.5 - m / BED_TEX;
+  const bedQuad = (P, Q, mP0, mQ0, mQ1, mP1, sP, sQ, bx, bz) => {
+    quad(bed, off(P, mP0, bx, bz), off(Q, mQ0, bx, bz), off(Q, mQ1, bx, bz), off(P, mP1, bx, bz));
+    const a = [u(mP0), sP / SLEEPER_TILE], b = [u(mQ0), sQ / SLEEPER_TILE], c = [u(mQ1), sQ / SLEEPER_TILE], d = [u(mP1), sP / SLEEPER_TILE];
+    bedUv.push(...a, ...b, ...c, ...a, ...c, ...d);
   };
   const bedTop = (P, Q, sP, sQ, bx, bz) => {
-    quad(bed, edge(P, 1, bx, bz), edge(Q, 1, bx, bz), edge(Q, -1, bx, bz), edge(P, -1, bx, bz));
-    const u = (w) => 0.5 + w / BED_TEX;
-    const a = [u(-P[5]), sP / SLEEPER_TILE], b = [u(-Q[5]), sQ / SLEEPER_TILE], c = [u(Q[6]), sQ / SLEEPER_TILE], d = [u(P[6]), sP / SLEEPER_TILE];
-    bedUv.push(...a, ...b, ...c, ...a, ...c, ...d);
+    bedQuad(P, Q, W, W, -W, -W, sP, sQ, bx, bz); // щебень и шпалы
+    for (const sg of [1, -1]) { // газон с наклоном вниз
+      if (!outer(P, sg) && !outer(Q, sg)) continue;
+      const ep = sg * ((sg > 0 ? P[5] : P[6]) + (outer(P, sg) ? TRAM_TUCK : 0)), eq = sg * ((sg > 0 ? Q[5] : Q[6]) + (outer(Q, sg) ? TRAM_TUCK : 0));
+      bedQuad(P, Q, sg * W, sg * W, eq, ep, sP, sQ, bx, bz);
+    }
   };
   const steel = new THREE.Color('#c3c7cc'), rust = new THREE.Color('#6b4a36');
   for (const r of data.rails) {
@@ -702,8 +712,12 @@ export function buildRailChunk(world, info, mat, deckMat, bedMat, crossMat) {
             const cl = world.railLevel(cx, cz, dx, dz, tram), ct = world.terrain(cx, cz);
             const C = at(cl, cx, cl.y, cz), sC = sP + (sQ - sP) * f;
             if (s.bed) { patch(C, Q); [Q, qt, sQ] = [C, ct, sC]; } else { patch(P, C); [P, pt, sP] = [C, ct, sC]; }
-            const a = edge(C, 1, bx, bz), b = edge(C, -1, bx, bz);
-            quad(curb, a, b, [b[0], ct - 0.1, b[2]], [a[0], ct - 0.1, a[2]]);
+            // Торец по профилю полотна: газон слева, щебень, газон справа.
+            const line = [edge(C, 1, bx, bz), off(C, W, bx, bz), off(C, -W, bx, bz), edge(C, -1, bx, bz)];
+            for (let j = 1; j < line.length; j++) {
+              const a = line[j - 1], b = line[j];
+              quad(curb, a, b, [b[0], ct - 0.1, b[2]], [a[0], ct - 0.1, a[2]]);
+            }
           }
           bedTop(P, Q, sP, sQ, bx, bz);
           // Бок полотна — бетонный бордюр (виден только там, где рядом не асфальт).

@@ -25,6 +25,9 @@ const RAIL_ALONG = 9; // м от края полотна путепровода:
 const TRAM_ABOVE = 0.02, TRAM_REACH = 8, TRAM_LIFT = 0.1, TRAM_SPAN = 60, TRAM_STEP = 2, TRAM_EASE = 20;
 export const TRAM_BED = 3.2; // м: ширина трамвайного полотна на путь (= междупутье, соседние смыкаются)
 export const TRAM_GRASS = 1; // м: газон между полотном и дорогой (лента дороги обрезается за ним, build.js)
+// Газон снаружи пути уходит вниз от края щебня: на TRAM_DROP м к краю газона плюс TRAM_TUCK м под асфальт.
+export const TRAM_DROP = 0.35, TRAM_TUCK = 0.5;
+const TRAM_GRASS_WIN = 8; // м: газон только где соседнего пути с этой стороны нет на столько вперёд и назад
 const STEP = 2; // м: на сколько выше машины поверхность ещё «под колёсами» (ground)
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
 export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
@@ -778,7 +781,10 @@ export class World {
       const L = Math.hypot(q.bx - q.ax, q.bz - q.az) || 1;
       const l = this.railLevel(x, z, (q.bx - q.ax) / L, (q.bz - q.az) / L, true);
       if (l.o > l.wl || -l.o > l.wr) continue; // за газоном
-      if (l.bed && l.y <= lim) y = Math.max(y, l.y);
+      // На газоне — по его наклону вниз (как в buildRailChunk).
+      const a = Math.abs(l.o), w = l.o > 0 ? l.wl : l.wr, W = TRAM_BED / 2;
+      const ly = a > W ? l.y - (TRAM_DROP * (a - W)) / (w + TRAM_TUCK - W) : l.y;
+      if (l.bed && ly <= lim) y = Math.max(y, ly);
     }
     return y;
   }
@@ -873,16 +879,25 @@ export class World {
       return null;
     };
     P = raw.map((p, i) => {
-      if (p.ok) return { s: p.s, y: p.y, bed: p.bed, cross: false, gx: p.gx, gz: p.gz, wl: p.wl, wr: p.wr };
+      if (p.ok) return { s: p.s, y: p.y, bed: p.bed, cross: false, gx: p.gx, gz: p.gz };
       const a = find(i, -1), b = find(i, 1);
       // Надёжная точка только с одной стороны (пути уходят с улицы) — от неё к своему уровню за TRAM_EASE м.
       const o = a || b;
       const w = a && b ? a.d / (a.d + b.d) : o ? Math.min(1, o.d / TRAM_EASE) : 1;
       const A = a && b ? a : o ?? p, B = a && b ? b : p;
       const y = A.y + (B.y - A.y) * w, gx = A.gx + (B.gx - A.gx) * w, gz = A.gz + (B.gz - A.gz) * w;
-      return p.cross ? { s: p.s, y: Math.max(p.y, y), bed: false, cross: true, gx: 0, gz: 0, wl: TRAM_BED / 2, wr: TRAM_BED / 2 }
-        : { s: p.s, y, bed: p.bed, cross: false, gx, gz, wl: p.wl, wr: p.wr };
+      return p.cross ? { s: p.s, y: Math.max(p.y, y), bed: false, cross: true, gx: 0, gz: 0 } : { s: p.s, y, bed: p.bed, cross: false, gx, gz };
     });
+    // Полуширина полотна влево/вправо (по ходу пути): снаружи пары — с газоном до дороги. Газон — только
+    // где соседа с этой стороны нет на ±TRAM_GRASS_WIN м, и ширина меняется плавно (TRAM_GRASS за 5 м):
+    // сосед на изгибе находится через раз, и край полотна шёл ступеньками.
+    const W = TRAM_BED / 2, win = Math.round(TRAM_GRASS_WIN / TRAM_STEP), rate = (TRAM_GRASS / 5) * TRAM_STEP;
+    for (const [key, nb] of [['wl', 'nl'], ['wr', 'nr']]) {
+      const w = raw.map((_, i) => (raw.slice(Math.max(0, i - win), i + win + 1).some((q) => q[nb]) ? W : W + TRAM_GRASS));
+      for (let i = 1; i < w.length; i++) w[i] = Math.min(w[i], w[i - 1] + rate);
+      for (let i = w.length - 2; i >= 0; i--) w[i] = Math.min(w[i], w[i + 1] + rate);
+      w.forEach((v, i) => (P[i][key] = v));
+    }
     this.tramProfiles.set(ri, P);
     return P;
   }
@@ -893,9 +908,12 @@ export class World {
     let R = this.tramRaws.get(ri);
     if (R) return R;
     const p = this.city.rails[ri].p;
-    // Полуширина полотна влево/вправо от пути (по ходу пути): снаружи пары — с газоном до дороги.
-    const W = TRAM_BED / 2;
-    const grass = (l) => ({ wl: l.nb > 0 ? W : W + TRAM_GRASS, wr: l.nb < 0 ? W : W + TRAM_GRASS });
+    // Соседний путь сбоку (sg: 1 — слева): рельс другого пути в метре от точки на междупутье от оси.
+    const nbAt = (x, z, dx, dz, sg) => {
+      const px = x - dz * TRAM_BED * sg, pz = z + dx * TRAM_BED * sg;
+      return this.railsNear(px, pz).some((q) => q.k === 'tram' && q.ri !== ri && World.closest(q, px, pz).d < 1);
+    };
+    const grass = (x, z, dx, dz) => ({ nl: nbAt(x, z, dx, dz, 1), nr: nbAt(x, z, dx, dz, -1) });
     R = [];
     let s0 = 0;
     for (let i = 1; i < p.length; i++) {
@@ -907,7 +925,7 @@ export class World {
         const x = ax + dx * (s - s0), z = az + dz * (s - s0);
         let l = this.#railLevel(x, z, dx, dz, true);
         if (!l.cross) l = this.#pairLevel(x, z, dx, dz, l);
-        R.push({ s, y: l.y, bed: l.bed, cross: !!l.cross, ok: !l.cross && l.anchored !== false, gx: l.gx ?? 0, gz: l.gz ?? 0, ...grass(l) });
+        R.push({ s, y: l.y, bed: l.bed, cross: !!l.cross, ok: !l.cross && l.anchored !== false, gx: l.gx ?? 0, gz: l.gz ?? 0, ...grass(x, z, dx, dz) });
       }
       s0 += L;
     }
@@ -915,7 +933,7 @@ export class World {
     const L = Math.hypot(x - px, z - pz) || 1;
     let l = this.#railLevel(x, z, (x - px) / L, (z - pz) / L, true);
     if (!l.cross) l = this.#pairLevel(x, z, (x - px) / L, (z - pz) / L, l);
-    R.push({ s: s0, y: l.y, bed: l.bed, cross: !!l.cross, ok: !l.cross && l.anchored !== false, gx: l.gx ?? 0, gz: l.gz ?? 0, ...grass(l) });
+    R.push({ s: s0, y: l.y, bed: l.bed, cross: !!l.cross, ok: !l.cross && l.anchored !== false, gx: l.gx ?? 0, gz: l.gz ?? 0, ...grass(x, z, (x - px) / L, (z - pz) / L) });
     this.tramRaws.set(ri, R);
     return R;
   }
@@ -960,9 +978,7 @@ export class World {
     if (!best) return own;
     const mx = (x + best.px) / 2, mz = (z + best.pz) / 2, mid = this.#railLevel(mx, mz, dx, dz, true);
     if (mid.cross || mid.bed !== own.bed || (mid.anchored === false && own.anchored !== false)) return own;
-    // nb — сторона соседнего пути (1 — слева): с неё газона нет, там его полотно.
-    const d = (x - mx) * -dz + (z - mz) * dx; // смещение пути от середины влево
-    return { ...mid, y: mid.y + (mid.gx ?? 0) * (x - mx) + (mid.gz ?? 0) * (z - mz), nb: d > 0 ? -1 : 1 };
+    return { ...mid, y: mid.y + (mid.gx ?? 0) * (x - mx) + (mid.gz ?? 0) * (z - mz) };
   }
 
   #railLevel(x, z, dx, dz, tram) {
