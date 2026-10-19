@@ -278,6 +278,8 @@ async function main() {
   game.sound = sound;
   const trams = owned('трамваи', () => new Trams(world, scene, sound));
   game.trams = trams;
+  traffic.trams = trams; // трафик ждёт трамваи, трамваи — трафик на путях
+  trams.traffic = traffic;
   // Радио всегда на экране: станция или приглушённое «Радио выкл»; при переключении надпись вспыхивает.
   let radioName, radioWheel; // барабан создаётся ниже, а onChange зовётся уже здесь
   const radio = new Radio(() => {

@@ -82,6 +82,7 @@ export class Traffic {
     this.world = world;
     this.enabled = true;
     this.signals = null; // выставляет Signals
+    this.trams = null;   // выставляет main.js: трамваи — препятствие, сквозь них не едем
     this.honks = []; // гудки за кадр: { x, z, bus, long } — забирает Sound.traffic
     this.#buildGraph();
 
@@ -232,6 +233,15 @@ export class Traffic {
   update(dt, car) {
     if (!this.enabled) return;
     const px = car.pos.x, pz = car.pos.y;
+    // Трамваи рядом с трафиком — точки вдоль вагона (вагон длинный, поперёк дороги его центр может быть в стороне),
+    // и где они будут через 1 и 2 с: трамвай, подъезжающий к перекрёстку сбоку, пропускаем заранее.
+    this.tramPts = [];
+    for (const t of this.trams?.near(px, pz, DESPAWN + 30) ?? []) {
+      for (const k of [0, 1, 2]) for (const o of [-6, -3, 0, 3, 6]) {
+        const s = o + t.v * k;
+        this.tramPts.push([t.x + t.dx * s, t.z + t.dz * s, t.dx, t.dz]);
+      }
+    }
     for (const v of this.vehicles) {
       if (!v.active || Math.hypot(v.x - px, v.z - pz) > DESPAWN) this.#spawn(v, px, pz, SPAWN_MIN);
       if (v.active && v.knock) this.#tumble(v, dt);
@@ -287,6 +297,10 @@ export class Traffic {
         // Сбитая машина стоит поперёк как попало — препятствие при любом её курсе.
         if (o !== v && o.active && check(o.x, o.z, o.len, !o.knock, o.dx, o.dz)) blockedByTraffic = true;
       }
+    }
+    // Трамвай впереди — в любом направлении (пересекает улицу или едет по полосе): ждём.
+    for (const [tx, tz, tdx, tdz] of this.tramPts) {
+      if (Math.abs(tx - v.x) < look + 10 && Math.abs(tz - v.z) < look + 10 && check(tx, tz, 3, false, tdx, tdz)) blockedByTraffic = true;
     }
     const f = car.forward;
     const byPlayer = check(car.pos.x, car.pos.y, 4.3, false, f.x, f.y);

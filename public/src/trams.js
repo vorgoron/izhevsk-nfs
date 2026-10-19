@@ -16,6 +16,7 @@ export class Trams {
   constructor(world, scene, sound) {
     this.world = world;
     this.sound = sound;
+    this.traffic = null; // выставляет main.js: перед машинами трафика на путях трамвай тоже встаёт
     this.routes = (world.city.trams || []).map((r) => {
       const acc = [0];
       for (let i = 1; i < r.p.length; i++) acc.push(acc[i - 1] + Math.hypot(r.p[i][0] - r.p[i - 1][0], r.p[i][1] - r.p[i - 1][1]));
@@ -140,6 +141,17 @@ export class Trams {
           const rx = o.x - tr.x, rz = o.z - tr.z, ahead = rx * tr.dx + rz * tr.dz;
           if (ahead <= 0 || ahead > 45 || Math.abs(rx * tr.dz - rz * tr.dx) > 2 || o.dx * tr.dx + o.dz * tr.dz < 0.5) continue;
           limit = Math.min(limit, Math.max(0, (ahead - LEN - 6) * 0.5));
+        }
+        // Машина трафика на путях впереди — тормозим перед ней (дальше от игрока трафика нет).
+        if (this.traffic?.enabled && Math.hypot(tr.x - px, tr.z - pz) < 520) {
+          // И та, что въедет на пути в ближайшие 1,5 с (едет к ним поперёк).
+          for (const v of this.traffic.vehicles) {
+            if (!v.active || Math.abs(v.x - tr.x) > 60 || Math.abs(v.z - tr.z) > 60) continue;
+            for (const k of [0, 0.75, 1.5]) {
+              const rx = v.x + v.dx * v.speed * k - tr.x, rz = v.z + v.dz * v.speed * k - tr.z, ahead = rx * tr.dx + rz * tr.dz;
+              if (ahead > 0 && ahead < 40 && Math.abs(rx * tr.dz - rz * tr.dx) < 2.6) limit = Math.min(limit, Math.max(0, (ahead - HALF - v.len / 2 - 3) * 0.6));
+            }
+          }
         }
         // Игрок на рельсах впереди — стоим и звеним.
         const near = Math.hypot(tr.x - px, tr.z - pz) < 60;
