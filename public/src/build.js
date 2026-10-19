@@ -1260,18 +1260,181 @@ function pointInPoly(x, z, p) {
   return inside;
 }
 
+// Шум 0…1 от точки: одинаковые вершины соседних граней сдвигаются одинаково — без щелей.
+const hash3 = (x, y, z, s) => {
+  const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7 + s * 19.3) * 43758.5453;
+  return h - Math.floor(h);
+};
+
+// Дерево — ствол, ветки и крона в одной геометрии (один InstancedMesh на породу). Цвет вершин — свет
+// и тень (низ и середина кроны темнее), aTint = 1 у хвои и листвы: только её красит цвет экземпляра.
+class TreeGeo {
+  constructor() { this.pos = []; this.nrm = []; this.col = []; this.tint = []; }
+
+  #push(g, tint, fn) { // fn(i, p, n) → [r, g, b], может поправить p и n
+    const P = g.attributes.position, N = g.attributes.normal, p = new THREE.Vector3(), n = new THREE.Vector3();
+    for (let i = 0; i < P.count; i++) {
+      p.fromBufferAttribute(P, i);
+      n.fromBufferAttribute(N, i);
+      const c = fn(i, p, n);
+      this.pos.push(p.x, p.y, p.z);
+      this.nrm.push(n.x, n.y, n.z);
+      this.col.push(...c);
+      this.tint.push(tint);
+    }
+  }
+
+  // Ствол или ветка от a до b; col(t, p) — цвет по доле длины t.
+  limb(a, b, r0, r1, sides, segs, col) {
+    const d = new THREE.Vector3().subVectors(b, a), len = d.length();
+    const g = new THREE.CylinderGeometry(r1, r0, len, sides, segs, true).translate(0, len / 2, 0).toNonIndexed();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+    this.#push(g, 0, (i, p, n) => {
+      const t = p.y / len;
+      const c = col(t, p);
+      p.applyQuaternion(q).add(a);
+      n.applyQuaternion(q);
+      return c;
+    });
+  }
+
+  // Клок листвы: неровный икосаэдр, sy — растяжение по высоте. Нормали — от центра: свет мягкий,
+  // как у кроны, а не по граням. Тень — снизу кроны (y0…y1 — её низ и верх) и рябью по вершинам.
+  clump(cx, cy, cz, r, sy, detail, seed, y0, y1) {
+    const g = new THREE.IcosahedronGeometry(r, detail); // уже без индексов
+    this.#push(g, 1, (i, p, n) => {
+      const k = 1 + 0.32 * (hash3(p.x, p.y, p.z, seed) - 0.5);
+      n.copy(p).normalize();
+      n.y = n.y / sy + 0.25;
+      n.normalize();
+      p.multiplyScalar(k);
+      p.y *= sy;
+      p.add({ x: cx, y: cy, z: cz });
+      const up = Math.min(Math.max((p.y - y0) / (y1 - y0), 0), 1);
+      const s = (0.5 + 0.55 * up) * (0.85 + 0.3 * hash3(p.x, p.y, p.z, seed + 7));
+      return [s, s, s];
+    });
+  }
+
+  // Ярус ели: конус с неровным, слегка опущенным краем. Концы веток светлее, глубина у ствола и низ — тёмные.
+  tier(y, r, h, segs, seed, shade) {
+    const g = new THREE.ConeGeometry(r, h, segs, 1).translate(0, y + h / 2, 0).toNonIndexed();
+    this.#push(g, 1, (i, p, n) => {
+      // Край опускается вместе с донышком (те же вершины по месту), иначе из-под края видно изнанку.
+      const cap = n.y < -0.9, rim = !cap && p.y < y + 0.01;
+      const ax = Math.round(p.x * 1000), az = Math.round(p.z * 1000);
+      if (p.y < y + 0.01 && (ax || az)) {
+        const k = 0.85 + 0.35 * hash3(ax, 0, az, seed);
+        p.x *= k; p.z *= k;
+        p.y -= 0.35 * hash3(az, 1, ax, seed);
+      }
+      if (!cap) n.set(p.x, r * 0.7, p.z).normalize();
+      const s = shade * (cap ? 0.4 : rim ? 1.05 : 0.5);
+      return [s, s, s];
+    });
+  }
+
+  build() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nrm, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('aTint', new THREE.Float32BufferAttribute(this.tint, 1));
+    g.computeBoundingSphere();
+    return g;
+  }
+}
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const rgb = (hex) => new THREE.Color(hex).toArray();
+const BARK = rgb('#5a4632'), BARK_DARK = rgb('#3e3024');
+const bark = (t) => (t < 0.15 ? BARK_DARK : BARK);
+
+// Породы, у каждой near — вблизи, far — для дальних квадратов (в 4–6 раз меньше треугольников).
+const TREE_KINDS = {
+  // Липа, клён, тополь: ствол с тремя толстыми ветками и крона из клочьев.
+  broad(near) {
+    const t = new TreeGeo();
+    t.limb(V(0, 0, 0), V(0.12, 3.8, 0.05), 0.27, 0.15, near ? 6 : 5, 1, bark);
+    if (!near) {
+      t.clump(0, 5.4, 0, 2.5, 0.95, 0, 1, 3.2, 7.8);
+      return t.build();
+    }
+    for (const [x, z] of [[1.3, 0.3], [-0.9, 0.9], [-0.3, -1.2]]) t.limb(V(0, 2.8, 0), V(x, 4.8, z), 0.11, 0.05, 4, 1, bark);
+    t.clump(0, 5.5, 0, 2.0, 0.95, 1, 1, 3.2, 7.8);
+    for (const [x, y, z, r] of [[1.5, 4.9, 0.4, 1.5], [-1.2, 5.0, 1.1, 1.4], [-0.4, 4.7, -1.5, 1.45], [0.4, 6.7, -0.2, 1.3]]) {
+      t.clump(x, y, z, r, 0.9, 0, x * 13 + z, 3.2, 7.8);
+    }
+    return t.build();
+  },
+  // Берёза: высокий белый ствол с тёмными чёрточками и узкая крона.
+  birch(near) {
+    const t = new TreeGeo();
+    const white = rgb('#e6e2d6'), mark = rgb('#2d2a26');
+    const col = (tt, p) => (tt < 0.06 ? BARK_DARK : hash3(Math.round(tt * 9), Math.atan2(p.z, p.x) > 0 ? 1 : 0, 0, 3) < 0.3 ? mark : white);
+    t.limb(V(0, 0, 0), V(0.15, 7.6, 0), 0.19, 0.07, near ? 6 : 5, near ? 6 : 2, col);
+    if (!near) {
+      t.clump(0.1, 7, 0, 1.7, 1.55, 0, 2, 4.4, 9.8);
+      return t.build();
+    }
+    for (const [x, y, z, r] of [[0.3, 5.4, 0.4, 1.35], [-0.5, 6.3, -0.3, 1.3], [0.5, 7.4, -0.4, 1.2], [-0.2, 8.4, 0.3, 1.0], [0.1, 6.2, 0.9, 1.1]]) {
+      t.clump(x, y, z, r, 1.3, 0, x * 17 + y, 4.4, 9.8);
+    }
+    return t.build();
+  },
+  // Ель: ярусы сужаются кверху, нижние темнее; макушка — тонкий шпиль.
+  spruce(near) {
+    const t = new TreeGeo();
+    t.limb(V(0, 0, 0), V(0, 2.2, 0), 0.24, 0.12, 5, 1, bark);
+    const n = near ? 6 : 3;
+    for (let i = 0; i < n; i++) {
+      const f = i / (n - 1);
+      const h = near ? 2.7 - f * 0.8 : 3.8 - f * 0.8;
+      const y = 0.8 + f * (near ? 6.9 : 5.6);
+      t.tier(y, 2.5 - f * 1.85, h, near ? 9 : 7, i + 1, 0.8 + 0.2 * f);
+    }
+    if (near) t.tier(8.9, 0.3, 1.4, 5, 9, 1);
+    return t.build();
+  },
+  // Сосна (только в лесу): голый ствол, кверху рыжий, плоская крона на макушке.
+  pine(near) {
+    const t = new TreeGeo();
+    const low = rgb('#4b3d31'), high = rgb('#a65f37');
+    t.limb(V(0, 0, 0), V(0.25, 10.6, 0.1), 0.3, 0.1, near ? 6 : 5, near ? 3 : 1, (tt) => (tt < 0.4 ? low : high));
+    if (!near) {
+      t.clump(0.2, 10, 0.1, 2.5, 0.6, 0, 4, 8.6, 11.6);
+      return t.build();
+    }
+    for (const [x, z] of [[1.4, 0.4], [-1.0, -0.8]]) t.limb(V(0.2, 8.2, 0.1), V(x, 9.4, z), 0.09, 0.05, 4, 1, () => high);
+    for (const [x, y, z, r] of [[0.2, 10.6, 0.1, 1.9], [1.5, 9.6, 0.5, 1.4], [-1.1, 9.4, -0.8, 1.5], [-0.3, 9.9, 1.2, 1.2]]) {
+      t.clump(x, y, z, r, 0.6, 0, x * 11 + z, 8.6, 11.6);
+    }
+    return t.build();
+  },
+};
+
+// Ветер: верхушки чуть качаются, у каждого дерева своя фаза (по месту экземпляра).
+const TREE_WIND = { value: 0 };
+
 export function treeMaterials() {
-  // Ель: три конуса друг над другом на коротком стволе.
-  const cone = (r, h, y) => new THREE.ConeGeometry(r, h, 7).translate(0, y + h / 2, 0);
-  const spruce = mergeGeos([cone(2.2, 3.6, 1.2), cone(1.7, 3.2, 3.4), cone(1.1, 2.8, 5.6)]);
-  return {
-    trunkGeo: new THREE.CylinderGeometry(0.18, 0.25, 3, 5).translate(0, 1.5, 0),
-    crownGeo: new THREE.IcosahedronGeometry(2.4, 0).translate(0, 4.6, 0),
-    spruceTrunkGeo: new THREE.CylinderGeometry(0.15, 0.22, 1.6, 5).translate(0, 0.8, 0),
-    spruceGeo: spruce,
-    trunk: new THREE.MeshLambertMaterial({ color: '#5a4632' }),
-    crown: new THREE.MeshLambertMaterial({ color: '#ffffff' }),
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uWind = TREE_WIND;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aTint;\nuniform float uWind;')
+      .replace('#include <color_vertex>', `vColor = color;
+        #ifdef USE_INSTANCING_COLOR
+          vColor *= mix(vec3(1.0), instanceColor.xyz, aTint);
+        #endif`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        float ph = instanceMatrix[3].x * 0.13 + instanceMatrix[3].z * 0.17;
+        float bend = pow(max(position.y - 1.0, 0.0) / 10.0, 2.0) * 0.14;
+        transformed.x += bend * sin(uWind * 1.3 + ph);
+        transformed.z += bend * 0.6 * sin(uWind * 0.9 + ph * 1.7);`);
   };
+  const geos = {};
+  for (const [k, make] of Object.entries(TREE_KINDS)) geos[k] = [make(true), make(false)];
+  return { mat, geos, tick: (now) => { TREE_WIND.value = now / 1000; } };
 }
 
 function mergeGeos(geos, extra = []) {
@@ -1290,7 +1453,7 @@ const MAX_TREES = 1100;         // на квадрат
 const STREET_STEP = [26, 44];   // м между деревьями вдоль улицы (случайно в диапазоне)
 const STREET_KINDS = new Set(['primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'living_street']);
 
-// Деревья квадрата: из OSM, случайные в парках (лиственные) и лесах (в основном ели),
+// Деревья квадрата: из OSM, случайные в парках (лиственные) и лесах (ели, сосны, берёзы — выше городских),
 // и редкие деревья вдоль улиц в застройке. Детерминированно по квадрату.
 // Проверки места для дерева или столба в квадрате: free — не у достопримечательности и не на
 // рельсах, inBuilding — внутри дома квадрата.
@@ -1303,7 +1466,18 @@ function spotChecks(world, data) {
   const railSegs = [];
   for (const r of data.rails) for (let i = 1; i < r.p.length; i++) railSegs.push({ ax: r.p[i - 1][0], az: r.p[i - 1][1], bx: r.p[i][0], bz: r.p[i][1] });
   const offRails = (x, z) => railSegs.every((sg) => World.closest(sg, x, z).d > 3.5);
-  const free = (x, z) => clear.every(([cx, cz, r]) => Math.hypot(x - cx, z - cz) > r) && offRails(x, z);
+  // Не под пешеходными мостами и не вплотную к ним: крона проросла бы сквозь настил.
+  const BRIDGE_CLEAR = 4;
+  const offBridges = (x, z) => (world.footbridgeItems || []).every(({ o: { poly }, bb }) => {
+    if (x < bb[0] - BRIDGE_CLEAR || x > bb[2] + BRIDGE_CLEAR || z < bb[1] - BRIDGE_CLEAR || z > bb[3] + BRIDGE_CLEAR) return true;
+    if (pointInPoly(x, z, poly)) return false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const sg = { ax: poly[j][0], az: poly[j][1], bx: poly[i][0], bz: poly[i][1] };
+      if (World.closest(sg, x, z).d < BRIDGE_CLEAR) return false;
+    }
+    return true;
+  });
+  const free = (x, z) => clear.every(([cx, cz, r]) => Math.hypot(x - cx, z - cz) > r) && offRails(x, z) && offBridges(x, z);
   const inBuilding = (x, z) => data.buildings.some((b) => {
     const p = b.p;
     if (Math.abs(p[0][0] - x) > 80 || Math.abs(p[0][1] - z) > 80) return false;
@@ -1315,11 +1489,13 @@ function spotChecks(world, data) {
 export function buildTreeChunk(world, info, mats) {
   const { x0, z0, x1, z1, data } = info;
   const { free, inBuilding } = spotChecks(world, data);
-  const leafy = data.trees.filter(([x, z]) => free(x, z));
-  const spruce = [];
   let rnd = (info.ci * 48271 + info.cj * 16807 + 12345) % 2147483647 || 1;
   const rand = () => ((rnd = (rnd * 16807) % 2147483647) / 2147483647);
-  const count = () => leafy.length + spruce.length;
+  const spots = { broad: [], birch: [], spruce: [], pine: [] }; // [x, z, лес?]
+  let count = 0;
+  const put = (kind, x, z, forest = false) => { spots[kind].push([x, z, forest]); count++; };
+  const leafy = () => (rand() < 0.35 ? 'birch' : 'broad');
+  for (const [x, z] of data.trees) if (free(x, z)) put(leafy(), x, z);
   for (const a of data.areas) {
     if (a.k !== 'park') continue;
     // Сажаем только в части рамки парка, попавшей в квадрат.
@@ -1331,13 +1507,15 @@ export function buildTreeChunk(world, info, mats) {
     minx = Math.max(minx, x0); maxx = Math.min(maxx, x1); minz = Math.max(minz, z0); maxz = Math.min(maxz, z1);
     if (minx >= maxx || minz >= maxz) continue;
     const n = ((maxx - minx) * (maxz - minz)) * PARK_DENSITY;
-    for (let i = 0; i < n && count() < MAX_TREES; i++) {
+    for (let i = 0; i < n && count < MAX_TREES; i++) {
       const x = minx + rand() * (maxx - minx), z = minz + rand() * (maxz - minz);
       if (!pointInPoly(x, z, a.p) || (a.holes || []).some((h) => pointInPoly(x, z, h)) || !free(x, z)) continue;
       const r = world.nearestRoad(x, z, 3);
       if (r && r.d < 1.5) continue;
-      // Лес — в основном ели, парк — в основном лиственные.
-      ((a.f ? rand() < 0.8 : rand() < 0.15) ? spruce : leafy).push([x, z]);
+      // Лес — ели, сосны и берёзы, парк — в основном лиственные.
+      const u = rand();
+      if (a.f) put(u < 0.45 ? 'spruce' : u < 0.75 ? 'pine' : 'birch', x, z, true);
+      else put(u < 0.15 ? 'spruce' : leafy(), x, z);
     }
   }
   // Вдоль улиц в застройке: по обе стороны, за краем полотна, не на домах, дорогах, воде.
@@ -1351,12 +1529,12 @@ export function buildTreeChunk(world, info, mats) {
         const dx = (bx - ax) / L, dz = (bz - az) / L;
         for (const side of [-1, 1]) {
           for (let t = 6 + rand() * 10; t < L - 6; t += STREET_STEP[0] + rand() * (STREET_STEP[1] - STREET_STEP[0])) {
-            if (rand() < 0.3 || count() >= MAX_TREES) continue; // с пропусками
+            if (rand() < 0.3 || count >= MAX_TREES) continue; // с пропусками
             const off = road.w / 2 + 2.5 + rand() * 1.5;
             const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
             const nr = world.nearestRoad(x, z, 4);
             if ((nr && nr.d < 1.8) || world.isWater(x, z) || !free(x, z) || inBuilding(x, z)) continue;
-            (rand() < 0.12 ? spruce : leafy).push([x, z]);
+            put(rand() < 0.12 ? 'spruce' : leafy(), x, z);
           }
         }
       }
@@ -1365,28 +1543,35 @@ export function buildTreeChunk(world, info, mats) {
   const out = [];
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   const c = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
-  const plant = (spots, trunkGeo, crownGeo, color) => {
-    if (!spots.length) return;
-    const trunks = new THREE.InstancedMesh(trunkGeo, mats.trunk, spots.length);
-    const crowns = new THREE.InstancedMesh(crownGeo, mats.crown, spots.length);
-    const solid = []; // для breakables.js: ствол — препятствие [x, y, z, масштаб]
-    spots.forEach(([x, z], i) => {
-      const k = 0.7 + rand() * 0.7, y = world.terrain(x, z) - 0.2;
-      q.setFromAxisAngle(up, rand() * 6.28);
-      m.compose(p.set(x, y, z), q, s.set(k, k * (0.85 + rand() * 0.4), k));
-      solid.push([x, y, z, k]);
-      trunks.setMatrixAt(i, m);
-      crowns.setMatrixAt(i, m);
-      crowns.setColorAt(i, color(c));
-    });
-    for (const t of [trunks, crowns]) t.computeBoundingSphere();
-    crowns.castShadow = true;
-    trunks.userData.spots = solid;
-    out.push(trunks, crowns);
+  // Цвет листвы экземпляра (вершинный цвет его ещё затеняет).
+  const COLOR = {
+    broad: (c) => c.setHSL(0.24 + rand() * 0.08, 0.38 + rand() * 0.2, 0.3 + rand() * 0.1),
+    birch: (c) => c.setHSL(0.23 + rand() * 0.05, 0.4 + rand() * 0.15, 0.31 + rand() * 0.07),
+    spruce: (c) => c.setHSL(0.37 + rand() * 0.05, 0.3 + rand() * 0.15, 0.2 + rand() * 0.06),
+    pine: (c) => c.setHSL(0.3 + rand() * 0.05, 0.3 + rand() * 0.12, 0.24 + rand() * 0.06),
   };
-  // Берёзы, липы, тополя условно — разными оттенками зелёного; ели — тёмные сине-зелёные.
-  plant(leafy, mats.trunkGeo, mats.crownGeo, (c) => c.setHSL(0.25 + rand() * 0.08, 0.35 + rand() * 0.2, 0.22 + rand() * 0.1));
-  plant(spruce, mats.spruceTrunkGeo, mats.spruceGeo, (c) => c.setHSL(0.36 + rand() * 0.05, 0.35 + rand() * 0.15, 0.15 + rand() * 0.06));
+  for (const [kind, list] of Object.entries(spots)) {
+    if (!list.length) continue;
+    const [near, far] = mats.geos[kind];
+    const mesh = new THREE.InstancedMesh(near, mats.mat, list.length);
+    const solid = []; // для breakables.js: ствол — препятствие [x, y, z, масштаб]
+    list.forEach(([x, z, forest], i) => {
+      // В лесу деревья выше и стройнее: ели 13–19 м, сосны 16–22 м.
+      const k = forest ? 0.85 + rand() * 0.4 : 0.7 + rand() * 0.6;
+      const h = forest ? 1.35 + rand() * 0.55 : 0.85 + rand() * 0.4;
+      const y = world.terrain(x, z) - 0.2;
+      q.setFromAxisAngle(up, rand() * 6.28);
+      m.compose(p.set(x, y, z), q, s.set(k, k * h, k));
+      solid.push([x, y, z, k]);
+      mesh.setMatrixAt(i, m);
+      mesh.setColorAt(i, COLOR[kind](c));
+    });
+    mesh.computeBoundingSphere();
+    mesh.castShadow = true;
+    mesh.userData.spots = solid;
+    mesh.userData.lod = [near, far]; // ChunkManager меняет по расстоянию до квадрата
+    out.push(mesh);
+  }
   return out;
 }
 

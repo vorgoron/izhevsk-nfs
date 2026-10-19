@@ -7,6 +7,8 @@ import {
   drawMinimapTile, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
 
+const TREE_NEAR = 450; // м до квадрата: ближе — подробные деревья
+
 export class ChunkManager {
   constructor(world, scene, renderer, { radius = 1800, texSize = 1024 } = {}) {
     this.world = world;
@@ -22,18 +24,22 @@ export class ChunkManager {
 
   #key(ci, cj) { return ci * 10000 + cj; }
 
+  // Расстояние до ближайшей точки квадрата.
+  #dist(i, j, px, pz) {
+    const { sx, sz, xmin, zmin } = this.world.chunk;
+    const x0 = xmin + i * sx, z0 = zmin + j * sz;
+    return Math.hypot(Math.max(x0 - px, 0, px - (x0 + sx)), Math.max(z0 - pz, 0, pz - (z0 + sz)));
+  }
+
   // Квадраты в радиусе, ближние первыми.
   #wanted(px, pz, radius) {
-    const w = this.world, { nci, ncj, sx, sz, xmin, zmin } = w.chunk;
+    const w = this.world, { nci, ncj, sx, sz } = w.chunk;
     const [pi, pj] = w.chunkAt(px, pz);
     const ri = Math.ceil(radius / sx) + 1, rj = Math.ceil(radius / sz) + 1;
     const out = [];
     for (let i = Math.max(0, pi - ri); i <= Math.min(nci - 1, pi + ri); i++) {
       for (let j = Math.max(0, pj - rj); j <= Math.min(ncj - 1, pj + rj); j++) {
-        // Расстояние до ближайшей точки квадрата.
-        const x0 = xmin + i * sx, z0 = zmin + j * sz;
-        const dx = Math.max(x0 - px, 0, px - (x0 + sx)), dz = Math.max(z0 - pz, 0, pz - (z0 + sz));
-        const d = Math.hypot(dx, dz);
+        const d = this.#dist(i, j, px, pz);
         if (d <= radius) out.push({ i, j, d });
       }
     }
@@ -43,6 +49,7 @@ export class ChunkManager {
   #build(ci, cj) {
     const w = this.world, info = w.chunkInfo(ci, cj);
     const group = new THREE.Group();
+    group.userData = { ci, cj, trees: [] };
     const tag = (o, label) => ((o.userData.perf = label), o); // разбивка треугольников в `?perf`
     group.add(tag(buildTerrainChunk(w, info, this.texSize, this.renderer), 'рельеф'));
     if (info.data.runs.length) group.add(tag(buildRoadChunk(w, info.data.runs, this.mats.roads), 'дороги'));
@@ -51,7 +58,8 @@ export class ChunkManager {
     if (rails) group.add(tag(rails, 'рельсы'));
     const trees = buildTreeChunk(w, info, this.mats.trees);
     if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
-    for (const t of trees) if (t.userData.spots) this.breakables?.addTrees(t);
+    for (const t of trees) this.breakables?.addTrees(t);
+    group.userData.trees = trees;
     const poles = buildPoleChunk(w, info, this.mats.poles);
     if (poles) group.add(tag(poles, 'столбы'), ...poles.userData.glow.map((o) => tag(o, 'столбы')));
     const ads = buildBillboardChunk(w, info, this.mats.ads);
@@ -87,6 +95,15 @@ export class ChunkManager {
   // Каждый кадр: достроить до budget ближайших недостающих, выгрузить далёкие.
   update(px, pz, budget = 1) {
     this.mats.ads.tick(performance.now());
+    this.mats.trees.tick(performance.now());
+    // Деревья дальних квадратов — упрощённые; зазор между порогами, чтобы на границе не мигали.
+    for (const group of this.loaded.values()) {
+      const { ci, cj, trees } = group.userData;
+      if (!trees.length) continue;
+      const d = this.#dist(ci, cj, px, pz), cur = trees[0].geometry === trees[0].userData.lod[1];
+      const far = cur ? d > TREE_NEAR - 60 : d > TREE_NEAR;
+      if (far !== cur) for (const t of trees) t.geometry = t.userData.lod[far ? 1 : 0];
+    }
     // Рядом с машиной — сразу и без лимита (после эвакуатора, рестарта гонки).
     for (const { i, j } of this.#wanted(px, pz, 600)) if (!this.loaded.has(this.#key(i, j))) this.#build(i, j);
     const want = this.#wanted(px, pz, this.radius);
