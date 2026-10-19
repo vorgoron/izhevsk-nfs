@@ -185,6 +185,8 @@ export function buildRoadChunk(world, runs, mats) {
     const mk = roadMarking(road);
     const zones = road.plain ?? []; // перекрёстки: там асфальт без разметки (World.#initJunctions)
     const inZone = (s) => zones.some(([a, b]) => s >= a && s <= b);
+    // Строго внутри: на самой границе полотно ещё как до перекрёстка, иначе разметка у въезда изломана.
+    const inside = (s) => zones.some(([a, b]) => s > a + 0.01 && s < b - 0.01);
     // Ресемплинг до 5 м, чтобы полотно повторяло рельеф, плюс точки на границах перекрёстков.
     const src = road.n.slice(from, to + 1).map((i) => world.nodes[i]);
     const ysrc = road.y?.slice(from, to + 1);
@@ -238,9 +240,31 @@ export function buildRoadChunk(world, runs, mats) {
       // Полотно не заходит на трамвайные пути рядом (в OSM ось дороги часто ближе к путям, чем
       // половина её ширины): край с той стороны отступает до 2 м от оси пути. На перекрёстке —
       // нет: там пути идут по асфальту, а изгибы путей поворота давали дыры и рваный край.
-      let hl = half, hr = half;
-      if (!road.br && !inZone(ss[i])) {
-        const [x0, z0] = p;
+      const [x0, z0] = p;
+      // Соседняя проезжая часть (улица из двух линий OSM, оси ближе суммы полуширин, как на
+      // Удмуртской): ленты шли внахлёст, и разметка одной ложилась на другую. Край разметки
+      // (sl, sr) сдвигается к середине нахлёста, полосы ужимаются, посередине — две сплошные.
+      let sl = half, sr = half;
+      if (!road.br && !inside(ss[i])) {
+        const seen = new Set();
+        for (const o of [0, half, -half]) {
+          for (const q of world.nearbyRoadSegments(x0 - dz * o, z0 + dx * o)) {
+            if (q.road === road || q.road.br || seen.has(q)) continue;
+            seen.add(q);
+            if (roadMarking(q.road) === 'plain') continue;
+            const ex = q.bx - q.ax, ez = q.bz - q.az, el = Math.hypot(ex, ez) || 1;
+            if (Math.abs((ex * dx + ez * dz) / el) < 0.9) continue;
+            const c = World.closest(q, x0, z0);
+            const lat = (c.px - x0) * -dz + (c.pz - z0) * dx;
+            const sum = half + q.w / 2, over = sum - Math.abs(lat);
+            if (over <= 0 || Math.abs(lat) < sum / 2) continue; // почти на оси — съезд или продолжение
+            if (lat > 0) sl = Math.min(sl, half - over / 2);
+            else sr = Math.min(sr, half - over / 2);
+          }
+        }
+      }
+      let hl = sl, hr = sr;
+      if (!road.br && !inside(ss[i])) {
         for (const sg of world.railsNear(x0, z0)) {
           if (sg.k !== 'tram') continue;
           const ex = sg.bx - sg.ax, ez = sg.bz - sg.az, el = Math.hypot(ex, ez) || 1;
@@ -252,12 +276,12 @@ export function buildRoadChunk(world, runs, mats) {
           else hr = Math.min(hr, Math.max(2.4, -lat - 2));
         }
       }
-      return { dx, dz, m, hl, hr };
+      return { dx, dz, m, sl, sr, hl, hr };
     });
     // Край у путей сужается плавно в обе стороны: иначе от точки к точке он прыгал. Перекрёсток
     // в это не входит — там полотно полной ширины и обрывается уступом, как бордюр у переезда.
-    const free = (i) => !inZone(ss[i]);
-    for (const key of ['hl', 'hr']) {
+    const free = (i) => !inside(ss[i]);
+    for (const key of ['sl', 'sr', 'hl', 'hr']) {
       for (let i = 1; i < pts.length; i++) {
         if (free(i) && free(i - 1)) frame[i][key] = Math.min(frame[i][key], frame[i - 1][key] + TAPER * (ss[i] - ss[i - 1]));
       }
@@ -295,14 +319,15 @@ export function buildRoadChunk(world, runs, mats) {
       v += Math.hypot(bx - ax, bz - az);
     }
     for (let i = 0; i < pts.length; i++) {
-      const { dx, dz, m, hl, hr } = frame[i];
+      const { dx, dz, m, sl, sr } = frame[i];
+      const hl = Math.min(frame[i].hl, sl), hr = Math.min(frame[i].hr, sr);
       const nx = -dz * hl * m, nz = dx * hl * m, rnx = -dz * hr * m, rnz = dx * hr * m;
       if (i > 0) v += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       const [x, z] = pts[i];
       const yl = ys[i] ?? world.terrain(x + nx, z + nz) + road.lift;
       const yr = ys[i] ?? world.terrain(x - rnx, z - rnz) + road.lift;
-      // Разметка — от полной ширины: у путей край обрезается, а полосы остаются на своих местах.
-      emit(i, [x + nx, yl, z + nz, x - rnx, yr, z - rnz], [0.5 - hl / road.w, v / 12, 0.5 + hr / road.w, v / 12]);
+      // Разметка — от краёв sl…sr: у путей край обрезается, а полосы остаются на своих местах.
+      emit(i, [x + nx, yl, z + nz, x - rnx, yr, z - rnz], [(sl - hl) / (sl + sr), v / 12, (sl + hr) / (sl + sr), v / 12]);
       // Подъезд к мосту выше земли — насыпь: откосы от краёв полотна вниз до рельефа.
       const L_ = [x + nx, yl, z + nz], R_ = [x - rnx, yr, z - rnz];
       if (!road.br && ys[i] != null && prevEdge) {
