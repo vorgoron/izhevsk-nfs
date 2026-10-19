@@ -155,7 +155,7 @@ Firebase Hosting (https://izh-car.web.app) — вручную, `firebase deploy 
 - Модель Москвича-412 (`public/models/moskvich.glb`) упрощена из «[Car_ Moskvich 412i E](https://sketchfab.com/3d-models/car--moskvich-412i-e-01dcdf62a2134abdbc76fb1183f728e5)»
   автора [87-Motors](https://sketchfab.com/87-Motors), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
   Пересборка: `cd tools/models && npm install && node moskvich.mjs путь/к/scene.gltf`.
-- Модель ИЖ-2125 «Комби» (`public/models/kombi.glb`) — Москвич-412 из той же модели 87-Motors, позади задних дверей
+- Модель ИЖ-2125 «Комби» (`public/models/kombi.glb`) — Москвич-412 из той же модели 87-Motors, позади средней стойки
   верх заменён: крыша до кормы и пятая дверь, профиль снят с фотограмметрии «[Izh-2715 Kombi](https://sketchfab.com/3d-models/izh-2715-kombi-e2d950ee7b3d43949b9957a7cc49f407)»
   автора [trolleway](https://sketchfab.com/trolleway), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
   Пересборка: `node kombi.mjs` (исходник Москвича — `3d-models/car__moskvich_412i_e/scene.gltf`).
