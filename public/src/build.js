@@ -173,6 +173,7 @@ export function roadMaterials(renderer) {
 }
 
 const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
+const TAPER = 0.3; // м сужения полотна на метр длины у трамвайных путей
 const MEDIAN_REACH = 25; // м: дальше парный мост не соединяется общим настилом (как MEDIAN_MAX в world.js)
 
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
@@ -182,8 +183,9 @@ export function buildRoadChunk(world, runs, mats) {
 
   for (const { road, from, to } of runs) {
     const mk = roadMarking(road);
-    const b = (buckets[mk] ??= { p: [], uv: [], idx: [] });
-    // Ресемплинг до 5 м, чтобы полотно повторяло рельеф.
+    const zones = road.plain ?? []; // перекрёстки: там асфальт без разметки (World.#initJunctions)
+    const inZone = (s) => zones.some(([a, b]) => s >= a && s <= b);
+    // Ресемплинг до 5 м, чтобы полотно повторяло рельеф, плюс точки на границах перекрёстков.
     const src = road.n.slice(from, to + 1).map((i) => world.nodes[i]);
     const ysrc = road.y?.slice(from, to + 1);
     // Расстояние от начала дороги до узла from + k (для подъездов к мостам).
@@ -193,52 +195,52 @@ export function buildRoadChunk(world, runs, mats) {
       sAcc.push(sAcc[k - 1] + Math.hypot(bx - ax, bz - az));
     }
     const sOf = (k) => sAcc[from + k];
-    const pts = [], ys = [];
+    const pts = [], ys = [], ss = []; // ss — расстояние от начала дороги
     for (let i = 0; i < src.length; i++) {
       if (i > 0) {
         const [ax, az] = src[i - 1], [bx, bz] = src[i];
-        const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 5);
-        for (let k = 1; k < n; k++) {
-          const t = k / n;
-          pts.push([ax + (bx - ax) * t, az + (bz - az) * t]);
+        const len = Math.hypot(bx - ax, bz - az), s0 = sOf(i - 1);
+        const n = Math.ceil(len / 5);
+        const ts = [];
+        for (let k = 1; k < n; k++) ts.push(k / n);
+        for (const z of zones) for (const e of z) if (e > s0 && e < s0 + len) ts.push((e - s0) / len);
+        ts.sort((p, q) => p - q);
+        let tPrev = 0;
+        for (const t of ts) {
+          if ((t - tPrev) * len < 0.3 || (1 - t) * len < 0.3) continue;
+          tPrev = t;
           const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
-          ys.push(ysrc ? ysrc[i - 1] + (ysrc[i] - ysrc[i - 1]) * t : world.rampAt(road, sOf(i - 1) + Math.hypot(bx - ax, bz - az) * t, px, pz));
+          pts.push([px, pz]);
+          ys.push(ysrc ? ysrc[i - 1] + (ysrc[i] - ysrc[i - 1]) * t : world.rampAt(road, s0 + len * t, px, pz));
+          ss.push(s0 + len * t);
         }
       }
       pts.push(src[i]);
       ys.push(ysrc ? ysrc[i] : world.rampAt(road, sOf(i), src[i][0], src[i][1]));
+      ss.push(sOf(i));
     }
     const half = road.w / 2;
-    const base = b.p.length / 3;
-    // Продольная координата текстуры — от начала дороги, чтобы разметка не сбивалась на стыке квадратов.
-    let bridgeEdge = null; // нормаль полотна в предыдущей точке (для бортов моста)
-    let prevMedian = null; // края общего настила с парным мостом в предыдущей точке
-    let prevEdge = null;   // края полотна в предыдущей точке (для откосов насыпи подъезда)
-    let v = 0;
-    for (let i = 1; i <= from; i++) {
-      const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
-      v += Math.hypot(bx - ax, bz - az);
-    }
     // Соседи за краем куска — для направления в концевых точках (стык без излома).
     const before = from > 0 ? world.nodes[road.n[from - 1]] : null;
     const after = to < road.n.length - 1 ? world.nodes[road.n[to + 1]] : null;
-    for (let i = 0; i < pts.length; i++) {
+    const frame = pts.map((p, i) => {
       const prev = i > 0 ? pts[i - 1] : before || pts[0], next = i < pts.length - 1 ? pts[i + 1] : after || pts[pts.length - 1];
       let dx = next[0] - prev[0], dz = next[1] - prev[1];
       const l = Math.hypot(dx, dz) || 1;
       dx /= l; dz /= l;
       // Митра на изломе, с ограничением, чтобы острые углы не выстреливали.
       let m = 1;
-      if (prev !== pts[i] && next !== pts[i]) {
-        const ax = pts[i][0] - prev[0], az = pts[i][1] - prev[1];
+      if (prev !== p && next !== p) {
+        const ax = p[0] - prev[0], az = p[1] - prev[1];
         const al = Math.hypot(ax, az) || 1;
         m = Math.min(2, 1 / Math.max(0.3, (ax / al) * dx + (az / al) * dz));
       }
       // Полотно не заходит на трамвайные пути рядом (в OSM ось дороги часто ближе к путям, чем
-      // половина её ширины): край с той стороны отступает до 2 м от оси пути.
+      // половина её ширины): край с той стороны отступает до 2 м от оси пути. На перекрёстке —
+      // нет: там пути идут по асфальту, а изгибы путей поворота давали дыры и рваный край.
       let hl = half, hr = half;
-      if (!road.br) {
-        const [x0, z0] = pts[i];
+      if (!road.br && !inZone(ss[i])) {
+        const [x0, z0] = p;
         for (const sg of world.railsNear(x0, z0)) {
           if (sg.k !== 'tram') continue;
           const ex = sg.bx - sg.ax, ez = sg.bz - sg.az, el = Math.hypot(ex, ez) || 1;
@@ -250,12 +252,57 @@ export function buildRoadChunk(world, runs, mats) {
           else hr = Math.min(hr, Math.max(2.4, -lat - 2));
         }
       }
+      return { dx, dz, m, hl, hr };
+    });
+    // Край у путей сужается плавно в обе стороны: иначе от точки к точке он прыгал. Перекрёсток
+    // в это не входит — там полотно полной ширины и обрывается уступом, как бордюр у переезда.
+    const free = (i) => !inZone(ss[i]);
+    for (const key of ['hl', 'hr']) {
+      for (let i = 1; i < pts.length; i++) {
+        if (free(i) && free(i - 1)) frame[i][key] = Math.min(frame[i][key], frame[i - 1][key] + TAPER * (ss[i] - ss[i - 1]));
+      }
+      for (let i = pts.length - 2; i >= 0; i--) {
+        if (free(i) && free(i + 1)) frame[i][key] = Math.min(frame[i][key], frame[i + 1][key] + TAPER * (ss[i + 1] - ss[i]));
+      }
+    }
+    let last = null; // вершины предыдущей точки и куда они уже записаны
+    const emit = (i, vert, uv) => {
+      if (i > 0) {
+        // Материал отрезка: на перекрёстке — без разметки. Сменился — лента начинается заново.
+        const key = inZone((ss[i - 1] + ss[i]) / 2) ? 'plain' : mk;
+        const b = (buckets[key] ??= { p: [], uv: [], idx: [] });
+        if (last.key !== key) {
+          last.at = b.p.length / 3;
+          b.p.push(...last.vert);
+          b.uv.push(...last.uv);
+          last.key = key;
+        }
+        const a = last.at, c = b.p.length / 3;
+        b.p.push(...vert);
+        b.uv.push(...uv);
+        b.idx.push(a, a + 1, c, a + 1, c + 1, c);
+        last.at = c;
+      }
+      last = { key: last?.key, at: last?.at, vert, uv };
+    };
+    // Продольная координата текстуры — от начала дороги, чтобы разметка не сбивалась на стыке квадратов.
+    let bridgeEdge = null; // нормаль полотна в предыдущей точке (для бортов моста)
+    let prevMedian = null; // края общего настила с парным мостом в предыдущей точке
+    let prevEdge = null;   // края полотна в предыдущей точке (для откосов насыпи подъезда)
+    let v = 0;
+    for (let i = 1; i <= from; i++) {
+      const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
+      v += Math.hypot(bx - ax, bz - az);
+    }
+    for (let i = 0; i < pts.length; i++) {
+      const { dx, dz, m, hl, hr } = frame[i];
       const nx = -dz * hl * m, nz = dx * hl * m, rnx = -dz * hr * m, rnz = dx * hr * m;
       if (i > 0) v += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       const [x, z] = pts[i];
       const yl = ys[i] ?? world.terrain(x + nx, z + nz) + road.lift;
       const yr = ys[i] ?? world.terrain(x - rnx, z - rnz) + road.lift;
-      b.p.push(x + nx, yl, z + nz, x - rnx, yr, z - rnz);
+      // Разметка — от полной ширины: у путей край обрезается, а полосы остаются на своих местах.
+      emit(i, [x + nx, yl, z + nz, x - rnx, yr, z - rnz], [0.5 - hl / road.w, v / 12, 0.5 + hr / road.w, v / 12]);
       // Подъезд к мосту выше земли — насыпь: откосы от краёв полотна вниз до рельефа.
       const L_ = [x + nx, yl, z + nz], R_ = [x - rnx, yr, z - rnz];
       if (!road.br && ys[i] != null && prevEdge) {
@@ -269,7 +316,6 @@ export function buildRoadChunk(world, runs, mats) {
         }
       }
       prevEdge = ys[i] != null ? { L: L_, R: R_ } : null;
-      b.uv.push(0, v / 12, 1, v / 12);
       // Мост: борта (фасция + парапет) по краям и плита снизу; опоры до земли через ~20 м.
       if (road.br && ys[i] != null && i > 0) {
         const [px, pz] = pts[i - 1], pl = bridgeEdge, y0 = ys[i - 1], y1 = ys[i];
@@ -308,10 +354,6 @@ export function buildRoadChunk(world, runs, mats) {
         const inward = i === 0 ? 1.6 : -1.6;
         const g = Math.min(world.terrain(x + nx, z + nz), world.terrain(x - rnx, z - rnz), world.terrain(x, z));
         abutments.push([x + dx * inward, z + dz * inward, Math.atan2(dx, dz), road.w + 1.2, g - 3, ys[i] - DECK]);
-      }
-      if (i > 0) {
-        const a = base + (i - 1) * 2;
-        b.idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
       }
     }
   }

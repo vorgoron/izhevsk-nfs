@@ -42,6 +42,7 @@ export class World {
     this.#planOverpasses();
     this.#carveUnderBridges();
     this.levelEnds = [];
+    this.#initJunctions();
     this.#initRoadIndex();
     this.#initBuildingIndex();
     this.#initRailIndex();
@@ -486,6 +487,57 @@ export class World {
   }
 
   // ---------------------------------------------------------------- дороги
+
+  // Перекрёстки улиц с разметкой: участки дороги (по длине от её начала), где разметки нет.
+  // Ленты улиц в узле перекрываются, и разметка одной ложилась поверх другой. Продолжение
+  // той же улицы и съезд под острым углом перекрёстком не считаются. Соседние участки ближе
+  // JUNCTION_GAP сливаются — середина перекрёстка с двумя проезжими частями тоже без разметки.
+  #initJunctions() {
+    const JUNCTION_GAP = 15, COS_MIN = 0.87; // м; |cos| угла между ветками, выше — почти по прямой
+    const marked = (r) => MARKED_CLASSES.has(r.k.replace('_link', ''));
+    const at = new Map(); // узел → [[дорога, индекс в road.n]]
+    for (const r of this.roads) {
+      if (!marked(r)) continue;
+      r.n.forEach((n, k) => {
+        if (!at.has(n)) at.set(n, []);
+        at.get(n).push([r, k]);
+      });
+    }
+    const dir = (r, k, step) => {
+      const [ax, az] = this.nodes[r.n[k]], [bx, bz] = this.nodes[r.n[k + step]];
+      const l = Math.hypot(bx - ax, bz - az) || 1;
+      return [(bx - ax) / l, (bz - az) / l];
+    };
+    // Ветки дороги из узла k: к предыдущему и к следующему узлу.
+    const branches = (r, k) => [k > 0 && dir(r, k, -1), k < r.n.length - 1 && dir(r, k, 1)].filter(Boolean);
+    for (const r of this.roads) {
+      if (!marked(r)) continue;
+      const zones = [];
+      let s = 0;
+      for (let k = 0; k < r.n.length; k++) {
+        if (k > 0) {
+          const [ax, az] = this.nodes[r.n[k - 1]], [bx, bz] = this.nodes[r.n[k]];
+          s += Math.hypot(bx - ax, bz - az);
+        }
+        const own = branches(r, k);
+        let R = 0;
+        for (const [o, j] of at.get(r.n[k])) {
+          if (o === r) continue;
+          for (const [bx, bz] of branches(o, j)) {
+            const c = Math.max(...own.map(([dx, dz]) => Math.abs(dx * bx + dz * bz)));
+            if (c >= COS_MIN) continue;
+            // Вдоль нашей дороги поперечная занимает w / sin угла (на косом перекрёстке длиннее).
+            R = Math.max(R, Math.min(o.w, o.w / 2 / Math.sqrt(1 - c * c)) + 2);
+          }
+        }
+        if (!R) continue;
+        const last = zones[zones.length - 1];
+        if (last && s - R - last[1] < JUNCTION_GAP) last[1] = Math.max(last[1], s + R);
+        else zones.push([s - R, s + R]);
+      }
+      if (zones.length) r.plain = zones;
+    }
+  }
 
   #initRoadIndex() {
     this.roadCell = 25;
