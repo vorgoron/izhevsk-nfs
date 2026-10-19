@@ -9,7 +9,8 @@ import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
 import { planFootbridges, buildFootbridges } from './footbridges.js';
 import { Sound } from './audio.js';
-import { Radio } from './radio.js';
+import { Radio, STATIONS } from './radio.js';
+import { Wheel } from './wheel.js';
 import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
 import { Breakables } from './breakables.js';
@@ -259,7 +260,7 @@ async function main() {
   const trams = owned('трамваи', () => new Trams(world, scene, sound));
   game.trams = trams;
   // Радио всегда на экране: станция или приглушённое «Радио выкл»; при переключении надпись вспыхивает.
-  let radioName;
+  let radioName, radioWheel; // барабан создаётся ниже, а onChange зовётся уже здесь
   const radio = new Radio(() => {
     const el = $('radio');
     const extra = radio.started && { loading: ' · подключение…', error: ' · нет связи' }[radio.status] || '';
@@ -272,6 +273,7 @@ async function main() {
       void el.offsetWidth; // перезапуск анимации
       el.classList.add('flash');
     }
+    radioWheel?.sync();
   });
   radio.setMuted(sound.muted);
   const radioVolume = () => radio.setVolume(sound.vol.master * sound.vol.radio);
@@ -279,13 +281,33 @@ async function main() {
   game.radio = radio;
   radioName = radio.name; // первый показ — без вспышки
   radio.onChange();
-  // Надпись радио — кнопка переключения.
-  $('radio').addEventListener('click', () => actions.radio());
-  // iOS разрешает звук только из обработчика касания/клика. Нажатие на кнопку радио само решит,
-  // что включать, — иначе запомненная станция включится тут и кнопка сразу перещёлкнет на следующую.
+  // Надпись радио открывает барабан станций рядом с собой: над надписью, если она внизу экрана, иначе под ней.
+  // Закрывается нажатием мимо, повторным нажатием на надпись или сам через 3 с после выбора.
+  radioWheel = new Wheel(STATIONS.map((s) => s.name), {
+    get: () => radio.station,
+    select: (i) => { radio.select(i); pickClose(); },
+  });
+  const pick = $('radio-pick');
+  pick.append(radioWheel.el);
+  let pickTimer = 0;
+  const pickClose = (ms = 3000) => { clearTimeout(pickTimer); pickTimer = setTimeout(() => pick.classList.remove('open'), ms); };
+  $('radio').addEventListener('click', () => {
+    if (pick.classList.toggle('open')) {
+      const r = $('radio').getBoundingClientRect();
+      const h = pick.offsetHeight, w = pick.offsetWidth;
+      pick.style.top = `${r.top > innerHeight / 2 ? r.top - h - 6 : r.bottom + 6}px`;
+      pick.style.left = `${Math.max(6, Math.min(innerWidth - w - 6, r.right - w))}px`;
+      radioWheel.show();
+      pickClose(6000); // открыли и не крутят — убрать
+    }
+  });
+  addEventListener('pointerdown', (e) => { if (!e.target.closest('#radio-pick, #radio')) pick.classList.remove('open'); });
+  pick.addEventListener('scroll', () => pickClose(6000), { capture: true, passive: true }); // пока крутят — не убирать
+  // iOS разрешает звук только из обработчика касания/клика. Нажатие на кнопку радио и барабан станций
+  // в меню сами решат, что включать, — иначе запомненная станция включится тут и тут же сменится.
   for (const ev of ['pointerdown', 'touchend', 'click']) addEventListener(ev, (e) => {
     sound.unlock();
-    if (!e.target.closest?.('[data-act="radio"], #radio')) radio.unlock();
+    if (!e.target.closest?.('.wheel, #radio')) radio.unlock();
   });
 
   let camMode = 0; // 0 — за машиной, 1 — из салона, 2 — сверху
@@ -358,6 +380,7 @@ async function main() {
       get: (k) => sound.vol[k],
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
+    radio: { names: STATIONS.map((s) => s.name), get: () => radio.station, select: (i) => radio.select(i) },
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared }),

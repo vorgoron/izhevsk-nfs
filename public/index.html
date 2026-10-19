@@ -193,6 +193,24 @@
     #menu .volumes label { display: grid; grid-template-columns: 105px 1fr 42px; align-items: center; gap: 8px; font-size: 14px; }
     #menu .volumes input { width: 100%; min-width: 0; margin: 0; height: 28px; accent-color: #ffd23f; cursor: pointer; }
     #menu .volumes output { text-align: right; color: #ffd23f; font-weight: 700; font-variant-numeric: tabular-nums; }
+    /* Барабан станций (wheel.js): строки по --row, выбранная — в полосе посередине; --pad — пустое место над первой строкой. */
+    .wheel-box { position: relative; border-radius: 9px; background: rgba(255,255,255,.06); }
+    .wheel-box::before { content: ''; position: absolute; left: 6px; right: 6px; top: var(--pad); height: var(--row); border-radius: 8px;
+      background: rgba(255,255,255,.12); pointer-events: none; }
+    .wheel { position: relative; height: calc(var(--pad) * 2 + var(--row)); overflow-y: scroll; scroll-snap-type: y mandatory;
+      overscroll-behavior: contain; scrollbar-width: none; perspective: 500px; outline: none; touch-action: pan-y;
+      mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent); -webkit-mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent); }
+    .wheel::-webkit-scrollbar { display: none; }
+    .wheel::before, .wheel::after { content: ''; display: block; height: var(--pad); }
+    .wheel div { height: var(--row); line-height: var(--row); padding: 0 14px; text-align: center; font-size: 18px; white-space: nowrap;
+      scroll-snap-align: center; cursor: pointer; user-select: none; -webkit-user-select: none; }
+    .wheel div.on { color: #ffd23f; font-weight: 700; }
+    /* Тот же барабан на игровом экране — по нажатию на надпись радио, игра не встаёт. */
+    #radio-pick { position: fixed; z-index: 4; display: none; color: #fff; font-weight: 600; background: rgba(10,12,14,.72);
+      backdrop-filter: blur(4px); border-radius: 10px; }
+    #radio-pick.open { display: block; }
+    #radio-pick .wheel div { font-size: 16px; }
+    body.in-garage #radio-pick, body.in-menu #radio-pick { display: none; }
     #menu .keys { margin-top: 10px; font-size: 12.5px; line-height: 1.8; opacity: .7; }
     #menu .tricks { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.06);
       font-size: 14px; line-height: 1.45; }
@@ -294,6 +312,7 @@
   <div id="speedo" class="hud"><span id="speed">0</span> <span class="unit">км/ч</span><div id="nitro"><div id="nitro-fill"></div></div><div id="fuel"><div id="fuel-fill"></div></div></div>
   <div id="fuelhint" class="hud"></div>
   <div id="radio" class="hud"></div>
+  <div id="radio-pick"></div>
   <div id="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">участники OpenStreetMap</a> · рельеф <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a> (Mapzen, SRTM)</div>
   <div id="rotate"><div><div style="font-size:56px">📱↻</div>Поверните телефон горизонтально</div></div>
   <script type="module" src="src/main.js"></script>

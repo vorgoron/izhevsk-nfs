@@ -7,6 +7,10 @@ export const STATIONS = [
   { name: 'Даур FM', url: 'https://fm.daur.media/listen/daur_fm/radio.mp3' },
   // Только http: со страницы по https браузер поток не пустит (mixed content) — играет лишь локально.
   { name: 'Моя Удмуртия', url: 'http://radio.myudm.ru:10010/efir' },
+  // Новые — в конец: в localStorage помнится номер станции.
+  // Федеральные потоки: местной вставки Ижевска в интернет-эфире нет.
+  { name: 'Наше Радио', url: 'https://nashe1.hostingradio.ru/nashe-128.mp3' },
+  { name: 'Радио Максимум', url: 'https://maximum.hostingradio.ru/maximum128.mp3' },
 ];
 
 export class Radio {
@@ -39,8 +43,14 @@ export class Radio {
   // Первое нажатие после загрузки включает запомненную станцию, дальше — следующую по кругу.
   next() {
     if (!this.started && this.station >= 0) return this.unlock();
+    this.select(this.station + 1 < STATIONS.length ? this.station + 1 : -1);
+  }
+
+  // Включить станцию i (-1 — выключить).
+  select(i) {
+    if (i === this.station) return;
     this.started = true;
-    this.station = this.station + 1 < STATIONS.length ? this.station + 1 : -1;
+    this.station = i;
     try { localStorage.setItem('radio', this.station); } catch {}
     if (this.station >= 0) this.#play();
     else this.#stop();

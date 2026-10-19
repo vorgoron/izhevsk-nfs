@@ -2,15 +2,18 @@
 // Горячие клавиши работают и без меню — main.js после каждого действия зовёт sync(),
 // чтобы переключатели в меню показывали текущее состояние.
 
+import { Wheel } from './wheel.js';
+
 const CAMERAS = ['сзади', 'из салона', 'сверху'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
   // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, bigMap, fullscreen };
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
+  // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
   // shared (гонка общая — в своей комнате на связи).
-  constructor({ actions, state, volume, setName }) {
+  constructor({ actions, state, volume, radio, setName }) {
     this.actions = actions;
     this.state = state;
     this.volume = volume;
@@ -34,7 +37,7 @@ export class Menu {
       <h3>Настройки</h3>
       <button data-act="sound">Звук <b data-v="sound"></b><kbd>V</kbd></button>
       <button data-page="volume">Громкость <b data-v="volume"></b><i>›</i></button>
-      <button data-act="radio">Радио <b data-v="radio"></b><kbd>B</kbd></button>
+      <button data-page="radio">Радио <b data-v="radio"></b><kbd>B</kbd><i>›</i></button>
       <button data-act="traffic">Трафик <b data-v="traffic"></b><kbd>T</kbd></button>
       <button data-act="night">Время суток <b data-v="night"></b><kbd>Y</kbd></button>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
@@ -69,6 +72,12 @@ export class Menu {
       </div>
       <button data-page="main" class="go">‹ Назад <kbd>Esc</kbd></button>
       </div>
+      <div class="page" data-page="radio" hidden>
+      <h2>Радио</h2>
+      <div data-wheel></div>
+      <p class="hint">Прокрутите барабан — станция включится, когда он остановится.<span class="only-keys"> Стрелки ↑ ↓ или <kbd>B</kbd> — следующая.</span></p>
+      <button data-page="main" class="go">‹ Готово <kbd>Esc</kbd></button>
+      </div>
       <div class="page" data-page="volume" hidden>
       <h2>Громкость</h2>
       <div class="volumes">${Object.entries(VOLUME_LABELS).map(([k, label]) =>
@@ -87,6 +96,8 @@ export class Menu {
     for (const r of el.querySelectorAll('[data-vol]')) {
       r.addEventListener('input', () => { this.volume.set(r.dataset.vol, r.value / 100); this.sync(); });
     }
+    this.wheel = new Wheel(radio.names, { get: radio.get, select: (i) => { radio.select(i); this.sync(); } });
+    el.querySelector('[data-wheel]').replaceWith(this.wheel.el);
     // Клик мимо панели — продолжить.
     el.addEventListener('pointerdown', (e) => { if (e.target === el) { this.page('main'); this.actions.menu(); } });
     document.addEventListener('fullscreenchange', () => this.sync());
@@ -126,15 +137,20 @@ export class Menu {
       this.el.querySelector(`[data-vol-out="${r.dataset.vol}"]`).textContent = `${pct}%`;
     }
     this.el.querySelector('.volumes').classList.toggle('off', !s.sound);
+    this.wheel.sync();
   }
 
-  // Показать страницу меню: 'main', 'name', 'volume' или 'tricks'.
+  // Показать страницу меню: 'main', 'name', 'radio', 'volume' или 'tricks'.
   page(name) {
     // Уходим со страницы имени — сохранить введённое (change не всегда успевает, например по Esc).
     if (document.activeElement === this.nameIn) this.nameIn.blur();
     for (const p of this.el.querySelectorAll('.page')) p.hidden = p.dataset.page !== name;
     this.sync();
     if (name === 'name') this.nameIn.focus();
+    if (name === 'radio') {
+      this.wheel.show();
+      this.wheel.wheel.focus({ preventScroll: true });
+    }
   }
 
   // Esc в подменю — назад на главную, а не закрыть меню. true — если было куда возвращаться.
