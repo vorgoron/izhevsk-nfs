@@ -139,28 +139,63 @@ const NIGHT_SET = {
   sun: '#9fb4e6', sunI: 0.45, // луна — с той же стороны, что солнце: тени те же
   fogNear: 150, fogFar: 1300,
 };
-const FADE = 1.5; // с: смена дня и ночи
+const FADE = 1.5; // с: смена дня и ночи вручную
+
+// Высота солнца над горизонтом в Ижевске, градусы, по времени UTC (упрощённые формулы NOAA/Альманаха,
+// точность ~0,1°). Часовой пояс игрока не важен: время суток — ижевское.
+const LAT = 56.85, LON = 53.2, RAD = Math.PI / 180;
+export function sunAltitude(ms = Date.now()) {
+  const d = (ms - 946728000000) / 86400000; // сутки от J2000 (2000-01-01 12:00 UTC)
+  const g = (357.529 + 0.98560028 * d) * RAD;
+  const L = (280.459 + 0.98564736 * d + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * RAD; // долгота Солнца
+  const e = (23.439 - 0.00000036 * d) * RAD;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const ha = (280.46061837 + 360.98564736629 * d + LON) * RAD - ra; // звёздное время − прямое восхождение
+  return Math.asin(Math.sin(LAT * RAD) * Math.sin(dec) + Math.cos(LAT * RAD) * Math.cos(dec) * Math.cos(ha)) / RAD;
+}
+// По часам: день, пока солнце над горизонтом (−0,833° — верхний край с рефракцией, как в восходе/заходе);
+// после захода темнеет за гражданские сумерки (до −6°), утром светлеет так же — к восходу уже день.
+const SET = -0.833, DUSK = -6;
+const clockNight = () => Math.min(1, Math.max(0, (SET - sunAltitude()) / (SET - DUSK)));
+
+const MODES = ['auto', 'day', 'night'];
 
 export class DayNight {
   // hemi, sun — свет сцены; sky — Sky (купол, звёзды, облака); ads — материалы щитов (подсветка плакатов);
   // headlight — прожектор фар игрока; dir — направление на солнце (ночью там луна).
+  // Режим: auto — по солнцу в Ижевске сейчас, day / night — вручную; помнится в localStorage.daytime.
   constructor({ scene, hemi, sun, dir, sky, ads, headlight }) {
     Object.assign(this, { scene, hemi, sun, dir, sky, ads, headlight });
-    this.night = false;
-    try { this.night = localStorage.getItem('night') === '1'; } catch {}
-    this.t = this.night ? 1 : 0;
+    this.mode = 'auto';
+    try { const m = localStorage.getItem('daytime'); if (MODES.includes(m)) this.mode = m; } catch {}
+    this.clock = clockNight();
+    this.check = 0; // с до пересчёта солнца
+    this.t = this.#goal();
     this.c1 = new THREE.Color();
     this.c2 = new THREE.Color();
     this.#apply();
   }
 
-  toggle() {
-    this.night = !this.night;
-    try { localStorage.setItem('night', this.night ? '1' : '0'); } catch {}
+  get night() { return this.t > 0.5; }
+
+  // Для меню: «по часам · ночь», «день», «ночь».
+  get label() {
+    if (this.mode !== 'auto') return this.mode === 'day' ? 'день' : 'ночь';
+    return `по часам · ${this.clock <= 0 ? 'день' : this.clock >= 1 ? 'ночь' : 'сумерки'}`;
   }
 
+  // По кругу: по часам → день → ночь.
+  toggle() {
+    this.mode = MODES[(MODES.indexOf(this.mode) + 1) % MODES.length];
+    try { localStorage.setItem('daytime', this.mode); } catch {}
+  }
+
+  #goal() { return this.mode === 'auto' ? this.clock : this.mode === 'night' ? 1 : 0; }
+
   update(dt) {
-    const goal = this.night ? 1 : 0;
+    if ((this.check -= dt) <= 0) { this.check = 5; this.clock = clockNight(); }
+    const goal = this.#goal();
     if (this.t === goal) return;
     this.t = goal > this.t ? Math.min(goal, this.t + dt / FADE) : Math.max(goal, this.t - dt / FADE);
     this.#apply();

@@ -350,7 +350,7 @@ async function main() {
       get: (k) => sound.vol[k],
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.night, bigMap: $('minimap').classList.contains('big'),
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared }),
     setName: (v) => net.setName(v),

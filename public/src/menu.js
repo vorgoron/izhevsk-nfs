@@ -100,7 +100,7 @@ export class Menu {
       radio: s.radio ?? 'выкл',
       traffic: s.traffic ? 'вкл' : 'выкл',
       camera: CAMERAS[s.camera],
-      night: s.night ? 'ночь' : 'день',
+      night: s.night,
       fps: s.fps ? `до ${s.fps}` : 'без предела',
       bigMap: s.bigMap ? 'крупная' : 'обычная',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
