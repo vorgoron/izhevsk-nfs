@@ -19,6 +19,11 @@ const GRADE_MAX = 0.12; // подъезд короче нужного (даль�
 const MEDIAN_GAP = 6; // м: шире промежуток без трамвая между парными мостами — не заполняется
 const MEDIAN_MAX = 25; // м: шире промежуток между парными мостами — общего настила нет
 const RAIL_ALONG = 9; // м от края полотна путепровода: пути вдоль него идут на его уровне
+// Трамвайное полотно — на TRAM_ABOVE выше среднего края соседних проезжих частей в TRAM_REACH м
+// (обе колеи вровень), без дорог — на TRAM_LIFT над рельефом. Поперёк дороги (переезд) — прямая
+// между полотном до и после, не ниже асфальта; край переезда ищется не дальше TRAM_SPAN м.
+const TRAM_ABOVE = 0.02, TRAM_REACH = 8, TRAM_LIFT = 0.1, TRAM_SPAN = 60, TRAM_STEP = 2, TRAM_EASE = 20;
+export const TRAM_BED = 3.2; // м: ширина трамвайного полотна на путь (= междупутье, соседние смыкаются)
 const STEP = 2; // м: на сколько выше машины поверхность ещё «под колёсами» (ground)
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
 export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
@@ -724,12 +729,14 @@ export class World {
   #initRailIndex() {
     this.railCell = 25;
     this.railGrid = new Map();
-    for (const r of this.city.rails) {
+    this.city.rails.forEach((r, ri) => {
+      let s0 = 0;
       for (let i = 1; i < r.p.length; i++) {
         const [ax, az] = r.p[i - 1], [bx, bz] = r.p[i];
-        this.#insert(this.railGrid, this.railCell, { ax, az, bx, bz, k: r.k }, 6);
+        this.#insert(this.railGrid, this.railCell, { ax, az, bx, bz, k: r.k, ri, s0, len: Math.hypot(bx - ax, bz - az) }, 6);
+        s0 += Math.hypot(bx - ax, bz - az);
       }
-    }
+    });
   }
 
   railsNear(x, z) {
@@ -762,6 +769,15 @@ export class World {
     }
     const m = this.medianY(x, z);
     if (m !== null && m <= lim) y = Math.max(y, m);
+    // Трамвайное полотно — по нему едут, а не проваливаются в плиту.
+    for (const q of this.railsNear(x, z)) {
+      if (q.k !== 'tram') continue;
+      const c = World.closest(q, x, z);
+      if (c.d > TRAM_BED / 2) continue;
+      const L = Math.hypot(q.bx - q.ax, q.bz - q.az) || 1;
+      const l = this.railLevel(c.px, c.pz, (q.bx - q.ax) / L, (q.bz - q.az) / L, true);
+      if (l.bed && l.y <= lim) y = Math.max(y, l.y);
+    }
     return y;
   }
 
@@ -797,12 +813,144 @@ export class World {
   // Пути вдоль путепровода (dx, dz — направление пути), между его проезжими частями или рядом,
   // идут вровень с ближайшим полотном моста или подъезда: в OSM у трамвая свой мост, а флага
   // «мост» у рельсов в данных нет.
-  railGround(x, z, dx = 0, dz = 0) {
+  railGround(x, z, dx = 0, dz = 0, tram = false) {
+    return this.railLevel(x, z, dx, dz, tram).y;
+  }
+
+  // { y, bed }: bed — под трамвайными рельсами своё полотно (не асфальт, не мост). У трамвая — из
+  // профиля пути (#tramProfile), у железной дороги — в точке.
+  railLevel(x, z, dx = 0, dz = 0, tram = false) {
+    if (!tram) return this.#railLevel(x, z, dx, dz, false);
+    let best = null;
+    for (const q of this.railsNear(x, z)) {
+      if (q.k !== 'tram') continue;
+      const c = World.closest(q, x, z);
+      if (!best || c.d < best.c.d) best = { q, c };
+    }
+    if (!best || best.c.d > 4) return this.#pairLevel(x, z, dx, dz, this.#railLevel(x, z, dx, dz, true));
+    const { q, c } = best, P = this.#tramProfile(q.ri), s = q.s0 + q.len * c.t;
+    const k = Math.min(P.length - 2, Math.max(0, Math.floor(s / TRAM_STEP)));
+    const a = P[k], b = P[k + 1], f = Math.min(1, Math.max(0, (s - a.s) / (b.s - a.s || 1)));
+    const n = f < 0.5 ? a : b;
+    return { y: a.y + (b.y - a.y) * f, bed: n.bed, cross: n.cross };
+  }
+
+  // Профиль высоты трамвайного пути ri: точки через TRAM_STEP м. Уровень полотна — посередине между
+  // путём и соседним параллельным (обе колеи на одной высоте, даже если улица идёт по склону поперёк).
+  // Переезд и полотно без дорог рядом (у перекрёстка отрезки дорог расходятся) — по прямой между
+  // надёжными точками до и после вдоль самого пути, с заходом в соседний кусок пути за стыком: без
+  // впадины на асфальт и без ступеньки до рельефа.
+  #tramProfile(ri) {
+    this.tramProfiles ??= new Map();
+    let P = this.tramProfiles.get(ri);
+    if (P) return P;
+    const raw = this.#tramRaw(ri), lim = TRAM_SPAN;
+    // Ближайшая надёжная точка в сторону sg: сначала в своём пути, потом в продолжении за концом.
+    const find = (i, sg) => {
+      for (let j = i + sg; j >= 0 && j < raw.length; j += sg) {
+        const d = Math.abs(raw[j].s - raw[i].s);
+        if (d > lim) return null;
+        if (raw[j].ok) return { d, y: raw[j].y };
+      }
+      const end = sg < 0 ? raw[0] : raw[raw.length - 1], d0 = Math.abs(end.s - raw[i].s);
+      const cont = this.#tramNext(ri, sg < 0 ? 0 : 1);
+      if (!cont) return null;
+      const R = this.#tramRaw(cont.ri);
+      for (let n = 0; n < R.length; n++) {
+        const p = cont.end === 0 ? R[n] : R[R.length - 1 - n], d = d0 + Math.abs(p.s - (cont.end === 0 ? 0 : R[R.length - 1].s));
+        if (d > lim) return null;
+        if (p.ok) return { d, y: p.y };
+      }
+      return null;
+    };
+    P = raw.map((p, i) => {
+      if (p.ok) return { s: p.s, y: p.y, bed: p.bed, cross: false };
+      const a = find(i, -1), b = find(i, 1);
+      // Надёжная точка только с одной стороны (пути уходят с улицы) — от неё к своему уровню за TRAM_EASE м.
+      const o = a || b;
+      const y = a && b ? a.y + ((b.y - a.y) * a.d) / (a.d + b.d) : o ? o.y + (p.y - o.y) * Math.min(1, o.d / TRAM_EASE) : p.y;
+      return p.cross ? { s: p.s, y: Math.max(p.y, y), bed: false, cross: true } : { s: p.s, y, bed: p.bed, cross: false };
+    });
+    this.tramProfiles.set(ri, P);
+    return P;
+  }
+
+  // Высоты в точках пути без сглаживания: ok — точка надёжная (не переезд, рядом есть дороги).
+  #tramRaw(ri) {
+    this.tramRaws ??= new Map();
+    let R = this.tramRaws.get(ri);
+    if (R) return R;
+    const p = this.city.rails[ri].p;
+    R = [];
+    let s0 = 0;
+    for (let i = 1; i < p.length; i++) {
+      const [ax, az] = p[i - 1], [bx, bz] = p[i], L = Math.hypot(bx - ax, bz - az);
+      if (L < 1e-6) continue;
+      const dx = (bx - ax) / L, dz = (bz - az) / L;
+      // Точки ровно через TRAM_STEP по длине всего пути (railLevel ищет их делением).
+      for (let s = Math.ceil(s0 / TRAM_STEP) * TRAM_STEP; s < s0 + L; s += TRAM_STEP) {
+        const x = ax + dx * (s - s0), z = az + dz * (s - s0);
+        let l = this.#railLevel(x, z, dx, dz, true);
+        if (!l.cross) l = this.#pairLevel(x, z, dx, dz, l);
+        R.push({ s, y: l.y, bed: l.bed, cross: !!l.cross, ok: !l.cross && l.anchored !== false });
+      }
+      s0 += L;
+    }
+    const [x, z] = p[p.length - 1], [px, pz] = p[p.length - 2];
+    const L = Math.hypot(x - px, z - pz) || 1;
+    let l = this.#railLevel(x, z, (x - px) / L, (z - pz) / L, true);
+    if (!l.cross) l = this.#pairLevel(x, z, (x - px) / L, (z - pz) / L, l);
+    R.push({ s: s0, y: l.y, bed: l.bed, cross: !!l.cross, ok: !l.cross && l.anchored !== false });
+    this.tramRaws.set(ri, R);
+    return R;
+  }
+
+  // Продолжение трамвайного пути ri за концом end (0 — начало, 1 — конец): путь с тем же концом,
+  // самый прямой (на стрелке — тот, что идёт дальше по прямой). { ri, end } или null.
+  #tramNext(ri, end) {
+    if (!this.tramEnds) {
+      this.tramEnds = new Map();
+      this.city.rails.forEach((r, i) => {
+        if (r.k !== 'tram' || r.p.length < 2) return;
+        for (const e of [0, 1]) {
+          const q = e ? r.p[r.p.length - 1] : r.p[0], key = `${q[0].toFixed(1)},${q[1].toFixed(1)}`;
+          if (!this.tramEnds.has(key)) this.tramEnds.set(key, []);
+          this.tramEnds.get(key).push({ ri: i, end: e });
+        }
+      });
+    }
+    const p = this.city.rails[ri].p, q = end ? p[p.length - 1] : p[0], q2 = end ? p[p.length - 2] : p[1];
+    const ox = q[0] - q2[0], oz = q[1] - q2[1], oL = Math.hypot(ox, oz) || 1; // направление наружу
+    let best = null;
+    for (const o of this.tramEnds.get(`${q[0].toFixed(1)},${q[1].toFixed(1)}`) || []) {
+      if (o.ri === ri) continue;
+      const r = this.city.rails[o.ri].p, a = o.end ? r[r.length - 1] : r[0], b = o.end ? r[r.length - 2] : r[1];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, cos = ((b[0] - a[0]) * ox + (b[1] - a[1]) * oz) / L / oL;
+      if (cos > 0.7 && (!best || cos > best.cos)) best = { ...o, cos };
+    }
+    return best;
+  }
+
+  #pairLevel(x, z, dx, dz, own) {
+    let best = null;
+    for (const q of this.railsNear(x, z)) {
+      if (q.k !== 'tram') continue;
+      const c = World.closest(q, x, z), L = Math.hypot(q.bx - q.ax, q.bz - q.az) || 1;
+      if (c.d < 2.5 || c.d > 4 || Math.abs(((q.bx - q.ax) * dx + (q.bz - q.az) * dz) / L) < 0.97) continue;
+      if (!best || c.d < best.d) best = c;
+    }
+    if (!best) return own;
+    const mid = this.#railLevel((x + best.px) / 2, (z + best.pz) / 2, dx, dz, true);
+    return mid.cross || mid.bed !== own.bed || (mid.anchored === false && own.anchored !== false) ? own : mid;
+  }
+
+  #railLevel(x, z, dx, dz, tram) {
     const along = (s) => Math.abs(((s.bx - s.ax) * dx + (s.bz - s.az) * dz) / (s.len || 1)) > 0.9;
     const m = this.#median(x, z);
-    if (m && along(m.s)) return m.y; // вдоль парных мостов — по их общему настилу; поперёк — под ним
+    if (m && along(m.s)) return { y: m.y, bed: false }; // вдоль парных мостов — по их общему настилу; поперёк — под ним
     const t = this.terrain(x, z);
-    let y = t, near = null;
+    let y = t, near = null, cross = false;
+    const edges = new Map(); // дорога → край ближайшего её отрезка
     for (const s of this.segmentsNear(x, z, RAIL_ALONG + 15)) {
       const c = World.closest(s, x, z);
       // Вдоль любого моста или подъезда — на уровне полотна (у трамвая в OSM свой мост рядом).
@@ -812,9 +960,42 @@ export class World {
         continue;
       }
       if (lifted) continue; // поперёк путепровода или его подъезда — пути под ним
-      if (c.d <= s.w / 2 + 0.3) y = Math.max(y, this.#segY(s, c, x, z, t));
+      if (c.d <= s.w / 2 + 0.3) {
+        y = Math.max(y, this.#segY(s, c, x, z, t));
+        if (!along(s)) cross = true;
+      }
+      // Только отрезки напротив точки: конец соседнего отрезка впереди на подъёме выше на полметра.
+      // Только отрезки напротив точки (до 1 м за концом — стыки отрезков): конец соседнего отрезка
+      // впереди на подъёме выше на полметра.
+      const over = (c.t === 0 || c.t === 1) ? Math.hypot(c.px - x, c.pz - z) ** 2 - this.#perp(s, x, z) ** 2 : 0;
+      if (tram && c.d <= s.w / 2 + TRAM_REACH && along(s) && over < 1 && !(edges.get(s.road)?.d <= c.d)) {
+        edges.set(s.road, { d: c.d, y: this.#edgeY(s, c, x, z) });
+      }
     }
-    return near ? Math.max(y, near.y) : y;
+    if (near) return { y: Math.max(y, near.y), bed: false };
+    if (!tram || cross) return { y, bed: false, cross };
+    // Среднее, а не наибольшее: на улице с уклоном поперёк полотно иначе вставало над нижней проезжей частью.
+    if (!edges.size) return { y: t + TRAM_LIFT, bed: true, anchored: false };
+    let sum = 0;
+    for (const e of edges.values()) sum += e.y;
+    return { y: sum / edges.size + TRAM_ABOVE, bed: true };
+  }
+
+  // Расстояние от точки до прямой отрезка (не до самого отрезка).
+  #perp(s, x, z) {
+    return Math.abs((x - s.ax) * (s.bz - s.az) - (z - s.az) * (s.bx - s.ax)) / (s.len || 1);
+  }
+
+  // Высота ленты асфальта напротив точки: снаружи — ближний край, на полотне — между краями
+  // (лента идёт краями по рельефу, на склоне поперёк улицы края на разной высоте).
+  #edgeY(s, c, x, z) {
+    if (s.ya !== undefined) return s.ya + (s.yb - s.ya) * c.t;
+    const L = s.len || 1, nx = -(s.bz - s.az) / L, nz = (s.bx - s.ax) / L, h = s.w / 2;
+    const side = (x - c.px) * nx + (z - c.pz) * nz;
+    const at = (k) => this.#segY(s, c, c.px + nx * h * k, c.pz + nz * h * k, this.terrain(c.px + nx * h * k, c.pz + nz * h * k));
+    if (c.d >= h) return at(Math.sign(side) || 1);
+    const f = (side / h + 1) / 2;
+    return at(-1) + (at(1) - at(-1)) * f;
   }
 
   // Высота полотна дороги road в точке (ближайший её отрезок рядом) или null.

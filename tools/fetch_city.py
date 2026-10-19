@@ -604,25 +604,70 @@ def align_tram_tracks():
     # где в OSM, иначе соседние куски сдвигались по-разному и рельсы на стыке не сходились.
     # Служебные ветки (депо, кольца) не выравниваются, но их примыкание тоже закрепляем.
     use = collections.Counter(n for nds, tags in ways.values() if tags.get("railway") == "tram" for n in set(nds))
-    lines, pins = {}, {}
-    for wid, (nds, _) in tram.items():
-        nds = [n for n in nds if n in nodes]
-        if len(nds) < 2:
+    # Путь, разрезанный в OSM без стыка (у моста, по смене тегов), — один путь: куски выравниваются
+    # цепочкой, а не каждый от своих концов (под мостом на Карла Маркса пути расходились на 5 м).
+    nds_of = {wid: [n for n in nds if n in nodes] for wid, (nds, _) in tram.items()}
+    nds_of = {wid: nds for wid, nds in nds_of.items() if len(nds) >= 2}
+    ends = collections.defaultdict(list)
+    for wid, nds in nds_of.items():
+        if nds[0] == nds[-1]:
             continue
-        p = [project(*nodes[nds[0]])]
-        pin = [True]
-        for na, nb in zip(nds, nds[1:]):
-            a, b = project(*nodes[na]), project(*nodes[nb])
-            k = max(1, math.ceil(math.dist(a, b) / 8))
-            p += [(a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k) for j in range(1, k + 1)]
-            pin += [False] * (k - 1) + [use[nb] > 1 or nb == nds[-1]]
-        lines[wid], pins[wid] = p, pin
+        ends[nds[0]].append(wid)
+        ends[nds[-1]].append(wid)
+    cont = {n for n, ws in ends.items() if len(ws) == 2 and use[n] == 2}
+    chains, seen = [], set()
+    for wid in nds_of:
+        if wid in seen:
+            continue
+        # Дойти до начала цепочки, потом собрать её вперёд.
+        cur, rev = wid, True
+        while True:
+            n = nds_of[cur][0 if rev else -1]
+            nxt = [w for w in ends[n] if w != cur] if n in cont else []
+            if not nxt or nxt[0] == wid:
+                break
+            cur = nxt[0]
+            rev = nds_of[cur][-1] == n
+        chain, n = [], nds_of[cur][0 if rev else -1]
+        while cur not in seen:
+            seen.add(cur)
+            fwd = nds_of[cur][0] == n
+            chain.append((cur, fwd))
+            n = nds_of[cur][-1 if fwd else 0]
+            nxt = [w for w in ends[n] if w != cur] if n in cont else []
+            if not nxt:
+                break
+            cur = nxt[0]
+        chains.append(chain)
+    lines, pins, parts = {}, {}, {}
+    for ci, chain in enumerate(chains):
+        p, pin, part = [], [], []
+        for wid, fwd in chain:
+            nds = nds_of[wid] if fwd else nds_of[wid][::-1]
+            if not p:
+                p.append(project(*nodes[nds[0]]))
+                pin.append(True)
+            start = len(p) - 1
+            for na, nb in zip(nds, nds[1:]):
+                a, b = project(*nodes[na]), project(*nodes[nb])
+                k = max(1, math.ceil(math.dist(a, b) / 8))
+                p += [(a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k) for j in range(1, k + 1)]
+                pin += [False] * (k - 1) + [nb not in cont and (use[nb] > 1 or nb == nds[-1])]
+            part.append((wid, fwd, start, len(p) - 1))
+        pin[-1] = True
+        lines[ci], pins[ci], parts[ci] = p, pin, part
     out = lines
     for _ in range(2):
         out = _align_pass(lines, out, pins)
-    out = {wid: _smooth_track(p, pins[wid]) for wid, p in out.items()}
-    print(f"tram tracks aligned: {len(out)} ways")
-    return out
+    res = {}
+    for ci, part in parts.items():
+        for wid, fwd, i0, i1 in part:
+            q, pin = out[ci][i0:i1 + 1], pins[ci][i0:i1 + 1]
+            pin[0] = pin[-1] = True
+            q = _smooth_track(q, pin)
+            res[wid] = q if fwd else q[::-1]
+    print(f"tram tracks aligned: {len(res)} ways in {len(chains)} chains")
+    return res
 
 
 def _align_pass(orig, lines, pins):
@@ -633,19 +678,22 @@ def _align_pass(orig, lines, pins):
     нарастает на TRACK_BLEND. Возвращает {way id: [(x, z)]}."""
     cell = 20.0
     grid = {}
+    arc = {}
     for wid, p in lines.items():
+        o = orig[wid]
+        arc[wid] = acc = [0.0]
+        for i in range(1, len(o)):
+            acc.append(acc[-1] + math.dist(o[i - 1], o[i]))
         for i in range(1, len(p)):
             a, b = p[i - 1], p[i]
             for gx in range(int(min(a[0], b[0]) // cell) - 1, int(max(a[0], b[0]) // cell) + 2):
                 for gz in range(int(min(a[1], b[1]) // cell) - 1, int(max(a[1], b[1]) // cell) + 2):
-                    grid.setdefault((gx, gz), []).append((wid, a, b))
+                    grid.setdefault((gx, gz), []).append((wid, i, a, b))
     out = {}
     for wid, p in lines.items():
         o, pin = orig[wid], pins[wid]
         # Расстояние вдоль пути до ближайшего закреплённого узла — вес сдвига.
-        acc = [0.0]
-        for i in range(1, len(o)):
-            acc.append(acc[-1] + math.dist(o[i - 1], o[i]))
+        acc = arc[wid]
         near = [math.inf] * len(o)
         last = -math.inf
         for i in range(len(o)):
@@ -664,8 +712,10 @@ def _align_pass(orig, lines, pins):
             L = math.dist(a, b) or 1
             dx, dz = (b[0] - a[0]) / L, (b[1] - a[1]) / L
             best = None
-            for w2, c, d in grid.get((int(P[0] // cell), int(P[1] // cell)), ()):
-                if w2 == wid:
+            for w2, j, c, d in grid.get((int(P[0] // cell), int(P[1] // cell)), ()):
+                # Цепочка может обойти кольцо разворота и вернуться встречным путём — сосед из
+                # той же цепочки годится, если он далеко по ней.
+                if w2 == wid and abs(acc[j] - acc[i]) < 30:
                     continue
                 ex, ez = d[0] - c[0], d[1] - c[1]
                 l2 = ex * ex + ez * ez or 1

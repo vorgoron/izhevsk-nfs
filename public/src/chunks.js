@@ -54,7 +54,7 @@ export class ChunkManager {
     group.add(tag(buildTerrainChunk(w, info, this.texSize, this.renderer), 'рельеф'));
     if (info.data.runs.length) group.add(tag(buildRoadChunk(w, info.data.runs, this.mats.roads), 'дороги'));
     if (info.data.buildings.length) group.add(tag(buildBuildingChunk(w, info.data.buildings, this.mats.buildings), 'дома'));
-    const rails = info.data.rails.length ? buildRailChunk(w, info, this.mats.roads.rail, this.mats.roads.concrete) : null;
+    const rails = info.data.rails.length ? buildRailChunk(w, info, this.mats.roads.rail, this.mats.roads.concrete, this.mats.roads.trackbed) : null;
     if (rails) group.add(tag(rails, 'рельсы'));
     const trees = buildTreeChunk(w, info, this.mats.trees);
     if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
