@@ -136,7 +136,7 @@ export class Fuel {
         let free = true;
         for (const k of [-1.25, 0, 1.25]) {
           p.set(x + st.ux * k, z + st.uz * k);
-          if (this.world.collide(p, 1.4)) { free = false; break; }
+          if (this.world.collide(p, 1.4, true)) { free = false; break; }
         }
         const d = Math.hypot(dx, dz);
         if (free && d < bd) { bd = d; best = [x, z]; }

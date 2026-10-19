@@ -6,6 +6,8 @@ export const ROAD_CLASSES = new Set([
   'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link',
 ]);
 export const MARKED_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
+// Заборы, которые машина сносит (решётка, рабица, доски, профлист); плиты, кирпич, кусты и блоки — стены.
+export const SOFT_FENCES = new Set(['bars', 'mesh', 'wood', 'prof']);
 // Чем важнее дорога, тем выше её полотно — так она перекрывает второстепенные на перекрёстках.
 const LIFT = { motorway: 0.40, trunk: 0.40, primary: 0.38, secondary: 0.35, tertiary: 0.32, service: 0.24 };
 export const roadLift = (k) => LIFT[k.replace('_link', '')] ?? 0.28;
@@ -863,11 +865,13 @@ export class World {
         for (const h of b.holes || []) this.addCollider(h); // двор/поле внутри — тоже стены
       }
     }
-    // Заборы — тоже стены (проёмы под ворота и дороги вырезаны при сборке).
+    // Заборы — тоже стены (проёмы под ворота и дороги вырезаны при сборке). Лёгкие (SOFT_FENCES) машину
+    // не держат — их сносит breakables.js, здесь они только для расстановки (soft в collide).
     for (const f of this.city.fences || []) {
+      const soft = SOFT_FENCES.has(f.k);
       for (let i = 1; i < f.p.length; i++) {
         const a = f.p[i - 1], c = f.p[i];
-        this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1] }, 0);
+        this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1], soft }, 0);
       }
     }
   }
@@ -881,8 +885,8 @@ export class World {
     }
   }
 
-  // Выталкивает круг (x, z, r) из стен. Возвращает нормаль удара или null.
-  collide(pos, r) {
+  // Выталкивает круг (x, z, r) из стен. Возвращает нормаль удара или null. soft — и из лёгких заборов.
+  collide(pos, r, soft = false) {
     let hit = null;
     for (let iter = 0; iter < 3; iter++) {
       const key = Math.floor(pos.x / this.bCell) * 100003 + Math.floor(pos.y / this.bCell);
@@ -891,7 +895,7 @@ export class World {
       for (let di = -1; di <= 1; di++) {
         for (let dj = -1; dj <= 1; dj++) {
           for (const s of this.bGrid.get(key + di * 100003 + dj) || []) {
-            if (seen.has(s)) continue;
+            if (seen.has(s) || (s.soft && !soft)) continue;
             seen.add(s);
             const c = World.closest(s, pos.x, pos.y);
             if (c.d < r && c.d > 1e-6) {

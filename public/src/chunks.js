@@ -70,6 +70,7 @@ export class ChunkManager {
     if (stops) group.add(...stops.map((o) => tag(o, 'остановки')));
     const fences = buildFenceChunk(w, info, this.mats.fences);
     if (fences) group.add(...fences.map((o) => tag(o, 'заборы')));
+    for (const o of fences || []) if (o.userData.pieces) this.breakables?.addFences(o);
     this.scene.add(group);
     this.loaded.set(this.#key(ci, cj), group);
   }
@@ -78,7 +79,7 @@ export class ChunkManager {
     this.scene.remove(group);
     group.traverse((o) => {
       if (!o.isMesh) return;
-      if (o.isInstancedMesh) this.breakables?.remove(o);
+      if (o.isInstancedMesh || o.userData.pieces) this.breakables?.remove(o);
       // Общие материалы и геометрии деревьев не трогаем; своё — геометрии и текстура земли.
       if (o.material === this.mats.ads.face) { o.geometry.dispose(); return; }
       if (!o.isInstancedMesh) o.geometry.dispose();

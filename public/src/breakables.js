@@ -1,17 +1,22 @@
-// Ломаемое у дорог: фонарные столбы, светофоры, рекламные щиты (деревья — тоже здесь, но не ломаются). Машина сносит их ударом быстрее
+// Ломаемое у дорог: фонарные столбы, светофоры, рекламные щиты, лёгкие заборы кусками (деревья — тоже здесь, но не ломаются). Машина сносит их ударом быстрее
 // breakV (по нормали), медленнее — упирается, как в стену. Снесённое — отдельный меш на тех же
 // геометриях: падает от удара (поворот вокруг основания под тяжестью), скользит и ложится; экземпляр
 // на месте спрятан. Обратно встаёт, когда игрок уехал далеко. Сбитые машины трафика тоже сносят.
 import * as THREE from 'three';
 import { HitFX } from './effects.js';
+import { World } from './world.js';
 
 // r — радиус стойки, h — высота (до верха), tip — запас верха над землёй лёжа, breakV — м/с по нормали,
 // loss — доля скорости по нормали, которую теряет машина, kick — доля скорости машины, с которой летит основание.
+// Необязательные: over — на сколько ниже верха машина ещё задевает (1 м), hop — доля подскока основания (1),
+// lift — подъём упавшего над землёй (0).
 const KINDS = {
   pole: { r: 0.18, h: 9, tip: 0.15, breakV: 3, loss: 0.25, kick: 0.35 },
   signal: { r: 0.12, h: 4.1, tip: 0.2, breakV: 2, loss: 0.12, kick: 0.3 },
   board: { r: 0.5, h: 8.55, tip: 0.3, breakV: 6, loss: 0.45, kick: 0.15 },
   tree: { r: 0.3, h: 6, breakV: Infinity }, // не сбить: упираешься на любой скорости; r — на масштаб 1
+  // Кусок забора (≤ 5 м): отрезок толщиной 2r, высота — своя у куска; падает плашмя поперёк.
+  fence: { r: 0.08, tip: 0.04, breakV: 3, loss: 0.12, kick: 0.25, over: 0.4, hop: 0, lift: 0.04 },
 };
 const CELL = 16;          // м: клетка сетки поиска
 const MAX_DEBRIS = 40;    // больше — самое старое встаёт на место
@@ -83,6 +88,37 @@ export class Breakables {
         hide: () => { if (pool) pm = hideInstance(pool, i); return hideInstance(mesh, i); },
         show: (m) => { if (pm) showInstance(pool, i, pm); pm = null; showInstance(mesh, i, m); },
         make: () => new THREE.Mesh(mesh.geometry, mesh.material),
+      };
+    }));
+  }
+
+  // Лёгкий забор квадрата (buildFenceChunk): куски — отрезки, вершины куска v0…v1 в общей геометрии.
+  addFences(mesh) {
+    const geo = mesh.geometry, pos = geo.attributes.position;
+    this.#add(mesh, mesh.userData.pieces.map((p) => {
+      let saved = null;
+      return {
+        kind: KINDS.fence, x: p.x, y: p.y, z: p.z, a: p.a, h: p.h, top: p.top, low: p.y0,
+        seg: { ax: p.ax, az: p.az, bx: p.bx, bz: p.bz },
+        hide: () => {
+          saved = pos.array.slice(p.v0 * 3, p.v1 * 3);
+          pos.array.fill(0, p.v0 * 3, p.v1 * 3);
+          pos.needsUpdate = true;
+          return null;
+        },
+        show: () => {
+          if (saved) { pos.array.set(saved, p.v0 * 3); pos.needsUpdate = true; }
+        },
+        make: () => {
+          const g = new THREE.BufferGeometry();
+          const attr = (name, n) => new THREE.Float32BufferAttribute(geo.attributes[name].array.slice(p.v0 * n, p.v1 * n), n);
+          g.setAttribute('position', new THREE.Float32BufferAttribute(saved, 3));
+          for (const [name, n] of [['normal', 3], ['uv', 2], ['color', 3]]) g.setAttribute(name, attr(name, n));
+          g.applyMatrix4(_m.makeRotationY(-p.a).multiply(new THREE.Matrix4().makeTranslation(-p.x, -p.y, -p.z)));
+          const o = new THREE.Mesh(g, mesh.material);
+          o.userData.own = g;
+          return o;
+        },
       };
     }));
   }
@@ -178,26 +214,21 @@ export class Breakables {
     const hl = (car.model.userData.length ?? 4.2) / 2, hw = (car.model.userData.width ?? 1.8) / 2;
     const f = car.forward, r = car.right, cx = car.pos.x, cz = car.pos.y;
     this.#near(cx, cz, (it) => {
-      const k = it.kind, ir = it.r ?? k.r;
-      if (car.y > it.y + k.h - 1 || car.y < it.y - 1.5) return; // выше или ниже
-      const dx = it.x - cx, dz = it.z - cz;
-      const lon = dx * f.x + dz * f.y, lat = dx * r.x + dz * r.y;
-      const plon = hl + ir - Math.abs(lon), plat = hw + ir - Math.abs(lat);
-      if (plon <= 0 || plat <= 0) return;
-      // Нормаль от стойки к машине — по оси наименьшего перекрытия.
-      const byLon = plon < plat, depth = byLon ? plon : plat;
-      const sg = -Math.sign(byLon ? lon : lat) || -1;
-      const nx = (byLon ? f.x : r.x) * sg, nz = (byLon ? f.y : r.y) * sg;
+      const k = it.kind;
+      if (car.y > (it.top ?? it.y + k.h) - (k.over ?? 1) || car.y < (it.low ?? it.y) - 1.5) return; // выше или ниже
+      const hit = it.seg ? segHit(it.seg, k.r, cx, cz, f, r, hl, hw) : postHit(it, it.r ?? k.r, cx, cz, f, r, hl, hw);
+      if (!hit) return;
+      const { nx, nz, depth, px, pz } = hit;
       const vn = car.vel.x * nx + car.vel.y * nz;
       if (-vn >= k.breakV) {
         const dv = -vn * k.loss;
-        car.push(nx * dv, nz * dv, it.x + nx * k.r, it.z + nz * k.r);
+        car.push(nx * dv, nz * dv, px, pz);
         car.impact = Math.max(car.impact, Math.min(1, -vn / 30));
-        this.#break(it, car.vel.x, car.vel.y, nx, nz, car.y);
+        this.#break(it, car.vel.x, car.vel.y, nx, nz, car.y, px, pz);
         return;
       }
-      // Медленно (или дерево) — упёрлись; из зажатия о столб выезжаем, как с машинами.
-      if (car.ghostVehicles > 0 && k !== KINDS.tree) return;
+      // Медленно (или дерево) — упёрлись; из зажатия о столб выезжаем, как с машинами (сквозь забор — нет).
+      if (car.ghostVehicles > 0 && k !== KINDS.tree && k !== KINDS.fence) return;
       car.contact = true;
       car.pos.x += nx * depth;
       car.pos.y += nz * depth;
@@ -217,9 +248,11 @@ export class Breakables {
       for (const vo of v.circles) {
         const cx = v.x + v.dx * vo, cz = v.z + v.dz * vo;
         this.#near(cx, cz, (it) => {
-          const ir = it.r ?? it.kind.r, d = Math.hypot(cx - it.x, cz - it.z);
+          const ir = it.r ?? it.kind.r;
+          const c = it.seg ? World.closest(it.seg, cx, cz) : { px: it.x, pz: it.z, d: Math.hypot(cx - it.x, cz - it.z) };
+          const d = c.d;
           if (d >= v.r + ir || d < 1e-6) return;
-          const nx = (cx - it.x) / d, nz = (cz - it.z) / d, vn = kn.vx * nx + kn.vz * nz;
+          const nx = (cx - c.px) / d, nz = (cz - c.pz) / d, vn = kn.vx * nx + kn.vz * nz;
           if (it.kind === KINDS.tree) { // от дерева — отскок
             v.x += nx * (v.r + ir - d);
             v.z += nz * (v.r + ir - d);
@@ -230,32 +263,39 @@ export class Breakables {
           const loss = it.kind.loss * (v.bus ? 0.3 : 1);
           kn.vx -= vn * loss * nx;
           kn.vz -= vn * loss * nz;
-          this.#break(it, kn.vx, kn.vz, nx, nz, it.y);
+          this.#break(it, kn.vx, kn.vz, nx, nz, it.y, c.px + nx * ir, c.pz + nz * ir);
         });
       }
     }
   }
 
-  #break(it, vx, vz, nx, nz, y) {
+  // (px, pz) — точка удара (искры).
+  #break(it, vx, vz, nx, nz, y, px, pz) {
     it.broken = true;
     const m = it.hide();
     const obj = it.make();
-    obj.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    obj.traverse((o) => { if (o.isMesh) o.castShadow = !o.material.alphaTest; }); // решётка — без тени-плиты
     this.group.add(obj);
     const sp = Math.hypot(vx, vz), k = it.kind;
-    // Падает по ходу удара; основание отлетает с долей скорости, вверх — подскок.
-    const fx = sp > 0.1 ? vx / sp : -nx, fz = sp > 0.1 ? vz / sp : -nz;
+    // Падает по ходу удара; основание отлетает с долей скорости, вверх — подскок. Забор — плашмя, поперёк себя.
+    let fx = sp > 0.1 ? vx / sp : -nx, fz = sp > 0.1 ? vz / sp : -nz;
+    if (it.seg) {
+      const ux = Math.sin(it.a), uz = Math.cos(it.a), sg = Math.sign(fx * uz - fz * ux) || 1;
+      fx = uz * sg;
+      fz = -ux * sg;
+    }
+    const h = it.h ?? k.h;
     const d = {
       item: it, obj, m, age: 0,
-      x: it.x, y: it.y, z: it.z, vx: vx * k.kick, vz: vz * k.kick, vy: 1 + sp * 0.04 * k.kick * 3,
-      fx, fz, th: 0, w: (0.4 + sp * 0.07) * Math.sqrt(6 / k.h), yaw: it.a, yawV: (Math.random() - 0.5) * 1.2,
+      x: it.x, y: it.y, z: it.z, vx: vx * k.kick, vz: vz * k.kick, vy: (k.hop ?? 1) * (1 + sp * 0.04 * k.kick * 3),
+      fx, fz, th: 0, w: (0.4 + sp * 0.07) * Math.sqrt(6 / h), yaw: it.a, yawV: (Math.random() - 0.5) * 1.2,
       rest: false,
     };
     this.debris.push(d);
     if (this.debris.length > MAX_DEBRIS) this.#drop(this.debris.shift(), true);
     const s = Math.min(1, sp / 25);
-    this.sparks.burst(it.x + nx * k.r, y + 0.6, it.z + nz * k.r, nx, nz, s);
-    this.smashes.push({ x: it.x, z: it.z, s: Math.max(0.3, s) });
+    this.sparks.burst(px, y + 0.6, pz, nx, nz, s);
+    this.smashes.push({ x: px, z: pz, s: Math.max(0.3, s) });
     this.#pose(d);
   }
 
@@ -273,7 +313,7 @@ export class Breakables {
     _axis.set(d.fz, 0, -d.fx); // вокруг этой оси «верх» наклоняется к (fx, fz)
     _qt.setFromAxisAngle(_axis, d.th);
     _qy.setFromAxisAngle(UP, d.yaw);
-    d.obj.position.set(d.x, d.y, d.z);
+    d.obj.position.set(d.x, d.y + (d.item.kind.lift ?? 0), d.z); // лежащий забор — чуть над землёй, без мерцания
     d.obj.quaternion.multiplyQuaternions(_qt, _qy);
   }
 
@@ -284,7 +324,7 @@ export class Breakables {
     for (const d of this.debris) {
       d.age += dt;
       if (d.rest) continue;
-      const k = d.item.kind;
+      const k = d.item.kind, h = d.item.h ?? k.h;
       // Основание: летит, пока выше земли, потом скользит с трением.
       const gy = w.terrain(d.x, d.z);
       d.vy -= G * dt;
@@ -300,11 +340,12 @@ export class Breakables {
       d.z += d.vz * dt;
       d.yaw += d.yawV * dt;
       // Наклон: как стержень на шарнире, θ'' = 3g / 2h · sin θ.
-      d.w += (1.5 * G / k.h) * Math.sin(d.th + 0.05) * dt;
+      d.w += (1.5 * G / h) * Math.sin(d.th + 0.05) * dt;
       d.th += d.w * dt;
-      const tx = d.x + d.fx * k.h * Math.sin(d.th), tz = d.z + d.fz * k.h * Math.sin(d.th);
-      const tipY = d.y + k.h * Math.cos(d.th);
-      if (d.w > 0 && tipY <= w.terrain(tx, tz) + k.tip) {
+      const tx = d.x + d.fx * h * Math.sin(d.th), tz = d.z + d.fz * h * Math.sin(d.th);
+      const tipY = d.y + h * Math.cos(d.th);
+      if (d.w > 0 && (tipY <= w.terrain(tx, tz) + k.tip || d.th >= Math.PI / 2)) {
+        d.th = Math.min(d.th, Math.PI / 2); // дальше плашмя — уже в земле
         d.w = -d.w * 0.2; // лёг — чуть подпрыгнул верхом
         if (Math.abs(d.w) < 0.25) d.w = 0;
       }
@@ -318,6 +359,39 @@ export class Breakables {
       return false;
     });
   }
+}
+
+// Прямоугольник кузова (центр, оси f/r, полуразмеры hl/hw) против круга стойки: нормаль к машине — по оси
+// наименьшего перекрытия; px, pz — точка удара на стойке.
+function postHit(it, ir, cx, cz, f, r, hl, hw) {
+  const dx = it.x - cx, dz = it.z - cz;
+  const lon = dx * f.x + dz * f.y, lat = dx * r.x + dz * r.y;
+  const plon = hl + ir - Math.abs(lon), plat = hw + ir - Math.abs(lat);
+  if (plon <= 0 || plat <= 0) return null;
+  const byLon = plon < plat, depth = byLon ? plon : plat;
+  const sg = -Math.sign(byLon ? lon : lat) || -1;
+  const nx = (byLon ? f.x : r.x) * sg, nz = (byLon ? f.y : r.y) * sg;
+  return { nx, nz, depth, px: it.x + nx * ir, pz: it.z + nz * ir };
+}
+
+// То же против куска забора — прямоугольника толщиной 2t: разделяющие оси — оси кузова и забора.
+function segHit(s, t, cx, cz, f, r, hl, hw) {
+  const ex = s.bx - s.ax, ez = s.bz - s.az, L = Math.hypot(ex, ez) || 1;
+  const ux = ex / L, uz = ez / L, mx = (s.ax + s.bx) / 2, mz = (s.az + s.bz) / 2;
+  const dx = cx - mx, dz = cz - mz; // от забора к машине
+  let best = null;
+  for (const [ax, az] of [[f.x, f.y], [r.x, r.y], [ux, uz], [-uz, ux]]) {
+    const dist = dx * ax + dz * az;
+    const rc = hl * Math.abs(f.x * ax + f.y * az) + hw * Math.abs(r.x * ax + r.y * az);
+    const rs = (L / 2 + t) * Math.abs(ux * ax + uz * az) + t * Math.abs(-uz * ax + ux * az);
+    const depth = rc + rs - Math.abs(dist);
+    if (depth <= 0) return null;
+    if (!best || depth < best.depth) best = { nx: ax * (Math.sign(dist) || 1), nz: az * (Math.sign(dist) || 1), depth };
+  }
+  const c = World.closest(s, cx, cz);
+  best.px = c.px;
+  best.pz = c.pz;
+  return best;
 }
 
 // Спрятать экземпляр (масштаб 0), вернуть его матрицу.

@@ -1,6 +1,6 @@
 // Построение мешей города из World.
 import * as THREE from 'three';
-import { MARKED_CLASSES, World } from './world.js';
+import { MARKED_CLASSES, SOFT_FENCES, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
 
@@ -2184,7 +2184,7 @@ export function buildFenceChunk(world, info, mats) {
   if (!data.fences.length) return null;
   const { inBuilding } = spotChecks(world, data);
   const geo = {};
-  const put = (k) => (geo[k] ??= { pos: [], nor: [], uv: [], col: [] });
+  const put = (k) => (geo[k] ??= { pos: [], nor: [], uv: [], col: [], pieces: [] });
   const c = new THREE.Color();
   for (const f of data.fences) {
     const F = FENCE[f.k], g = put(f.k), t = F.t / 2, h = f.h;
@@ -2219,8 +2219,13 @@ export function buildFenceChunk(world, info, mats) {
         const ya = world.terrain(pax, paz), yb = world.terrain(pbx, pbz);
         const ua = (s + ta) / F.len, ub = (s + tb) / F.len;
         const uvs = [[ua, vBot], [ub, vBot], [ub, vTop], [ua, vTop]];
+        // Лёгкий забор сносится кусками: вершины куска v0…v1 (для breakables.js).
+        const piece = SOFT_FENCES.has(f.k) ? { x: mx, z: mz, y: (ya + yb) / 2, y0: Math.min(ya, yb), top: Math.max(ya, yb) + h,
+          h, a: Math.atan2(ux, uz), ax: pax, az: paz, bx: pbx, bz: pbz, v0: g.pos.length / 3, v1: 0 } : null;
+        if (piece) g.pieces.push(piece);
         if (!t) {
           quad([pax, ya - FENCE_SINK, paz], [pbx, yb - FENCE_SINK, pbz], [pbx, yb + h, pbz], [pax, ya + h, paz], [nx, 0, nz], uvs);
+          if (piece) piece.v1 = g.pos.length / 3;
           continue;
         }
         const side = (sg) => {
@@ -2246,6 +2251,7 @@ export function buildFenceChunk(world, info, mats) {
         };
         if (i === 1 && k === 0) cap(pax, ya, paz, -1);
         if (i === f.p.length - 1 && k === n - 1) cap(pbx, yb, pbz, 1);
+        if (piece) piece.v1 = g.pos.length / 3;
       }
       s += L;
     }
@@ -2261,6 +2267,7 @@ export function buildFenceChunk(world, info, mats) {
     const m = new THREE.Mesh(bg, mats[k]);
     m.castShadow = FENCE[k].t > 0;
     m.receiveShadow = true;
+    if (g.pieces.length) m.userData.pieces = g.pieces;
     out.push(m);
   }
   return out.length ? out : null;
