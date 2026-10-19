@@ -1,6 +1,6 @@
 # Izh Car — уличные гонки по Ижевску (прототип)
 
-**Играть: https://vorgoron.ru/izhevsk-nfs/**
+**Играть: https://izh-car.web.app** (копия на GitHub Pages — https://vorgoron.ru/izhevsk-nfs/)
 
 Аркадные гонки по Ижевску (застроенный город ~16 × 17 км). Город строится процедурно
 из OpenStreetMap и тайлов высот Terrain Tiles, в браузере, на Three.js; вокруг игрока

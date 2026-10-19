@@ -1539,7 +1539,7 @@ function izhCarAd(g, logo) {
   g.fillStyle = '#fff';
   adText(g, 'УЛИЧНЫЕ ГОНКИ ПО ИЖЕВСКУ', AD_W / 2, 330, 58);
   g.fillStyle = '#ffd23f';
-  adText(g, 'vorgoron.ru/izhevsk-nfs', AD_W / 2, 415, 52, 700);
+  adText(g, 'izh-car.web.app', AD_W / 2, 415, 52, 700);
 }
 
 function izhCarFriendsAd(g, logo) {
