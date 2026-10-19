@@ -28,6 +28,7 @@ import { track } from './analytics.js';
 import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
 import { Cameras } from './cameras.js';
 import { Drift } from './drift.js';
+import { RouteGuide } from './guide.js';
 import { CLEAR_ALT } from './car.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
@@ -167,6 +168,8 @@ async function main() {
   nitroFx.attach(car.model);
   jetFx.attach(car.model);
   const race = new Race(world, scene);
+  const guide = owned('стрелки', () => new RouteGuide(world, scene));
+  let navRoute = null; // маршрут до точки на большой карте (citymap.js)
 
   // Старт у Центральной площади.
   const spawn = world.nearestRoad(0, 0, 400);
@@ -996,6 +999,10 @@ async function main() {
     sound.traffic(dt, traffic, car);
     sound.smash(breakables.smashes.splice(0), car);
     landmarks.group.userData.update(performance.now() / 1000);
+    // Стрелки на дороге: в гонке — по её маршруту, иначе — до точки, выбранной на карте.
+    const route = race.state === 'running' || race.state === 'countdown' ? race.route : navRoute;
+    if (route !== guide.route) guide.set(route);
+    guide.update(car);
     updateCamera(dt);
     skyDome.update(dt, camera);
     dayNight.update(dt);
