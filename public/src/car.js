@@ -52,6 +52,9 @@ const YAW_DAMP = 2.2, YAW_MAX = 4, SKID_GRIP = 0.85;
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
 const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
+// Крыши: после трюка можно сесть на машину трафика, трамвай или дом (support — main.js) и ехать по ней;
+// съехал с края, а под колёсами пустота выше FALL м — падаешь.
+const FALL = 1.2;
 const TANK_M = 9000;      // м на полном баке при обычном газе; нитро — втрое больше расхода
 
 export class Car {
@@ -83,6 +86,10 @@ export class Car {
     this.yawV = 0;          // закрутка от удара, рад/с (как рост heading)
     this.skid = 0;          // после удара шины скользят, 0..1
     this.slide = 0;         // занос от ручника, 0..1
+    // Опора сверху, на которую можно сесть: (x, z, y) → { y, vx, vz, kind, obj } — самая высокая крыша
+    // не выше y + 0.5 или null; задаёт main.js. onTop — на чём стоим сейчас (null — на земле).
+    this.support = null;
+    this.onTop = null;
   }
 
   // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы).
@@ -104,6 +111,7 @@ export class Car {
     this.air = null;
     this.flip = this.flipP = this.alt = 0;
     this.yawV = this.skid = this.slide = 0;
+    this.onTop = null;
     this.heading = heading;
     this.y = this.world.ground(x, z);
   }
@@ -198,6 +206,8 @@ export class Car {
     if (dt > 0) this.accel_ = (this.accel_ ?? 0) + ((vf - vf0) / dt - (this.accel_ ?? 0)) * Math.min(1, dt * 5);
     if (wet) this.vel.multiplyScalar(Math.exp(-2.4 * dt)); // вода держит
     this.pos.addScaledVector(this.vel, dt);
+    // Стоим на едущей машине или трамвае — она везёт (своя скорость — относительно неё).
+    if (this.onTop) { this.pos.x += this.onTop.vx * dt; this.pos.y += this.onTop.vz * dt; }
 
     this.#collide();
 
@@ -205,8 +215,28 @@ export class Car {
     const g = this.world;
     // От текущей высоты: под мостом настил над головой не считается поверхностью.
     const y0 = this.y;
-    const ground = g.ground(this.pos.x, this.pos.y, y0);
-    if (air) {
+    const land = g.ground(this.pos.x, this.pos.y, y0);
+    // Крыша под машиной — только в прыжке и пока на ней стоим (с земли на крышу не заехать).
+    const sup = (air || this.onTop) && this.support ? this.support(this.pos.x, this.pos.y, y0) : null;
+    const ground = sup && sup.y > land ? sup.y : land;
+    this.onTop = sup && sup.y > land && !air ? sup : null;
+    // Съехал с крыши (или с обрыва) — падаем, а не съезжаем плавно.
+    if (!air && y0 - ground > FALL && this.sink === 0) {
+      this.air = { kind: 'fall', t: 0, vy: 0, dur: 1, dir: 1, a: 0, w: 0, acc: 0 };
+      this.onTop = null;
+    }
+    if (this.air && this.air.kind === 'fall') {
+      // Падение с крыши: просто вниз, без оборота.
+      const fall = this.air;
+      fall.vy -= FLIP_G * dt;
+      this.y += fall.vy * dt;
+      if (this.y <= ground) {
+        this.y = ground;
+        this.air = null;
+        this.impact = Math.max(this.impact, Math.min(1, -fall.vy / 15));
+        if (sup && sup.y > land) this.onTop = sup;
+      }
+    } else if (air) {
       air.t += dt;
       air.vy -= FLIP_G * dt;
       this.y += air.vy * dt;
@@ -227,11 +257,13 @@ export class Car {
         this.impact = Math.max(this.impact, 0.3);
         this.landings = (this.landings ?? 0) + 1; // для пара при посадке (JetFX); респаун в прыжке — не посадка
         this.landed = air.kind; // какой трюк приземлён — забирает main.js (награда)
+        this.landedOn = sup && sup.y > land ? sup.kind : null; // и на что: крыша машины, трамвая, дома
+        if (this.landedOn) this.onTop = sup;
       }
     } else {
       this.y += (ground - this.y) * Math.min(1, dt * 15);
     }
-    this.alt = this.y - ground;
+    this.alt = this.y - land; // над землёй и дорогой (на крыше — высота крыши): пролетаем ли трафик
     const hf = g.ground(this.pos.x + f2.x * 1.6, this.pos.y + f2.y * 1.6, y0);
     const hb = g.ground(this.pos.x - f2.x * 1.6, this.pos.y - f2.y * 1.6, y0);
     const hl = g.ground(this.pos.x - r2.x * 0.9, this.pos.y - r2.y * 0.9, y0);
@@ -266,7 +298,7 @@ export class Car {
   // vn — относительная скорость по нормали. Лёгкое касание только расталкивает, удар — отскок,
   // потеря скорости и тряска. Возвращает true при ударе.
   touchVehicle(nx, nz, depth, vn) {
-    if (this.alt > CLEAR_ALT) return false; // перелетаем
+    if (this.alt > CLEAR_ALT || this.onTop) return false; // перелетаем; стоим на крыше
     this.contact = true;
     this.pos.x += nx * depth;
     this.pos.y += nz * depth;
@@ -311,7 +343,8 @@ export class Car {
     for (const s of [AXLE, -AXLE]) {
       const c = new THREE.Vector2(this.pos.x + f.x * s, this.pos.y + f.y * s);
       const before = c.clone();
-      const n = this.world.collide(c, RADIUS);
+      // В прыжке и на крыше стены ниже машины не мешают; на земле — все (дом на склоне ниже дороги — всё равно стена).
+      const n = this.world.collide(c, RADIUS, false, this.air || this.onTop ? this.y : -Infinity);
       if (!n) continue;
       this.pos.add(c.sub(before));
       const vn = this.vel.x * n.x + this.vel.y * n.z;

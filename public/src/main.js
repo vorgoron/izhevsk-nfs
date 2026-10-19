@@ -280,6 +280,31 @@ async function main() {
   game.trams = trams;
   traffic.trams = trams; // трафик ждёт трамваи, трамваи — трафик на путях
   trams.traffic = traffic;
+  // Куда можно сесть после трюка: крыша машины трафика, трамвая или дома под точкой, не выше y + 0.5.
+  // Машина и трамвай везут стоящего на них со своей скоростью.
+  const TRAM_ROOF = 3.2, TRAM_HALF = [7.4, 1.25];
+  car.support = (x, z, y) => {
+    let best = null;
+    const put = (top, vx, vz, kind, obj) => { if (top <= y + 0.5 && (!best || top > best.y)) best = { y: top, vx, vz, kind, obj }; };
+    if (traffic.enabled) {
+      for (const v of traffic.vehicles) {
+        if (!v.active || Math.abs(v.x - x) > 7 || Math.abs(v.z - z) > 7) continue;
+        const rx = x - v.x, rz = z - v.z;
+        if (Math.abs(rx * v.dx + rz * v.dz) > v.len / 2 - 0.3 || Math.abs(rz * v.dx - rx * v.dz) > v.half) continue;
+        const [vx, vz] = v.knock ? [v.knock.vx, v.knock.vz] : [v.dx * v.speed, v.dz * v.speed];
+        put(v.y + v.roof, vx, vz, v.bus ? 'bus' : 'car', v);
+      }
+    }
+    for (const t of trams.near(x, z, 9)) {
+      if (t.y === undefined) continue;
+      const rx = x - t.x, rz = z - t.z;
+      if (Math.abs(rx * t.dx + rz * t.dz) > TRAM_HALF[0] || Math.abs(rz * t.dx - rx * t.dz) > TRAM_HALF[1]) continue;
+      put(t.y + TRAM_ROOF, t.dx * t.v, t.dz * t.v, 'tram', t);
+    }
+    const roof = world.roofAt(x, z, y + 0.5);
+    if (roof !== null) put(roof, 0, 0, 'roof', null);
+    return best;
+  };
   // Радио всегда на экране: станция или приглушённое «Радио выкл»; при переключении надпись вспыхивает.
   let radioName, radioWheel; // барабан создаётся ниже, а onChange зовётся уже здесь
   const radio = new Radio(() => {
@@ -877,6 +902,8 @@ async function main() {
   }
   // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху. Дрифт — drift.js.
   const TRICK_PAY = { kick: 500, back: 700 }, OVER_PAY = 300;
+  const ROOF_PAY = { car: 800, bus: 1200, tram: 1500, roof: 1000 };
+  const ROOF_NAME = { car: 'на крышу машины', bus: 'на крышу автобуса', tram: 'на крышу трамвая', roof: 'на крышу дома' };
   const jumped = new Set();
   const drift = new Drift($('drift'));
   function tricks(dt) {
@@ -887,10 +914,12 @@ async function main() {
       for (const t of trams.near(car.pos.x, car.pos.y, 12)) if (Math.abs((car.pos.x - t.x) * t.dz - (car.pos.y - t.z) * t.dx) < 2) jumped.add(t);
     }
     if (!car.landed) return;
-    const n = jumped.size, kind = car.landed;
-    car.landed = null;
+    const n = jumped.size, kind = car.landed, on = car.landedOn;
+    car.landed = car.landedOn = null;
     jumped.clear();
-    wallet.earn(TRICK_PAY[kind] + n * OVER_PAY, `${kind === 'kick' ? 'kickflip' : 'backflip'}${n ? ` над ${n} ${n === 1 ? 'машиной' : 'машинами'}` : ''}`);
+    // Посадка на крышу — сверху ещё (на трамвай и автобус дороже: попасть труднее).
+    const roof = on ? ROOF_PAY[on] : 0;
+    wallet.earn(TRICK_PAY[kind] + n * OVER_PAY + roof, `${kind === 'kick' ? 'kickflip' : 'backflip'}${n ? ` над ${n} ${n === 1 ? 'машиной' : 'машинами'}` : ''}${on ? ` · ${ROOF_NAME[on]}` : ''}`);
   }
 
   let lastStreet = '';

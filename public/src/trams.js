@@ -220,6 +220,7 @@ export class Trams {
       }
       const hf = w.railGround(t.x + t.dx * 5, t.z + t.dz * 5, t.dx, t.dz, true), hb = w.railGround(t.x - t.dx * 5, t.z - t.dz * 5, t.dx, t.dz, true);
       m.position.set(t.x, (hf + hb) / 2, t.z);
+      t.y = m.position.y; // для посадки на крышу (main.js)
       m.rotation.set(0, 0, 0);
       m.rotation.order = 'YXZ';
       m.rotation.y = Math.atan2(t.dx, t.dz);

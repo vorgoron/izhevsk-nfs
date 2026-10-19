@@ -89,14 +89,16 @@ export class Traffic {
     // Каждый тип — набор InstancedMesh с общими индексами: кузов (цвет от инстанса), детали, фары.
     const lit = new THREE.MeshLambertMaterial({ vertexColors: true });
     const glow = new THREE.MeshBasicMaterial({ vertexColors: true });
+    // roof — высота крыши над дорогой (на неё можно сесть после трюка, см. main.js).
+    const roofOf = (...geos) => Math.max(...geos.map((g) => (g.computeBoundingBox(), g.boundingBox.max.y)));
     const kinds = Object.entries(MIX).map(([key, count]) => {
       const p = vehicleParts(MODELS[key], { wheelsInDetail: true });
-      return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0,
+      return { key, count, len: p.length, colors: MODELS[key].colors, paint: 0, roof: roofOf(p.paint, p.detail),
         meshes: [new THREE.InstancedMesh(p.paint, lit, count), new THREE.InstancedMesh(p.detail, lit, count),
           new THREE.InstancedMesh(p.lights, glow, count), new THREE.InstancedMesh(carGlows(p.lights, { beam: true }), glowMaterial(), count)] };
     });
     const bus = busGeometry();
-    kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0,
+    kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0, roof: 2.95,
       meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES),
         new THREE.InstancedMesh(busGlows(), glowMaterial(), BUSES)] });
     this.meshes = kinds.flatMap((k) => k.meshes);
@@ -109,7 +111,7 @@ export class Traffic {
         kind.meshes[kind.paint].setColorAt(idx, c.set(kind.colors[(idx * 3 + n) % kind.colors.length]));
         this.vehicles.push({
           meshes: kind.meshes, idx, bus, kind: kind.key,
-          len: kind.len,
+          len: kind.len, roof: kind.roof, y: 0, half: bus ? 1.25 : 0.85,
           // Выхлопная труба слева сзади; ускорение — для густоты дыма.
           acc: 0, smoke: { carry: Math.random() },
           pipe: new THREE.Vector3(bus ? -0.9 : -0.45, bus ? 0.45 : 0.33, -kind.len / 2 - 0.1),
@@ -303,7 +305,7 @@ export class Traffic {
       if (Math.abs(tx - v.x) < look + 10 && Math.abs(tz - v.z) < look + 10 && check(tx, tz, 3, false, tdx, tdz)) blockedByTraffic = true;
     }
     const f = car.forward;
-    const byPlayer = check(car.pos.x, car.pos.y, 4.3, false, f.x, f.y);
+    const byPlayer = !car.onTop && car.alt < CLEAR_ALT && check(car.pos.x, car.pos.y, 4.3, false, f.x, f.y);
 
     // Игрок стоит поперёк дороги — посигналить ему (не чаще раза в несколько секунд).
     v.honkCool = Math.max(0, v.honkCool - dt);
@@ -564,10 +566,11 @@ export class Traffic {
 
   #collidePlayer(car) {
     if (car.ghostVehicles > 0) return; // выезжаем из зажатия
-    if (car.alt > CLEAR_ALT) return;   // перелетаем
+    if (car.alt > CLEAR_ALT || car.onTop) return; // перелетаем; стоим на крыше
     const f = car.forward;
     for (const v of this.vehicles) {
       if (!v.active || Math.hypot(v.x - car.pos.x, v.z - car.pos.y) > 16) continue;
+      if (car.y > v.y + v.roof - 0.4) continue; // над её крышей — садимся на неё, а не толкаемся
       for (const so of [PLAYER_AXLE, -PLAYER_AXLE]) {
         for (const vo of v.circles) {
           const cx = car.pos.x + f.x * so, cz = car.pos.y + f.y * so;
@@ -733,6 +736,7 @@ export class Traffic {
       const hf = w.ground(v.x + fx * a, v.z + fz * a, y), hb = w.ground(v.x - fx * a, v.z - fz * a, y);
       const hl = w.ground(v.x - rx * b, v.z - rz * b, y), hr = w.ground(v.x + rx * b, v.z + rz * b, y);
       p.set(v.x, Math.max(w.ground(v.x, v.z, y), (hf + hb) / 2), v.z);
+      v.y = p.y;
       // Качка на подвеске после удара — пружина с демпфером.
       if (v.roll || v.rollV || v.pitch || v.pitchV) {
         const sdt = Math.min(dt, 1 / 30);

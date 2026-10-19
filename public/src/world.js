@@ -40,6 +40,8 @@ function pointInRing(x, z, p) {
   return ins;
 }
 
+const ROOF_CELL = 40; // м: клетка сетки зданий для roofAt
+
 export class World {
   constructor(city) {
     this.city = city;
@@ -1090,10 +1092,21 @@ export class World {
   #initBuildingIndex() {
     this.bCell = 20;
     this.bGrid = new Map();
+    this.roofGrid = new Map(); // клетка → здания, для roofAt
     for (const b of this.city.buildings) {
       if ((b.mh ?? 0) < 2.5) { // под переходом и аркой проезжаем
-        this.addCollider(b.p, b.x);
-        for (const h of b.holes || []) this.addCollider(h); // двор/поле внутри — тоже стены
+        // Верх стен — по самой низкой точке рельефа под домом: выше — уже над крышей, стена не держит.
+        const top = Math.min(...b.p.map(([x, z]) => this.terrain(x, z))) + b.h;
+        this.addCollider(b.p, b.x, top);
+        for (const h of b.holes || []) this.addCollider(h, [], top); // двор/поле внутри — тоже стены
+        const xs = b.p.map((q) => q[0]), zs = b.p.map((q) => q[1]);
+        const rb = { p: b.p, holes: b.holes, top, x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
+        for (let i = Math.floor(rb.x0 / ROOF_CELL); i <= Math.floor(rb.x1 / ROOF_CELL); i++) {
+          for (let j = Math.floor(rb.z0 / ROOF_CELL); j <= Math.floor(rb.z1 / ROOF_CELL); j++) {
+            const k = i * 100003 + j;
+            (this.roofGrid.get(k) || this.roofGrid.set(k, []).get(k)).push(rb);
+          }
+        }
       }
     }
     // Заборы — тоже стены (проёмы под ворота и дороги вырезаны при сборке). Лёгкие (SOFT_FENCES) машину
@@ -1107,17 +1120,29 @@ export class World {
     }
   }
 
-  // Замкнутый контур, сквозь который нельзя проехать. skip — индексы рёбер без стены.
-  addCollider(p, skip = []) {
+  // Замкнутый контур, сквозь который нельзя проехать. skip — индексы рёбер без стены; top — высота верха стен
+  // (над ним — проезжаем: машина на крыше), без неё — стена бесконечная.
+  addCollider(p, skip = [], top = Infinity) {
     for (let i = 0; i < p.length; i++) {
       if (skip.includes(i)) continue;
       const a = p[i], c = p[(i + 1) % p.length];
-      this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1] }, 0);
+      this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1], top }, 0);
     }
   }
 
+  // Крыша здания под точкой: высота её верха или null. Не выше y (снизу на крышу не попасть).
+  roofAt(x, z, y = Infinity) {
+    let best = null;
+    for (const b of this.roofGrid.get(Math.floor(x / ROOF_CELL) * 100003 + Math.floor(z / ROOF_CELL)) || []) {
+      if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1 || b.top > y || (best !== null && b.top <= best)) continue;
+      if (pointInRing(x, z, b.p) && !(b.holes || []).some((h) => pointInRing(x, z, h))) best = b.top;
+    }
+    return best;
+  }
+
   // Выталкивает круг (x, z, r) из стен. Возвращает нормаль удара или null. soft — и из лёгких заборов.
-  collide(pos, r, soft = false) {
+  // y — высота низа машины: стены ниже неё (машина на крыше) не мешают.
+  collide(pos, r, soft = false, y = -Infinity) {
     let hit = null;
     for (let iter = 0; iter < 3; iter++) {
       const key = Math.floor(pos.x / this.bCell) * 100003 + Math.floor(pos.y / this.bCell);
@@ -1126,7 +1151,7 @@ export class World {
       for (let di = -1; di <= 1; di++) {
         for (let dj = -1; dj <= 1; dj++) {
           for (const s of this.bGrid.get(key + di * 100003 + dj) || []) {
-            if (seen.has(s) || (s.soft && !soft)) continue;
+            if (seen.has(s) || (s.soft && !soft) || y > (s.top ?? Infinity) - 0.5) continue;
             seen.add(s);
             const c = World.closest(s, pos.x, pos.y);
             if (c.d < r && c.d > 1e-6) {
