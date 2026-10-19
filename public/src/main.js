@@ -742,6 +742,8 @@ async function main() {
     nameIn.parentElement.hidden = net.named;
     nameIn.placeholder = net.name;
     if (!net.named && !isTouch) nameIn.focus();
+    // Клавиатура телефона закрывает пол-экрана — прокручиваем к полю и кнопке.
+    nameIn.addEventListener('focus', () => setTimeout(() => box.scrollIntoView({ block: 'end', behavior: 'smooth' }), 300));
     return new Promise((resolve) => {
       const go = () => {
         removeEventListener('keydown', onKey);
@@ -749,6 +751,7 @@ async function main() {
         nameIn.blur();
         sound.unlock();
         radio.unlock();
+        document.body.classList.remove('boot'); // дальше игра только лёжа — снова просим повернуть телефон
         resolve();
       };
       const onKey = (e) => {

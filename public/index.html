@@ -16,6 +16,10 @@
     html.nohud body > :not(canvas:first-child) { display: none !important; }
     #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #15181b; font-size: 20px; z-index: 19; }
     #loading { transition: opacity .6s; }
+    /* Заставка прокручивается: на телефоне лёжа с открытой клавиатурой поле имени и «Поехали» не влезают.
+       margin: auto вместо одного place-items — у высокого содержимого не обрезается верх. */
+    #loading { overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: calc(12px + env(safe-area-inset-top)) 0 12px; box-sizing: border-box; }
+    #loading .box { margin: auto; }
     #loading.done { opacity: 0; pointer-events: none; }
     #loading .box { width: min(86vw, 480px); text-align: center; }
     #loading h1 { margin: 0 0 22px; }
@@ -280,8 +284,10 @@
     body.touch #attr { font-size: 9px; bottom: 2px; right: auto; left: calc(8px + env(safe-area-inset-left)); }
     #rotate { display: none; }
     @media (orientation: portrait) {
-      body.touch #rotate { display: grid; place-items: center; position: fixed; inset: 0; z-index: 20; background: #15181b;
+      body.touch:not(.boot) #rotate { display: grid; place-items: center; position: fixed; inset: 0; z-index: 20; background: #15181b;
         font-size: 20px; text-align: center; padding: 24px; line-height: 1.5; }
+      /* Заставку и экран «Поехали» можно пройти стоя: имя удобнее набирать на вертикальной клавиатуре. */
+      body.touch #loading .box { width: min(86vw, 420px); }
     }
   </style>
   <script type="importmap">
@@ -289,7 +295,7 @@
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
   </script>
 </head>
-<body>
+<body class="boot"> <!-- boot снимает main.js после «Поехали»: до тех пор телефон можно держать вертикально -->
   <div id="loading"><div class="box"><h1><img src="logo.svg" alt="Izh Car"><small>уличные гонки по Ижевску</small></h1><div id="loading-bar"><div id="loading-fill"></div></div><div id="loading-text">Загрузка…</div>
     <div id="start" hidden>
       <label>Имя гонщика<input maxlength="10" autocomplete="nickname" enterkeyhint="go" spellcheck="false"><small>Его видят другие игроки и на номере вашей машины. Поменять — в меню.</small></label>
