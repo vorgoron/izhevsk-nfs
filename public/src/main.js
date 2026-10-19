@@ -30,6 +30,7 @@ import { Cameras } from './cameras.js';
 import { Drift } from './drift.js';
 import { RouteGuide } from './guide.js';
 import { CityMap } from './citymap.js';
+import { Gauges } from './gauges.js';
 import { CLEAR_ALT } from './car.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
@@ -945,8 +946,10 @@ async function main() {
     wallet.earn(TRICK_PAY[kind] + n * OVER_PAY + roof, `${kind === 'kick' ? 'kickflip' : 'backflip'}${n ? ` над ${n} ${n === 1 ? 'машиной' : 'машинами'}` : ''}${on ? ` · ${ROOF_NAME[on]}` : ''}`);
   }
 
+  const gauges = isTouch ? null : new Gauges($('tacho'));
   let lastStreet = '';
-  function updateHud() {
+  function updateHud(dt, inp) {
+    gauges?.update(dt, car, inp);
     $('speed').textContent = Math.round(Math.abs(car.speed) * 3.6);
     $('nitro-fill').style.width = `${car.nitro * 100}%`;
     $('nitro').classList.toggle('locked', !!car.nitroLocked); // пусто — ждём четверть баллона
@@ -1150,7 +1153,7 @@ async function main() {
     }
     sun.target.position.set(car.pos.x, car.y, car.pos.y);
     sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 300);
-    updateHud();
+    updateHud(dt, inp);
     renderer.render(scene, camera);
     perf?.end();
   });

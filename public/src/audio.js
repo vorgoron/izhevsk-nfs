@@ -3,7 +3,17 @@
 // Браузер разрешает звук только после жеста пользователя — контекст создаётся на первое нажатие.
 
 const GEARS = [0, 35, 65, 100, 140, 185, 260]; // км/ч: границы передач
-const IDLE_RPM = 900, MAX_RPM = 6400;
+export const IDLE_RPM = 900, MAX_RPM = 6400;
+
+// Обороты мотора к которым он идёт (без сглаживания) и передача — по скорости и газу. Общие для звука и тахометра.
+export function engineTarget(kmh, throttle) {
+  let gear = 1;
+  while (gear < GEARS.length - 1 && kmh > GEARS[gear]) gear++;
+  const lo = GEARS[gear - 1], hi = GEARS[gear];
+  let rpm = IDLE_RPM + ((kmh - lo) / (hi - lo)) * (MAX_RPM - IDLE_RPM) * (gear === 1 ? 1 : 0.62) + (gear === 1 ? 0 : 2000);
+  if (kmh < 2) rpm = throttle ? 2600 : IDLE_RPM; // газ на месте — перегазовка
+  return { rpm, gear };
+}
 const TRAFFIC_VOICES = 4; // столько ближайших машин слышно мотором
 const TRAFFIC_HEAR = 70; // м
 const SOUND_SPEED = 343; // м/с, для Доплера
@@ -375,12 +385,8 @@ export class Sound {
 
     // ---- мотор: обороты по передачам, на газу громче и ярче
     const kmh = Math.abs(car.speed) * 3.6;
-    let gear = 1;
-    while (gear < GEARS.length - 1 && kmh > GEARS[gear]) gear++;
-    const lo = GEARS[gear - 1], hi = GEARS[gear];
     const throttle = input.up || input.down ? 1 : 0;
-    let target = IDLE_RPM + ((kmh - lo) / (hi - lo)) * (MAX_RPM - IDLE_RPM) * (gear === 1 ? 1 : 0.62) + (gear === 1 ? 0 : 2000);
-    if (kmh < 2) target = throttle ? 2600 : IDLE_RPM; // газ на месте — перегазовка
+    const target = engineTarget(kmh, throttle).rpm;
     this.rpm += (target - this.rpm) * Math.min(1, dt * 9);
     const freq = (this.rpm / 60) * 2; // 4 цилиндра: 2 вспышки на оборот
     for (const { o, mul } of this.engineOsc) set(o.frequency, freq * mul, 0.02);

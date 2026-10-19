@@ -68,6 +68,10 @@
     #fuel { position: relative; width: 180px; height: 8px; margin-top: 6px; margin-left: auto; background: rgba(255,255,255,.2); border-radius: 4px; overflow: hidden; }
     #fuel::before { content: '⛽'; position: absolute; left: -22px; top: -5px; font-size: 13px; }
     #fuel { overflow: visible; }
+    /* Тахометр и бензин (gauges.js) — слева от скорости, только на компьютере; полоска бензина тогда не нужна. */
+    #tacho { right: 214px; bottom: 14px; width: 190px; height: 190px; }
+    body.touch #tacho, body.in-garage #tacho { display: none; }
+    body:not(.touch) #fuel { display: none; }
     #fuel-fill { height: 100%; width: 100%; border-radius: 4px; background: linear-gradient(90deg, #ff8a2a, #ffd23f); }
     #fuel.low #fuel-fill { background: #ff3b30; animation: blink .6s steps(2) infinite; }
     @keyframes blink { 50% { opacity: .25; } }
@@ -404,6 +408,7 @@
   <div id="fuelptr">⛽</div>
   <div id="fuelwarn" class="hud"></div>
   <div id="lowfuel"></div>
+  <canvas id="tacho" class="hud"></canvas>
   <div id="speedo" class="hud"><span id="speed">0</span> <span class="unit">км/ч</span><div id="nitro"><div id="nitro-fill"></div></div><div id="fuel"><div id="fuel-fill"></div></div></div>
   <div id="fuelhint" class="hud"></div>
   <div id="radio" class="hud"></div>
