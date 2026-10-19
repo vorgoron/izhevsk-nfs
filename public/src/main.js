@@ -173,7 +173,7 @@ async function main() {
   await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
   progress(0.95, 'Трафик, заправки, светофоры…');
   await frame();
-  const skyDome = owned('небо', () => new Sky(scene, world.baseTerrain(0, 0)));
+  const skyDome = owned('небо', () => new Sky(scene, { low: lite || isTouch }));
   // Ночь: фары своей машины — прожектор без теней (днём выключен, см. DayNight).
   const headlight = new THREE.SpotLight('#ffeccc', 0, 90, 0.62, 0.55, 1.1);
   scene.add(headlight, headlight.target);
@@ -933,7 +933,7 @@ async function main() {
     sound.smash(breakables.smashes.splice(0), car);
     landmarks.group.userData.update(performance.now() / 1000);
     updateCamera(dt);
-    skyDome.update(dt, camera, car.pos.x, car.pos.y);
+    skyDome.update(dt, camera);
     dayNight.update(dt);
     if (headlight.visible) {
       const m = car.model, front = (m.userData.length || 4.2) / 2;
