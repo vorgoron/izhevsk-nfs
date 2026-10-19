@@ -1,6 +1,6 @@
 // Построение мешей города из World.
 import * as THREE from 'three';
-import { MARKED_CLASSES, SOFT_FENCES, TRAM_BED, TRAM_DROP, TRAM_GRASS, TRAM_TUCK, World } from './world.js';
+import { MARKED_CLASSES, SIDEWALK, SOFT_FENCES, TRAM_BED, TRAM_DROP, TRAM_GRASS, TRAM_TUCK, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
 import { SPECIES, LEAF, treeGeometry, LEAF_GLSL } from './trees.js';
@@ -56,6 +56,11 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
     g.stroke();
   };
   for (const w of data.waterways) stroke(w.p, w.w, AREA_COLORS.water); // речки и ручьи
+  // Тротуары (SIDEWALK, world.js): плитка по обе стороны улицы, на крупных — газон между ней и проезжей частью.
+  // Сначала вся плитка, потом газоны — газон соседней улицы не ложится на тротуар этой; асфальт — поверх.
+  const walks = data.lines.filter((r) => SIDEWALK[r.k] && !r.br && !r.tu).map((r) => [r.n.map((i) => world.nodes[i]), r.w, SIDEWALK[r.k]]);
+  for (const [p, w, [lawn, walk]] of walks) stroke(p, w + 2 * (lawn + walk), '#a9a59c');
+  for (const [p, w, [lawn]] of walks) if (lawn) stroke(p, w + 2 * lawn, '#62793f');
   for (const p of data.paths) stroke(p, 2.2, '#a7a196');
   // Асфальт под дорожными мешами закрывает щели на перекрёстках; пути — поверх него.
   for (const r of data.lines) stroke(r.n.map((i) => world.nodes[i]), r.w + 0.6, '#3b3c3e');

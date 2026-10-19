@@ -41,6 +41,9 @@ function pointInRing(x, z, p) {
 }
 
 const ROOF_CELL = 40; // м: клетка сетки зданий для roofAt
+// Тротуары вдоль городских улиц (в OSM их редко рисуют отдельно): [газон между проезжей частью и тротуаром,
+// ширина тротуара], м. Рисуются на земле (build.js), по ним едут как по асфальту (surfaceAt). На мостах и в тоннелях — нет.
+export const SIDEWALK = { primary: [2, 3], secondary: [1.5, 3], tertiary: [1, 2.5], residential: [0, 2], unclassified: [0, 2] };
 
 export class World {
   constructor(city) {
@@ -719,9 +722,14 @@ export class World {
   // Покрытие под точкой: 'road' — полотно дороги, 'paved' — площадь, парковка, промзона,
   // беговая дорожка; иначе 'ground' (трава, парк, лес, пустырь) — там едется тяжело.
   surfaceAt(x, z) {
+    let walk = false;
     for (const s of this.nearbyRoadSegments(x, z)) {
-      if (World.closest(s, x, z).d < s.w / 2 + 0.4) return 'road';
+      const d = World.closest(s, x, z).d;
+      if (d < s.w / 2 + 0.4) return 'road';
+      const sw = !s.road.br && !s.road.tu && SIDEWALK[s.road.k];
+      if (sw && d > s.w / 2 + sw[0] && d < s.w / 2 + sw[0] + sw[1]) walk = true;
     }
+    if (walk) return 'paved';
     const [ci, cj] = this.chunkAt(x, z);
     const d = this.chunkData.get(ci * 10000 + cj);
     if (!d) return 'ground';
