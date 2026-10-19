@@ -181,6 +181,119 @@ const TAPER = 0.3; // м сужения полотна на метр длины 
 const MEDIAN_REACH = 25; // м: дальше парный мост не соединяется общим настилом (как MEDIAN_MAX в world.js)
 
 // Ленты дорог квадрата: каждый кусок (run) — отрезки одной дороги подряд.
+// Улица из двух линий OSM (проезжие части в разные стороны), оси ближе суммы полуширин, как на
+// Удмуртской: ленты шли внахлёст, и разметка одной ложилась на другую. Для каждой стороны дороги —
+// линия, где она встречается с соседней параллельной лентой: середина нахлёста, сглаженная по
+// положению (±TWIN_SMOOTH м), чтобы двойная сплошная шла ровно, даже когда оси в OSM виляют.
+// Считается по всей дороге сразу (а не по куску квадрата), иначе на стыке квадратов ступенька.
+const TWIN_STEP = 2.5, TWIN_SMOOTH = 15;
+const twinCache = new WeakMap();
+function twinEdges(world, road) {
+  if (twinCache.has(road)) return twinCache.get(road);
+  const half = road.w / 2;
+  const S = [], side = { L: [], R: [] };
+  // Точки линии стыка слева и справа от точки (x0, z0) дороги с направлением (dx, dz).
+  const sample = (s, x0, z0, dx, dz) => {
+    let l = half, r = half;
+    const seen = new Set();
+    for (const o of [0, half, -half]) {
+      for (const q of world.nearbyRoadSegments(x0 - dz * o, z0 + dx * o)) {
+        if (q.road === road || q.road.br || seen.has(q)) continue;
+        seen.add(q);
+        if (roadMarking(q.road) === 'plain') continue;
+        const ex = q.bx - q.ax, ez = q.bz - q.az, el = Math.hypot(ex, ez) || 1;
+        if (Math.abs((ex * dx + ez * dz) / el) < 0.9) continue;
+        const c = World.closest(q, x0, z0);
+        const lat = (c.px - x0) * -dz + (c.pz - z0) * dx; // >0 — слева
+        const sum = half + q.w / 2, over = sum - Math.abs(lat);
+        if (over <= 0 || Math.abs(lat) < sum / 2) continue; // почти на оси — съезд или продолжение
+        if (lat > 0) l = Math.min(l, half - over / 2);
+        else r = Math.min(r, half - over / 2);
+      }
+    }
+    S.push(s);
+    side.L.push(l < half ? [x0 - dz * l, z0 + dx * l] : null);
+    side.R.push(r < half ? [x0 + dz * r, z0 - dx * r] : null);
+  };
+  // Продолжение улицы за концом дороги (следующая линия OSM той же улицы почти по прямой): точки
+  // до TWIN_SMOOTH м от узла наружу [x, z, направление по ходу дороги]. Без них окно сглаживания
+  // у конца одностороннее, и на стыке двух линий OSM двойная сплошная шла ступенькой.
+  const beyond = (end) => {
+    const k = end ? road.n.length - 1 : 0, node = road.n[k];
+    const [ax, az] = world.nodes[road.n[end ? k - 1 : 1]], [bx, bz] = world.nodes[node];
+    const ol = Math.hypot(bx - ax, bz - az) || 1, ox = (bx - ax) / ol, oz = (bz - az) / ol; // наружу
+    const next = world.nearbyRoadSegments(bx, bz).map((q) => q.road).find((o) => o !== road && o.name === road.name &&
+      roadMarking(o) !== 'plain' && (o.n[0] === node || o.n[o.n.length - 1] === node));
+    if (!next) return [];
+    const seq = next.n[0] === node ? next.n : [...next.n].reverse();
+    const out = [];
+    let d = 0;
+    for (let i = 1; i < seq.length && d < TWIN_SMOOTH; i++) {
+      const [px, pz] = world.nodes[seq[i - 1]], [qx, qz] = world.nodes[seq[i]];
+      const L = Math.hypot(qx - px, qz - pz);
+      if (L < 0.01) continue;
+      const ux = (qx - px) / L, uz = (qz - pz) / L;
+      if (i === 1 && ux * ox + uz * oz < 0.9) return []; // не продолжение, а поворот
+      for (let D = (Math.floor(d / TWIN_STEP) + 1) * TWIN_STEP; D <= d + L && D <= TWIN_SMOOTH; D += TWIN_STEP) {
+        out.push([px + ux * (D - d), pz + uz * (D - d), end ? ux : -ux, end ? uz : -uz, D]);
+      }
+      d += L;
+    }
+    return out;
+  };
+  for (const [x, z, dx, dz, d] of beyond(0).reverse()) sample(-d, x, z, dx, dz);
+  let s0 = 0;
+  for (let k = 1; k < road.n.length; k++) {
+    const [ax, az] = world.nodes[road.n[k - 1]], [bx, bz] = world.nodes[road.n[k]];
+    const len = Math.hypot(bx - ax, bz - az);
+    if (len < 0.01) continue;
+    const dx = (bx - ax) / len, dz = (bz - az) / len;
+    for (let t = Math.ceil(s0 / TWIN_STEP) * TWIN_STEP - s0; t <= len; t += TWIN_STEP) {
+      if (S.length && s0 + t <= S[S.length - 1] + 0.01) continue;
+      sample(s0 + t, ax + dx * t, az + dz * t, dx, dz);
+    }
+    s0 += len;
+  }
+  for (const [x, z, dx, dz, d] of beyond(1)) sample(s0 + d, x, z, dx, dz);
+  // Сглаживание по положению: среднее точек в окне в пределах сплошного участка с соседом.
+  const W = Math.round(TWIN_SMOOTH / TWIN_STEP);
+  const smooth = {};
+  for (const key of ['L', 'R']) {
+    const raw = side[key];
+    smooth[key] = raw.map((p, i) => {
+      if (!p) return null;
+      let sx = 0, sz = 0, n = 0;
+      for (let d = -W; d <= W; d++) {
+        const j = i + d;
+        if (j < 0 || j >= raw.length || !raw[j]) continue;
+        const wgt = W + 1 - Math.abs(d);
+        sx += raw[j][0] * wgt; sz += raw[j][1] * wgt; n += wgt;
+      }
+      return [sx / n, sz / n];
+    });
+  }
+  const res = {
+    // Линия стыка у точки дороги на расстоянии s от начала: [x, z, касательная x, z] (null — соседа нет).
+    at(key, s) {
+      const arr = smooth[key];
+      if (!arr.length) return null;
+      let lo = 0, hi = S.length - 1; // последний S[i] <= s
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (S[mid] <= s) lo = mid; else hi = mid - 1;
+      }
+      const i = lo;
+      const a = arr[i], b = arr[Math.min(i + 1, arr.length - 1)];
+      if (!a || !b) return null;
+      const t = i + 1 < S.length ? Math.max(0, Math.min(1, (s - S[i]) / (S[i + 1] - S[i] || 1))) : 0;
+      const p0 = arr[Math.max(0, i - 1)] || a, p1 = arr[Math.min(arr.length - 1, i + 2)] || b;
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, p1[0] - p0[0], p1[1] - p0[1]];
+    },
+  };
+  twinCache.set(road, res);
+  return res;
+}
+
 export function buildRoadChunk(world, runs, mats) {
   const buckets = {};
   const bp = [], pillars = [], abutments = [], emb = []; // плиты и парапеты (треугольники), опоры, устои
@@ -245,27 +358,23 @@ export function buildRoadChunk(world, runs, mats) {
       // половина её ширины): край с той стороны отступает до 2 м от оси пути. На перекрёстке —
       // нет: там пути идут по асфальту, а изгибы путей поворота давали дыры и рваный край.
       const [x0, z0] = p;
-      // Соседняя проезжая часть (улица из двух линий OSM, оси ближе суммы полуширин, как на
-      // Удмуртской): ленты шли внахлёст, и разметка одной ложилась на другую. Край разметки
-      // (sl, sr) сдвигается к середине нахлёста, полосы ужимаются, посередине — две сплошные.
-      let sl = half, sr = half;
-      if (!road.br && !inside(ss[i])) {
-        const seen = new Set();
-        for (const o of [0, half, -half]) {
-          for (const q of world.nearbyRoadSegments(x0 - dz * o, z0 + dx * o)) {
-            if (q.road === road || q.road.br || seen.has(q)) continue;
-            seen.add(q);
-            if (roadMarking(q.road) === 'plain') continue;
-            const ex = q.bx - q.ax, ez = q.bz - q.az, el = Math.hypot(ex, ez) || 1;
-            if (Math.abs((ex * dx + ez * dz) / el) < 0.9) continue;
-            const c = World.closest(q, x0, z0);
-            const lat = (c.px - x0) * -dz + (c.pz - z0) * dx;
-            const sum = half + q.w / 2, over = sum - Math.abs(lat);
-            if (over <= 0 || Math.abs(lat) < sum / 2) continue; // почти на оси — съезд или продолжение
-            if (lat > 0) sl = Math.min(sl, half - over / 2);
-            else sr = Math.min(sr, half - over / 2);
-          }
-        }
+      // Соседняя проезжая часть (twinEdges): внутренний край — ровно на общей линии посередине,
+      // разметка (края sl, sr) ужимается до неё.
+      let sl = half, sr = half, Lp = null, Rp = null;
+      if (mk !== 'plain' && !road.br && !inside(ss[i])) {
+        const tw = twinEdges(world, road);
+        // Край — где нормаль из точки оси пересекает линию стыка (сглаженная точка линии может
+        // стоять на метры впереди или позади), плюс 5 см внахлёст: щель показала бы траву.
+        const cut = (q, sg) => {
+          if (!q) return null;
+          const nx = -dz * sg, nz = dx * sg, den = nx * q[3] - nz * q[2];
+          if (Math.abs(den) < 1e-6) return null;
+          const t = ((q[0] - x0) * q[3] - (q[1] - z0) * q[2]) / den + 0.05;
+          return t > 1 && t < half ? t : null;
+        };
+        const tl = cut(tw.at('L', ss[i]), 1), tr = cut(tw.at('R', ss[i]), -1);
+        if (tl) { sl = tl; Lp = [x0 - dz * tl, z0 + dx * tl]; }
+        if (tr) { sr = tr; Rp = [x0 + dz * tr, z0 - dx * tr]; }
       }
       let hl = sl, hr = sr;
       if (!road.br && !inside(ss[i])) {
@@ -280,12 +389,12 @@ export function buildRoadChunk(world, runs, mats) {
           else hr = Math.min(hr, Math.max(2.4, -lat - 2));
         }
       }
-      return { dx, dz, m, sl, sr, hl, hr };
+      return { dx, dz, m, sl, sr, hl, hr, Lp, Rp };
     });
     // Край у путей сужается плавно в обе стороны: иначе от точки к точке он прыгал. Перекрёсток
     // в это не входит — там полотно полной ширины и обрывается уступом, как бордюр у переезда.
     const free = (i) => !inside(ss[i]);
-    for (const key of ['sl', 'sr', 'hl', 'hr']) {
+    for (const key of ['hl', 'hr']) {
       for (let i = 1; i < pts.length; i++) {
         if (free(i) && free(i - 1)) frame[i][key] = Math.min(frame[i][key], frame[i - 1][key] + TAPER * (ss[i] - ss[i - 1]));
       }
@@ -323,11 +432,15 @@ export function buildRoadChunk(world, runs, mats) {
       v += Math.hypot(bx - ax, bz - az);
     }
     for (let i = 0; i < pts.length; i++) {
-      const { dx, dz, m, sl, sr } = frame[i];
+      const { dx, dz, m, sl, sr, Lp, Rp } = frame[i];
       const hl = Math.min(frame[i].hl, sl), hr = Math.min(frame[i].hr, sr);
-      const nx = -dz * hl * m, nz = dx * hl * m, rnx = -dz * hr * m, rnz = dx * hr * m;
-      if (i > 0) v += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       const [x, z] = pts[i];
+      // Край на общей линии с соседней проезжей частью — точно в её точке (без митры), иначе
+      // края двух лент расходились бы на изломах осей.
+      let nx = -dz * hl * m, nz = dx * hl * m, rnx = -dz * hr * m, rnz = dx * hr * m;
+      if (Lp && hl === sl) { nx = Lp[0] - x; nz = Lp[1] - z; }
+      if (Rp && hr === sr) { rnx = x - Rp[0]; rnz = z - Rp[1]; }
+      if (i > 0) v += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       const yl = ys[i] ?? world.terrain(x + nx, z + nz) + road.lift;
       const yr = ys[i] ?? world.terrain(x - rnx, z - rnz) + road.lift;
       // Разметка — от краёв sl…sr: у путей край обрезается, а полосы остаются на своих местах.
