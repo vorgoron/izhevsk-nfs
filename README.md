@@ -136,6 +136,10 @@ python3 tools/gis_extract.py "…/Сведения по ОЖФ Удмуртск�
 
 GitHub Pages через Actions: `.github/workflows/pages.yml` выкладывает `public/` при каждом пуше в `main`.
 
+Firebase Hosting (https://izh-car.web.app) — вручную, `firebase deploy --only hosting` (выкладывает `public/` как
+есть на диске, вместе с незакоммиченным). Всё отдаётся с `Cache-Control: no-cache`: файлы без хешей в именах,
+браузер каждый раз сверяет ETag и не берёт старые модули из кэша.
+
 ## Данные и лицензии
 
 - Карта: © участники OpenStreetMap. `public/city.json` — производная база данных из OSM и
