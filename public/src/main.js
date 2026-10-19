@@ -25,7 +25,8 @@ import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { Net, CITY } from './net.js';
 import { track } from './analytics.js';
-import { Wallet, PRICES, raceReward, formatMoney } from './money.js';
+import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
+import { Cameras } from './cameras.js';
 import { CLEAR_ALT } from './car.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
@@ -191,6 +192,7 @@ async function main() {
   const traffic = owned('трафик', () => new Traffic(world, scene));
   const signals = owned('светофоры', () => new Signals(world, traffic, scene));
   breakables.addSignals(signals);
+  const cameras = owned('камеры', () => new Cameras(world, signals, scene));
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
   const garage = new Garage(choice, {
@@ -263,7 +265,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -797,11 +799,13 @@ async function main() {
 
   // ---------------------------------------------------------------- штрафы и награды
 
-  // Штраф — вспышка по экрану. Красный — signals.js.
+  // Штраф — вспышка камеры по экрану. Красный — signals.js, скорость — камеры (cameras.js).
   const flash = () => { const f = $('flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on'); };
-  function fines() {
+  function fines(dt) {
     if (race.state === 'countdown') return;
     if (signals.checkPlayer(car)) { wallet.fine(PRICES.redLight, 'проезд на красный'); flash(); }
+    const shot = cameras.update(dt, car);
+    if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); }
   }
   // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху.
   const TRICK_PAY = { kick: 500, back: 700 }, OVER_PAY = 300;
@@ -873,6 +877,13 @@ async function main() {
     $('fuel-fill').style.width = `${car.fuel * 100}%`;
     $('fuel').classList.toggle('low', car.fuel < LOW_FUEL);
     fuelWarnings();
+    // Камера впереди: знак с пределом и расстоянием; едешь быстрее — знак красный.
+    const cam = cameras.ahead(car), cw = $('camwarn');
+    cw.hidden = !cam || garage.isOpen;
+    if (cam) {
+      cw.innerHTML = `📷 <b>${cam.cam.lim}</b><small>${cam.d < 25 ? 'камера' : fmtDist(cam.d)}</small>`;
+      cw.classList.toggle('fast', Math.abs(car.speed) * 3.6 > cam.cam.lim + 20);
+    }
     document.body.classList.toggle('no-race', race.state === 'idle');
     roster();
     $('time').textContent = formatTime(race.time);
@@ -963,7 +974,7 @@ async function main() {
     }
     if (!garage.isOpen) race.update(dt, car); // в гараже гонка на паузе
     signals.update(dt);
-    fines();
+    fines(dt);
     fuel.update(dt, car, wallet);
     queues.update(dt, car);
     trams.update(dt, car);

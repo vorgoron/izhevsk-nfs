@@ -149,6 +149,15 @@
     #money-log .fine { background: rgba(170,25,20,.8); }
     @keyframes note-in { from { opacity: 0; transform: translateX(12px); } }
     body.in-garage #money-log, body.in-menu #money-log { display: none; }
+    /* Камера впереди (cameras.js): знак с пределом скорости. */
+    #camwarn { right: 28px; bottom: 178px; display: flex; align-items: center; gap: 6px; font-size: 20px; background: rgba(0,0,0,.45); padding: 4px 10px;
+      border-radius: 8px; }
+    #camwarn[hidden] { display: none; }
+    #camwarn b { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 4px solid #e0261b; background: #fff;
+      color: #111; font-size: 15px; box-sizing: border-box; }
+    #camwarn small { font-size: 13px; opacity: .8; }
+    #camwarn.fast { background: rgba(200,30,20,.75); animation: pulse-cam .6s ease-in-out infinite; }
+    @keyframes pulse-cam { 50% { transform: scale(1.06); } }
     #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5; }
     #flash.on { animation: flash .45s ease-out; }
     @keyframes flash { 0% { opacity: .85; } }
@@ -301,6 +310,8 @@
     body.touch #race-btn kbd { display: none; }
     body.touch #money { right: calc(10px + env(safe-area-inset-right)); top: calc(54px + env(safe-area-inset-top)); font-size: 15px; padding: 2px 8px; }
     body.touch #money-log { top: calc(64px + env(safe-area-inset-top)); font-size: 13px; }
+    body.touch #camwarn { right: auto; bottom: auto; left: calc(146px + env(safe-area-inset-left)); top: calc(166px + env(safe-area-inset-top)); font-size: 14px; padding: 2px 8px; }
+    body.touch #camwarn b { width: 26px; height: 26px; border-width: 3px; font-size: 11px; }
     body.touch #roster { right: calc(10px + env(safe-area-inset-right)); top: calc(84px + env(safe-area-inset-top)); font-size: 12px; min-width: 120px; padding: 4px 8px; }
     body.touch #roster em { font-size: 11px; }
     /* Улица — слева под таймером: в центре сверху на узком экране мешают кнопки. */
@@ -352,6 +363,7 @@
   <div id="radio" class="hud"></div>
   <div id="money" class="hud"></div>
   <div id="money-log" class="hud"></div>
+  <div id="camwarn" class="hud" hidden></div>
   <div id="flash"></div>
   <div id="radio-pick"></div>
   <div id="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">участники OpenStreetMap</a> · рельеф <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a> (Mapzen, SRTM)</div>

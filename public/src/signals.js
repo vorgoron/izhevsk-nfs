@@ -146,6 +146,7 @@ export class Signals {
         return;
       }
       const [x, z] = pp;
+      ap.pole = pp; // для камер (cameras.js)
       const y = this.world.terrain(x, z);
       q.setFromAxisAngle(up, Math.atan2(-e.dx, -e.dz));
       m.compose(p.set(x, y, z), q, one);

@@ -218,6 +218,23 @@ def parse_num(s):
         return None
 
 
+# Ограничение скорости из maxspeed, км/ч: число, «60 mph» или зона «RU:urban» (ПДД: город 60, вне — 90,
+# жилая зона 20, автомагистраль 110). Непонятное — None (в игре — 60 км/ч).
+MAXSPEED_ZONES = {"urban": 60, "rural": 90, "living_street": 20, "motorway": 110}
+
+
+def maxspeed_kmh(tags):
+    v = (tags.get("maxspeed") or "").strip()
+    if not v:
+        return None
+    if ":" in v:
+        return MAXSPEED_ZONES.get(v.split(":", 1)[1])
+    n = parse_num(v.replace("mph", ""))
+    if not n:
+        return None
+    return int(round(n * 1.609)) if "mph" in v else int(n)
+
+
 # Достопримечательности: в браузере у них своя модель (replace), своя окраска
 # и надстройка поверх обычной коробки (recolor) или отдельный объект рядом (add).
 LANDMARKS = {
@@ -1393,6 +1410,7 @@ def build_city():
                 **({"lf": int(parse_num(tags["lanes:forward"]))} if parse_num(tags.get("lanes:forward")) else {}),
                 **({"lb": int(parse_num(tags["lanes:backward"]))} if parse_num(tags.get("lanes:backward")) else {}),
                 "ow": 1 if tags.get("oneway") == "yes" else 0,
+                **({"ms": ms} if (ms := maxspeed_kmh(tags)) else {}),
             })
             continue
         if tags.get("waterway") in WATERWAY_W and tags.get("tunnel") in (None, "no"):
@@ -1505,6 +1523,9 @@ def build_city():
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()
                           if t.get("highway") == "traffic_signals" and n in road_node_index),
+        # Камеры скорости: [x, z, предел км/ч из maxspeed камеры или 0 — тогда по улице] (cameras.js).
+        "cams": [[*project(*nodes[n]), maxspeed_kmh(t) or 0] for n, t in node_tags.items()
+                 if t.get("highway") == "speed_camera" and n in nodes and inside([project(*nodes[n])])],
     }
 
 
