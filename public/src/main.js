@@ -4,7 +4,7 @@ import { MINIMAP_SCALE } from './build.js';
 import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
 import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates } from './vehicles.js';
-import { Garage, loadChoice } from './garage.js';
+import { Garage, loadChoice, optionKey } from './garage.js';
 import { Race, formatTime } from './race.js';
 import { buildLandmarks } from './landmarks.js';
 import { planFootbridges, buildFootbridges } from './footbridges.js';
@@ -25,6 +25,8 @@ import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { Net, CITY } from './net.js';
 import { track } from './analytics.js';
+import { Wallet, PRICES, raceReward, formatMoney } from './money.js';
+import { CLEAR_ALT } from './car.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
 const $ = (id) => document.getElementById(id);
@@ -131,6 +133,11 @@ async function main() {
   // Своя машина: выбор из гаража (localStorage), по умолчанию — «Ода».
   await vehiclesReady;
   const choice = loadChoice();
+  // Деньги (money.js). Детали, выбранные до появления денег, считаются купленными.
+  const wallet = new Wallet($('money'), $('money-log'));
+  if (wallet.fresh) {
+    wallet.grant((MODELS[choice.model].options || []).map((o) => optionKey(choice.model, o.key, choice.options[o.key])));
+  }
   const model = buildPlayerModel(choice.model, choice.color, choice.options);
   model.userData.perf = 'машина игрока';
   scene.add(model);
@@ -187,6 +194,7 @@ async function main() {
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
   const garage = new Garage(choice, {
+    wallet,
     onChange: setVehicle,
     onClose: (changed) => {
       if (changed) track('car_select', { model: garage.choice.model, color: garage.choice.color });
@@ -211,9 +219,13 @@ async function main() {
       car.nitro = 1; car.fuel = Math.max(car.fuel, 0.5);
     }
   };
+  // Награда за гонку (money.js): одному — всегда «победа»; в общей — по месту среди уже финишировавших.
   race.onFinish = (t) => {
     track('race_finish', { time: +t.toFixed(2), shared: race.shared });
     if (race.shared) net.finishRace(t);
+    const place = race.shared ? 1 + Object.values(net.race?.r ?? {}).filter((x) => x < t).length : 1;
+    race.reward = raceReward(race.length, { place, record: race.isRecord && !race.shared });
+    wallet.earn(race.reward, race.shared ? `${place}-е место` : race.isRecord ? 'гонка, рекорд' : 'гонка');
   };
   // Список справа — кто в комнате; в общей гонке — по местам: финишировавшие по времени,
   // остальные по проеханному (своё считаем сами, чужое приходит в записи игрока, p).
@@ -251,7 +263,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -369,6 +381,13 @@ async function main() {
       }, () => {});
     },
     city: () => { clearTimeout(copied); copied = 0; net.join(CITY); },
+    // Нитро за деньги: долить баллон, на сколько хватает.
+    nitro: () => {
+      const got = Math.min(1 - car.nitro, Math.max(0, wallet.balance) / PRICES.nitro);
+      if (got * PRICES.nitro < 1) return;
+      wallet.pay(Math.min(got * PRICES.nitro, wallet.balance), 'нитро');
+      car.nitro = Math.min(1, car.nitro + got);
+    },
   };
   let copied = 0; // таймер надписи «ссылка скопирована», 0 — не показываем
   const resume = () => { menu.close(); sound.setPaused(false); };
@@ -383,7 +402,8 @@ async function main() {
     radio: { names: STATIONS.map((s) => s.name), get: () => radio.station, select: (i) => radio.select(i) },
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, bigMap: $('minimap').classList.contains('big'),
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
-      players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared }),
+      players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
+      money: formatMoney(wallet.balance), nitro: car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
     setName: (v) => net.setName(v),
   });
   game.menu = menu;
@@ -775,6 +795,29 @@ async function main() {
     }
   }
 
+  // ---------------------------------------------------------------- штрафы и награды
+
+  // Штраф — вспышка по экрану. Красный — signals.js.
+  const flash = () => { const f = $('flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on'); };
+  function fines() {
+    if (race.state === 'countdown') return;
+    if (signals.checkPlayer(car)) { wallet.fine(PRICES.redLight, 'проезд на красный'); flash(); }
+  }
+  // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху.
+  const TRICK_PAY = { kick: 500, back: 700 }, OVER_PAY = 300;
+  const jumped = new Set();
+  function tricks() {
+    if (car.air && car.alt > CLEAR_ALT) {
+      for (const v of traffic.vehicles) if (v.active && Math.hypot(v.x - car.pos.x, v.z - car.pos.y) < (v.bus ? 4 : 2.5)) jumped.add(v);
+      for (const t of trams.near(car.pos.x, car.pos.y, 12)) if (Math.abs((car.pos.x - t.x) * t.dz - (car.pos.y - t.z) * t.dx) < 2) jumped.add(t);
+    }
+    if (!car.landed) return;
+    const n = jumped.size, kind = car.landed;
+    car.landed = null;
+    jumped.clear();
+    wallet.earn(TRICK_PAY[kind] + n * OVER_PAY, `${kind === 'kick' ? 'kickflip' : 'backflip'}${n ? ` над ${n} ${n === 1 ? 'машиной' : 'машинами'}` : ''}`);
+  }
+
   let lastStreet = '';
   function updateHud() {
     $('speed').textContent = Math.round(Math.abs(car.speed) * 3.6);
@@ -798,7 +841,13 @@ async function main() {
     if (garage.isOpen) {
       banner.classList.remove('show');
     } else if (car.refueling) {
-      banner.innerHTML = `⛽ ${Math.round(car.fuel * 100)}%<small>заправка</small>`;
+      banner.innerHTML = `⛽ ${Math.round(car.fuel * 100)}%<small>${car.freeFuel ? 'денег нет — заправщик наливает бесплатно' : `заправка · ${formatMoney(PRICES.tank)} полный бак`}</small>`;
+      banner.classList.add('show');
+    } else if (car.recharging) {
+      banner.innerHTML = `🔷 ${Math.round(car.nitro * 100)}%<small>нитро · ${formatMoney(PRICES.nitro)} полный баллон</small>`;
+      banner.classList.add('show');
+    } else if (car.broke && Math.abs(car.speed) < 1) {
+      banner.innerHTML = `НЕТ ДЕНЕГ<small>заработайте в гонках и трюками</small>`;
       banner.classList.add('show');
     } else if (car.fuel <= 0 && Math.abs(car.speed) < 2 && race.state !== 'countdown') {
       banner.innerHTML = `БЕНЗИН КОНЧИЛСЯ<small>${isTouch ? '↺' : 'R'} — эвакуатор до заправки</small>`;
@@ -814,7 +863,7 @@ async function main() {
       if (race.time < 0.8) banner.textContent = 'ПОЕХАЛИ!';
     } else if (race.state === 'finished') {
       const table = standings();
-      banner.innerHTML = `ФИНИШ ${formatTime(race.time)}<small>${table || (race.isRecord ? 'новый рекорд!' : `рекорд ${formatTime(race.best)}`)}<br>N — новая гонка</small>`;
+      banner.innerHTML = `ФИНИШ ${formatTime(race.time)}<small>${table || (race.isRecord ? 'новый рекорд!' : `рекорд ${formatTime(race.best)}`)}${race.reward ? ` · +${formatMoney(race.reward)}` : ''}<br>N — новая гонка</small>`;
       banner.classList.toggle('mini', performance.now() - race.finishedAt > FINISH_BIG);
       banner.classList.add('show');
     } else {
@@ -907,18 +956,18 @@ async function main() {
     }
     chunks.update(car.pos.x, car.pos.y, isTouch ? 1 : 2);
     if (car.drowned) {
-      // Утонул — всё сначала: та же гонка с отсчётом, полное нитро, трафик заново.
-      car.nitro = 1;
-      car.fuel = 1;
+      // Утонул — всё сначала: та же гонка с отсчётом, трафик заново. Бак и нитро — какие были (за деньги).
       if (race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
       else respawnAt(car.dry.x, car.dry.y);
       traffic.reset(car.pos.x, car.pos.y);
     }
     if (!garage.isOpen) race.update(dt, car); // в гараже гонка на паузе
     signals.update(dt);
-    fuel.update(dt, car);
+    fines();
+    fuel.update(dt, car, wallet);
     queues.update(dt, car);
     trams.update(dt, car);
+    tricks();
     car.checkStuck(dt, inp);
     net.progress = race.shared && race.state !== 'countdown' && net.race?.t === race.startAt ? race.progress(car) : null;
     net.update(dt, car);

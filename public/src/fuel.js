@@ -1,9 +1,12 @@
 // Заправки (amenity=fuel из OSM): колонки под навесом, стела с названием сети,
 // заправка бака на территории АЗС, поиск ближайшей (для подсказки и эвакуатора).
 import * as THREE from 'three';
+import { PRICES } from './money.js';
 
 const REFUEL_RATE = 0.25;   // бака в секунду (полный — за 4 с)
+const NITRO_RATE = 0.5;     // баллона нитро в секунду — после бака
 const STOP_SPEED = 1.5;     // м/с: заправляемся, только когда стоим
+const EMERGENCY = 0.2;      // денег нет — до стольких бака заправщик нальёт бесплатно, чтобы было на чём уехать
 
 function pointIn(x, z, p) {
   let ins = false;
@@ -158,12 +161,42 @@ export class Fuel {
     return best ? { station: best, d: bd } : null;
   }
 
-  // Стоим на территории АЗС — бак наполняется.
-  update(dt, car) {
+  // Стоим на территории АЗС — бак наполняется, потом баллон нитро. Платим по мере заправки (wallet —
+  // money.js, полный бак — PRICES.tank); итог — одной плашкой, когда заправка кончилась. Денег нет, а бак
+  // почти пуст — заправщик наливает до EMERGENCY бесплатно (car.freeFuel — для надписи), нитро — только за деньги.
+  update(dt, car, wallet) {
     for (const s of this.stations) s.group.visible = Math.hypot(s.cx - car.pos.x, s.cz - car.pos.y) < 1500;
     const st = Math.abs(car.speed) < STOP_SPEED && car.sink === 0 ? this.inside(car.pos.x, car.pos.y) : null;
-    car.refueling = !!st && car.fuel < 1;
-    if (car.refueling) car.fuel = Math.min(1, car.fuel + REFUEL_RATE * dt);
+    const bill = (this.bill ||= { fuel: 0, nitro: 0 });
+    // Сколько из want удаётся оплатить по цене price за единицу.
+    const afford = (want, price) => {
+      if (!wallet) return want;
+      const got = Math.min(want, Math.max(0, wallet.balance) / price);
+      wallet.pay(Math.min(got * price, wallet.balance), '', true);
+      return got;
+    };
+    car.refueling = car.recharging = car.freeFuel = false;
+    car.broke = false;
+    if (st && car.fuel < 1) {
+      const want = Math.min(1 - car.fuel, REFUEL_RATE * dt);
+      let got = afford(want, PRICES.tank);
+      bill.fuel += got * PRICES.tank;
+      if (got < want && car.fuel < EMERGENCY) { got = Math.min(want, EMERGENCY - car.fuel); car.freeFuel = true; }
+      car.fuel = Math.min(1, car.fuel + got);
+      car.refueling = got > 0;
+      car.broke = got < want && !car.freeFuel;
+    } else if (st && car.nitro < 1) {
+      const want = Math.min(1 - car.nitro, NITRO_RATE * dt), got = afford(want, PRICES.nitro);
+      bill.nitro += got * PRICES.nitro;
+      car.nitro += got;
+      car.recharging = got > 0;
+      car.broke = got < want;
+    }
+    if (!car.refueling && !car.recharging && wallet) {
+      if (bill.fuel) wallet.note(bill.fuel, 'бензин');
+      if (bill.nitro) wallet.note(bill.nitro, 'нитро');
+      bill.fuel = bill.nitro = 0;
+    }
   }
 }
 

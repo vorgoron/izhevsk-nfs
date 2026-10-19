@@ -12,7 +12,7 @@ export class Menu {
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
   // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
-  // shared (гонка общая — в своей комнате на связи).
+  // shared (гонка общая — в своей комнате на связи). money — баланс, nitro — цена долива баллона (или «полный»).
   constructor({ actions, state, volume, radio, setName }) {
     this.actions = actions;
     this.state = state;
@@ -25,10 +25,11 @@ export class Menu {
     // Две страницы: главная и подменю громкости (ползунки), переход — кнопки data-page.
     el.innerHTML = `<div class="box">
       <div class="page" data-page="main">
-      <h2>Пауза</h2>
+      <h2>Пауза <small data-v="money"></small></h2>
       <button data-act="menu" class="go">Продолжить <kbd>Esc</kbd></button>
       <button data-act="race">Новая гонка <b data-v="race"></b><kbd>N</kbd></button>
       <button data-act="respawn">На дорогу <kbd>R</kbd></button>
+      <button data-act="nitro">Нитро в баллон <b data-v="nitro"></b></button>
       <button data-act="garage">Гараж — выбор машины <kbd>G</kbd></button>
       <h3>Сеть <span data-v="net"></span></h3>
       <button data-page="name">Имя <b data-v="name"></b><i>›</i></button>
@@ -122,12 +123,14 @@ export class Menu {
       room: s.room,
       race: s.shared ? 'со всеми в комнате' : '',
       tricks: 'kickflip, backflip',
+      money: s.money,
+      nitro: s.nitro,
     };
     s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'night', 'bigMap', 'fps', 'net', 'name', 'room', 'race', 'tricks'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'bigMap', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;

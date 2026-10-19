@@ -164,6 +164,33 @@ export class Signals {
     this.poles.castShadow = this.housings.castShadow = true;
   }
 
+  // Проезд игрока на красный: пересёк стоп-линию подхода, по полосе которого едет, когда там красный.
+  // Полоса подхода — курс вдоль ребра и справа от оси дороги (односторонняя — вся ширина). Жёлтый не
+  // штрафуется; в прыжке над перекрёстком — тоже. Один перекрёсток штрафует не чаще раза в 15 с.
+  // Возвращает перекрёсток или null.
+  checkPlayer(car) {
+    const px = car.pos.x, pz = car.pos.y, prev = this.prevPlayer;
+    this.prevPlayer = [px, pz];
+    if (!prev || car.air) return null;
+    const f = car.forward;
+    for (const c of this.ctrls) {
+      if (Math.abs(c.cx - px) > 80 || Math.abs(c.cz - pz) > 80 || this.time - (c.fined ?? -99) < 15) continue;
+      for (const ap of c.approaches) {
+        const e = ap.e;
+        if (f.x * e.dx + f.y * e.dz < 0.6) continue;
+        const [bx, bz] = this.world.nodes[e.b];
+        const along = (px - bx) * e.dx + (pz - bz) * e.dz, before = (prev[0] - bx) * e.dx + (prev[1] - bz) * e.dz;
+        if (!(before < -ap.stopBack && along >= -ap.stopBack && before > -ap.stopBack - e.len - 3)) continue;
+        const lat = -(px - bx) * e.dz + (pz - bz) * e.dx; // вправо от оси
+        if (e.road.ow ? Math.abs(lat) > e.w / 2 + 1.5 : lat < -0.8 || lat > e.w / 2 + 1.5) continue;
+        if (this.state(ap) !== 'red') continue;
+        c.fined = this.time;
+        return c;
+      }
+    }
+    return null;
+  }
+
   update(dt) {
     this.time += dt;
     const c = new THREE.Color();

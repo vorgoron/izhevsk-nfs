@@ -1,5 +1,8 @@
 // Гараж: выбор машины, цвета и деталей (у машин с options). Панель справа, камера облетает машину (main.js).
+// Машины и цвета бесплатные, детали — за деньги (цена — третье число варианта в vehicles.js). Выбранную
+// деталь сразу видно на машине; платят при выезде из гаража, а не хватает денег — детали возвращаются.
 import { MODELS, DEFAULT_MODEL, pickOptions } from './vehicles.js';
+import { formatMoney } from './money.js';
 
 const STORE = 'vehicle';
 const MAX = { kmh: 190, accel: 1, grip: 1.06 };
@@ -18,10 +21,15 @@ function save(choice) {
   try { localStorage.setItem(STORE, JSON.stringify({ model: choice.model, color: choice.color, options: choice.options })); } catch {}
 }
 
+// Ключ купленной детали в кошельке.
+export const optionKey = (model, slot, v) => `${model}:${slot}:${v}`;
+
 export class Garage {
   // onChange(model, color, options) — сразу при выборе (меняем машину на глазах); onClose(changed).
-  constructor(choice, { onChange, onClose }) {
+  // wallet — кошелёк (money.js): купленные детали и оплата.
+  constructor(choice, { onChange, onClose, wallet }) {
     this.choice = { ...choice };
+    this.wallet = wallet;
     this.onChange = onChange;
     this.onClose = onClose;
     this.isOpen = false;
@@ -29,7 +37,7 @@ export class Garage {
 
     const el = (this.el = document.createElement('div'));
     el.id = 'garage';
-    el.innerHTML = `<h2>Гараж <span>ижевский автопром</span></h2><div class="list"></div>
+    el.innerHTML = `<h2>Гараж <b class="money"></b><span>ижевский автопром</span></h2><div class="list"></div>
       <div class="colors"></div><div class="opts"></div><button class="go">Поехать <kbd>Enter</kbd></button>
       <div class="hint">↑↓ машина · ←→ цвет · <kbd>G</kbd> гараж</div>`;
     document.body.append(el);
@@ -46,6 +54,7 @@ export class Garage {
       list.append(card);
     }
     el.querySelector('.go').addEventListener('click', () => this.close());
+    this.goLabel = el.querySelector('.go').innerHTML;
     addEventListener('keydown', (e) => {
       if (!this.isOpen) return;
       const i = this.keys.indexOf(this.choice.model), colors = MODELS[this.choice.model].colors;
@@ -96,21 +105,59 @@ export class Garage {
       const row = document.createElement('div');
       row.className = 'opt';
       row.innerHTML = `<span>${slot.name}</span>`;
-      for (const [v, label] of slot.variants) {
+      for (const [v, label, price] of slot.variants) {
         const b = document.createElement('button');
-        b.textContent = label;
+        const own = !price || this.wallet?.owns(optionKey(this.choice.model, slot.key, v));
+        b.innerHTML = own ? label : `${label} <small>${formatMoney(price)}</small>`;
         b.classList.toggle('on', this.choice.options[slot.key] === v);
         b.addEventListener('click', () => this.#pick(this.choice.model, this.choice.color, { ...this.choice.options, [slot.key]: v }));
         row.append(b);
       }
       opts.append(row);
     }
+    if (this.wallet) this.el.querySelector('.money').textContent = formatMoney(this.wallet.balance);
+    // Кнопка выезда: есть некупленные детали — с ценой.
+    const due = this.#due();
+    const go = this.el.querySelector('.go');
+    go.innerHTML = !due.sum ? this.goLabel : this.wallet.can(due.sum)
+      ? `Купить за ${formatMoney(due.sum)} и поехать` : `Не хватает ${formatMoney(due.sum - Math.max(0, this.wallet.balance))} — снять детали`;
+  }
+
+  // Выбранные, но не купленные детали: { sum, keys }.
+  #due() {
+    const out = { sum: 0, keys: [] };
+    if (!this.wallet) return out;
+    const spec = MODELS[this.choice.model];
+    for (const slot of (spec.mesh && spec.options) || []) {
+      const [v, , price] = slot.variants.find(([x]) => x === this.choice.options[slot.key]) ?? [];
+      const key = optionKey(this.choice.model, slot.key, v);
+      if (price && !this.wallet.owns(key)) { out.sum += price; out.keys.push([key, price]); }
+    }
+    return out;
+  }
+
+  // При выезде: оплатить выбранные детали; не хватает денег — вернуть на них купленные (или штатные).
+  #settle() {
+    const due = this.#due();
+    if (!due.sum) return;
+    if (this.wallet.can(due.sum)) {
+      for (const [key, price] of due.keys) this.wallet.buy(key, price, 'детали в гараже');
+      return;
+    }
+    const spec = MODELS[this.choice.model], options = { ...this.choice.options };
+    for (const slot of spec.options) {
+      if (due.keys.some(([k]) => k === optionKey(this.choice.model, slot.key, options[slot.key]))) {
+        options[slot.key] = this.paid?.model === this.choice.model ? this.paid.options[slot.key] : slot.variants[0][0];
+      }
+    }
+    this.#pick(this.choice.model, this.choice.color, options);
   }
 
   open() {
     if (this.isOpen) return;
     this.isOpen = true;
     this.changed = false;
+    this.paid = { model: this.choice.model, options: { ...this.choice.options } }; // с чем заехали — всё оплачено
     this.el.classList.add('open');
     document.body.classList.add('in-garage');
     this.#render();
@@ -118,6 +165,7 @@ export class Garage {
 
   close() {
     if (!this.isOpen) return;
+    this.#settle();
     this.isOpen = false;
     this.el.classList.remove('open');
     document.body.classList.remove('in-garage');
