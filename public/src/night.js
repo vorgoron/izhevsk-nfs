@@ -179,13 +179,13 @@ export class DayNight {
 
   get night() { return this.t > 0.5; }
 
-  // Для меню: «по часам · ночь», «день», «ночь».
+  // Для меню: «авто · ночь», «день», «ночь».
   get label() {
     if (this.mode !== 'auto') return this.mode === 'day' ? 'день' : 'ночь';
-    return `по часам · ${this.clock <= 0 ? 'день' : this.clock >= 1 ? 'ночь' : 'сумерки'}`;
+    return `авто · ${this.clock <= 0 ? 'день' : this.clock >= 1 ? 'ночь' : 'сумерки'}`;
   }
 
-  // По кругу: по часам → день → ночь.
+  // По кругу: авто → день → ночь.
   toggle() {
     this.mode = MODES[(MODES.indexOf(this.mode) + 1) % MODES.length];
     try { localStorage.setItem('daytime', this.mode); } catch {}
