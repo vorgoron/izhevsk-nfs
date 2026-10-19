@@ -40,6 +40,17 @@
     #start button { font: inherit; font-size: 22px; font-weight: 900; font-style: italic; text-transform: uppercase; letter-spacing: .04em;
       color: #15181b; background: #ffd23f; border: 0; border-radius: 12px; padding: 12px; cursor: pointer; }
     #start button:hover { background: #ffdc5c; }
+    #start .friends { font-size: 17px; font-style: normal; text-transform: none; color: #fff; background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.3); display: flex; flex-direction: column; gap: 2px; }
+    #start .friends:hover { background: rgba(255,255,255,.18); }
+    #start .friends small { font-size: 12px; font-weight: 400; opacity: .65; }
+    #start .choice { display: flex; flex-direction: column; gap: 12px; }
+    body.touch #start .choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    body.touch #start .choice button { font-size: 16px; padding: 10px 8px; }
+    body.touch #start .friends small { font-size: 10.5px; }
+    body.touch #start label small, body.touch #start .invited { font-size: 12px; }
+    #start .invited { margin: 0; font-size: 14px; line-height: 1.4; text-align: left; color: #8fd0ff; }
+    #start .invited[hidden] { display: none; }
     #start button kbd { margin-left: 10px; font-family: inherit; font-size: 12px; font-style: normal; font-weight: 600; text-transform: none; letter-spacing: 0;
       border: 1px solid rgba(0,0,0,.3); border-radius: 4px; padding: 0 5px; opacity: .6; vertical-align: middle; }
     body.touch #start button kbd { display: none; }
@@ -374,7 +385,9 @@
   <div id="loading"><div class="box"><h1><img src="logo.svg" alt="Izh Car"><small>уличные гонки по Ижевску</small></h1><div id="loading-bar"><div id="loading-fill"></div></div><div id="loading-text">Загрузка…</div>
     <div id="start" hidden>
       <label>Имя гонщика<input maxlength="10" autocomplete="nickname" enterkeyhint="go" spellcheck="false"><small>Его видят другие игроки и на номере вашей машины. Поменять — в меню.</small></label>
-      <button>Поехали ▶<kbd>Enter</kbd></button>
+      <p class="invited" hidden>Вас позвали покататься вместе: кто открыл эту ссылку, тот в одном городе с вами — видно машины, можно гоняться.</p>
+      <div class="choice"><button class="go"><span>Исследовать город ▶</span><kbd>Enter</kbd></button>
+      <button class="friends"><span>👥 Играть с друзьями</span><small>получите ссылку — кто её откроет, окажется в городе рядом с вами</small></button></div>
     </div></div></div>
   <div id="street" class="hud"></div>
   <div id="landmark" class="hud"></div>

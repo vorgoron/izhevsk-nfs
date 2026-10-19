@@ -973,6 +973,24 @@ async function main() {
     // Клавиатура телефона закрывает пол-экрана — прокручиваем к полю и кнопке.
     nameIn.addEventListener('focus', () => setTimeout(() => box.scrollIntoView({ block: 'end', behavior: 'smooth' }), 300));
     return new Promise((resolve) => {
+      // По ссылке друга — уже в его компании: «Поехали к друзьям» или ездить одному.
+      const invited = net.room !== CITY;
+      box.querySelector('.invited').hidden = !invited;
+      box.querySelector('.go span').textContent = invited ? 'Поехали к друзьям ▶' : 'Исследовать город ▶';
+      const fr = box.querySelector('.friends');
+      fr.querySelector('span').textContent = invited ? 'Ездить одному' : '👥 Играть с друзьями';
+      fr.querySelector('small').textContent = invited ? 'без других игроков' : 'получите ссылку — кто её откроет, окажется в городе рядом с вами';
+      fr.addEventListener('click', () => {
+        if (invited) { net.join(CITY); go(); return; }
+        // Ссылка — в «Поделиться» на телефоне, иначе в буфер обмена; в игре — подсказка, что с ней делать.
+        const link = net.inviteLink();
+        track('invite', { from: 'start' });
+        const shared = isTouch && navigator.share ? navigator.share({ title: 'Izh Car', text: 'Погоняем по Ижевску?', url: link }) : null;
+        (shared ?? navigator.clipboard?.writeText(link) ?? Promise.reject())
+          .then(() => notice(shared ? 'Ссылка отправлена — ждите друзей в городе' : 'Ссылка для друзей скопирована — отправьте её'),
+            () => notice('Ссылка для друзей — в адресной строке'));
+        go();
+      }, { once: true });
       const go = () => {
         removeEventListener('keydown', onKey);
         if (nameIn.value.trim()) net.setName(nameIn.value);
@@ -988,7 +1006,7 @@ async function main() {
         go();
       };
       addEventListener('keydown', onKey);
-      box.querySelector('button').addEventListener('click', go, { once: true });
+      box.querySelector('.go').addEventListener('click', go, { once: true });
     });
   }
 

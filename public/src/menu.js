@@ -34,7 +34,7 @@ export class Menu {
       <h3>Сеть <span data-v="net"></span></h3>
       <button data-page="name">Имя <b data-v="name"></b><i>›</i></button>
       <button data-act="invite">Позвать друзей <b data-v="invite"></b></button>
-      <button data-act="city" data-show="room">В общий город <b data-v="room"></b></button>
+      <button data-act="city" data-show="room">Ездить одному, без друзей</button>
       <h3>Настройки</h3>
       <button data-act="sound">Звук <b data-v="sound"></b><kbd>V</kbd></button>
       <button data-page="volume">Громкость <b data-v="volume"></b><i>›</i></button>
@@ -117,9 +117,9 @@ export class Menu {
       nav: s.nav ?? '',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
       volume: s.sound ? `${Math.round(this.volume.get('master') * 100)}%` : 'звук выкл',
-      net: { online: `· ${s.city ? 'общий город' : 'своя комната'} · ${s.players} в игре`, connecting: '· подключение…', offline: '· нет связи', solo: '· общий город · пока без других игроков' }[s.netStatus],
+      net: { online: `· ${s.city ? 'один' : 'с друзьями по ссылке'} · ${s.players} в игре`, connecting: '· подключение…', offline: '· нет связи', solo: '· один · позовите друзей ссылкой' }[s.netStatus],
       name: s.name,
-      invite: s.copied ? 'ссылка скопирована' : s.city ? 'своя комната' : 'ссылка',
+      invite: s.copied ? 'ссылка скопирована' : 'скопировать ссылку',
       room: s.room,
       race: s.shared ? 'со всеми в комнате' : '',
       tricks: 'kickflip, backflip',
