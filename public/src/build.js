@@ -1434,6 +1434,17 @@ const PARK_DENSITY = 1 / 150;   // деревьев на м² рамки пар�
 const MAX_TREES = 1100;         // на квадрат
 const STREET_STEP = [26, 44];   // м между деревьями вдоль улицы (случайно в диапазоне)
 const STREET_KINDS = new Set(['primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'living_street']);
+const JUNCTION_CLEAR = 25;      // м: уличные деревья не ближе к перекрёстку (на островках, между путями, перекрывали обзор)
+
+// Перекрёстки — узлы, где сходятся три и больше концов дорог (середина дороги — два конца). Один раз на весь город.
+function junctions(world) {
+  if (world.junctionNodes) return world.junctionNodes;
+  const ends = new Map();
+  for (const r of world.roads) r.n.forEach((id, i) => ends.set(id, (ends.get(id) || 0) + (i === 0 || i === r.n.length - 1 ? 1 : 2)));
+  const out = [];
+  for (const [id, k] of ends) if (k >= 3) out.push(world.nodes[id]);
+  return (world.junctionNodes = out);
+}
 
 // Деревья квадрата: из OSM, случайные в парках (лиственные) и лесах (ели, сосны, берёзы — выше городских),
 // и редкие деревья вдоль улиц в застройке. Детерминированно по квадрату.
@@ -1503,6 +1514,8 @@ export function buildTreeChunk(world, info, mats) {
   }
   // Вдоль улиц в застройке: по обе стороны, за краем полотна, не на домах, дорогах, воде.
   if (data.buildings.length >= 12) {
+    const J = JUNCTION_CLEAR, near = junctions(world).filter(([x, z]) => x > x0 - J && x < x1 + J && z > z0 - J && z < z1 + J);
+    const offJunctions = (x, z) => near.every(([jx, jz]) => Math.hypot(x - jx, z - jz) > J);
     for (const { road, from, to } of data.runs) {
       if (!STREET_KINDS.has(road.k) || road.br || road.tu) continue;
       for (let i = from + 1; i <= to; i++) {
@@ -1516,7 +1529,7 @@ export function buildTreeChunk(world, info, mats) {
             const off = road.w / 2 + 2.5 + rand() * 1.5;
             const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
             const nr = world.nearestRoad(x, z, 4);
-            if ((nr && nr.d < 1.8) || world.isWater(x, z) || !free(x, z) || inBuilding(x, z)) continue;
+            if ((nr && nr.d < 1.8) || world.isWater(x, z) || !free(x, z) || inBuilding(x, z) || !offJunctions(x, z)) continue;
             put(rand() < 0.12 ? 'spruce' : leafy(), x, z);
           }
         }
