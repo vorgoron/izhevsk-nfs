@@ -1692,10 +1692,15 @@ export function buildPoleChunk(world, info, mats) {
 
 // ---------------------------------------------------------------- рекламные щиты
 
-// Реклама — одна текстура-лента из ADS.length плакатов друг под другом. Плакат каждой стороны щита
-// задан полосой UV, а смена — сдвигом offset.y общей текстуры: все щиты разом прокручивают плакат
-// на следующий, как роллерный щит.
-const ADS = [izhCarAd, daurAd, izhCarFriendsAd, daurFmAd];
+// Реклама — по рекламодателям (темам): у каждого щита свой, плакаты сменяются только его. У рекламодателя —
+// текстура-лента из его плакатов друг под другом и ещё двух первых (лента крутится по кругу без шва: лицевая
+// сторона показывает строки 0…P, обратная 1…P+1), смена — сдвигом offset.y, у всех щитов разом, как роллерный
+// щит. Нажатие на плакат — ссылка рекламодателя (url) или действие игры (act, main.js). share — доля щитов.
+export const ADVERTISERS = [
+  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.4 },
+  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.3 },
+  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.3 },
+];
 const AD_W = 1024, AD_H = 512;
 const AD_SHOW = 8, AD_ROLL = 0.9; // с: плакат стоит, затем прокрутка
 
@@ -1768,6 +1773,28 @@ function daurAd(g) {
   adText(g, 'daur.media', AD_W / 2, AD_H - 17, 50, 700);
 }
 
+// Подсказки игры: трюки и дрифт — тёмно-синие с жёлтым.
+function tipsTricksAd(g) {
+  g.fillStyle = '#16305a';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#ffd23f';
+  g.textAlign = 'left';
+  adText(g, 'ТРЮК НА КРЫШУ', 70, 170, 104);
+  g.fillStyle = '#fff';
+  adText(g, 'пробел · пробел · вперёд', 70, 280, 66, 700);
+  adText(g, 'сядь на автобус — +1 200 ₽', 70, 380, 58, 700);
+}
+
+function tipsDriftAd(g) {
+  g.fillStyle = '#ffd23f';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#16305a';
+  g.textAlign = 'left';
+  adText(g, 'ДРИФТ — ЭТО ДЕНЬГИ', 70, 170, 96);
+  adText(g, 'ручник в повороте, потом газ', 70, 280, 62, 700);
+  adText(g, 'дольше занос — больше множитель', 70, 370, 54, 700);
+}
+
 function daurFmAd(g) {
   g.fillStyle = '#f4f1ea';
   g.fillRect(0, 0, AD_W, AD_H);
@@ -1788,29 +1815,34 @@ function daurFmAd(g) {
 const BB = { w: 6, h: 3, y: 6.9, t: 0.5 }; // размер плаката, высота его центра, толщина короба
 
 export function billboardMaterials(renderer) {
-  const c = document.createElement('canvas');
-  c.width = AD_W;
-  c.height = AD_H * ADS.length;
-  const g = c.getContext('2d');
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const draw = (logo) => {
-    ADS.forEach((ad, k) => {
-      g.save();
-      g.translate(0, k * AD_H);
-      g.beginPath();
-      g.rect(0, 0, AD_W, AD_H);
-      g.clip();
-      ad(g, logo);
-      g.restore();
-    });
-    tex.needsUpdate = true;
-  };
-  draw(null);
+  // Текстура и материал плакатов каждого рекламодателя.
+  const sheets = ADVERTISERS.map((ad) => {
+    const rows = [...ad.posters, ad.posters[0], ad.posters[1 % ad.posters.length]];
+    const c = document.createElement('canvas');
+    c.width = AD_W;
+    c.height = AD_H * rows.length;
+    const g = c.getContext('2d');
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const draw = (logo) => {
+      rows.forEach((poster, k) => {
+        g.save();
+        g.translate(0, k * AD_H);
+        g.beginPath();
+        g.rect(0, 0, AD_W, AD_H);
+        g.clip();
+        poster(g, logo);
+        g.restore();
+      });
+      tex.needsUpdate = true;
+    };
+    return { ad, rows: rows.length, tex, draw };
+  });
+  for (const sh of sheets) sh.draw(null);
   const logo = new Image();
-  logo.onload = () => draw(logo);
+  logo.onload = () => sheets.forEach((sh) => sh.draw(logo));
   logo.src = 'logo.svg';
 
   const bottom = BB.y - BB.h / 2 - 0.15;
@@ -1822,18 +1854,19 @@ export function billboardMaterials(renderer) {
     ...[-2, 0, 2].flatMap((x) => [-1, 1].map((s) => // светильники над плакатом
       part(new THREE.BoxGeometry(0.3, 0.12, 0.5).translate(x, BB.y + BB.h / 2 + 0.3, s * 0.55), '#2d3135'))),
   ], ['color']);
-  const face = new THREE.MeshLambertMaterial({ map: tex, emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 0.35 });
+  const faces = sheets.map(({ tex }) => new THREE.MeshLambertMaterial({ map: tex, emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 0.35 }));
   let t0 = null;
   return {
-    geo, face,
+    geo, faces, sheets,
     frame: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    meshes: new Set(), // плакаты загруженных квадратов — для нажатия по ним (main.js); ведёт chunks.js
     // Каждый кадр: смена плаката раз в AD_SHOW с, прокрутка за AD_ROLL с.
     tick(now) {
       t0 ??= now;
       const t = (now - t0) / 1000, period = AD_SHOW + AD_ROLL, n = Math.floor(t / period);
       const r = Math.max(0, (t - n * period - AD_SHOW) / AD_ROLL);
       const e = r * r * (3 - 2 * r);
-      tex.offset.y = -((n + e) % ADS.length) / ADS.length;
+      for (const { ad, rows, tex } of sheets) tex.offset.y = -((n % ad.posters.length) + e) / rows;
     },
   };
 }
@@ -1874,7 +1907,10 @@ export function buildBillboardChunk(world, info, mats) {
         const ok = [[x, z], [x + ex, z + ez], [x - ex, z - ez]]
           .every(([px, pz]) => !inBuilding(px, pz) && world.ground(px, pz) < world.terrain(px, pz) + 2);
         if (!ok) continue;
-        spots.push({ x, y, z, dx, dz, slot: hk >>> 12 });
+        // Рекламодатель щита — по хешу места, в долях share.
+        let u = ((hk >>> 12) % 1000) / 1000, adv = 0;
+        while (adv < ADVERTISERS.length - 1 && u >= ADVERTISERS[adv].share) u -= ADVERTISERS[adv++].share;
+        spots.push({ x, y, z, dx, dz, adv });
       }
     }
   }
@@ -1882,37 +1918,43 @@ export function buildBillboardChunk(world, info, mats) {
   const frames = new THREE.InstancedMesh(mats.geo, mats.frame, spots.length);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
   const up = new THREE.Vector3(0, 1, 0);
-  // Плакаты квадрата — одна геометрия: две стороны на щит, у каждой своя полоса ленты.
-  const pos = [], nor = [], uv = [], idx = [];
-  const n = ADS.length, pad = 3 / (AD_H * n);
-  const quad = (cx, cy, cz, nx, nz, slot) => {
+  // Плакаты квадрата — по геометрии на рекламодателя: две стороны на щит, у каждой своя полоса его ленты.
+  const geos = ADVERTISERS.map(() => ({ pos: [], nor: [], uv: [], idx: [], n: 0 }));
+  const quad = (G, rows, cx, cy, cz, nx, nz, row) => {
     const rx = nz, rz = -nx; // вправо для смотрящего на лицо
-    const v0 = 1 - (slot + 1) / n + pad, v1 = 1 - slot / n - pad, b = pos.length / 3;
+    const pad = 3 / (AD_H * rows), v0 = 1 - (row + 1) / rows + pad, v1 = 1 - row / rows - pad, b = G.pos.length / 3;
     for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
-      pos.push(cx + rx * (u - 0.5) * BB.w, cy + (v - 0.5) * BB.h, cz + rz * (u - 0.5) * BB.w);
-      nor.push(nx, 0, nz);
-      uv.push(u, v ? v1 : v0);
+      G.pos.push(cx + rx * (u - 0.5) * BB.w, cy + (v - 0.5) * BB.h, cz + rz * (u - 0.5) * BB.w);
+      G.nor.push(nx, 0, nz);
+      G.uv.push(u, v ? v1 : v0);
     }
-    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    G.idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
   };
   const lift = BB.t / 2 + 0.01;
-  spots.forEach(({ x, y, z, dx, dz, slot }, i) => {
+  spots.forEach((sp, i) => {
+    const { x, y, z, dx, dz, adv } = sp;
     frames.setMatrixAt(i, m.compose(p.set(x, y, z), q.setFromAxisAngle(up, Math.atan2(dx, dz)), one));
-    // Сзади — плакат через один (другой бренд), чтобы в разные стороны висело разное.
-    quad(x + dx * lift, y + BB.y, z + dz * lift, dx, dz, slot % n);
-    quad(x - dx * lift, y + BB.y, z - dz * lift, -dx, -dz, (slot + 1) % n);
+    // Сзади — другой плакат того же рекламодателя.
+    const G = geos[adv], rows = mats.sheets[adv].rows;
+    sp.k = G.n++;
+    quad(G, rows, x + dx * lift, y + BB.y, z + dz * lift, dx, dz, 0);
+    quad(G, rows, x - dx * lift, y + BB.y, z - dz * lift, -dx, -dz, 1);
   });
   frames.computeBoundingSphere();
   frames.castShadow = true;
-  frames.userData.spots = spots; // для breakables.js: плакаты щита i — вершины 8i…8i+7
-  const fg = new THREE.BufferGeometry();
-  fg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  fg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  fg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  fg.setIndex(idx);
-  fg.computeBoundingSphere();
-  const faces = new THREE.Mesh(fg, mats.face);
-  return [frames, faces];
+  frames.userData.spots = spots; // для breakables.js: плакаты щита — вершины 8k…8k+7 в плакатах его рекламодателя (adv)
+  const faces = geos.map((G, adv) => {
+    const fg = new THREE.BufferGeometry();
+    fg.setAttribute('position', new THREE.Float32BufferAttribute(G.pos, 3));
+    fg.setAttribute('normal', new THREE.Float32BufferAttribute(G.nor, 3));
+    fg.setAttribute('uv', new THREE.Float32BufferAttribute(G.uv, 2));
+    fg.setIndex(G.idx);
+    fg.computeBoundingSphere();
+    const mesh = new THREE.Mesh(fg, mats.faces[adv]);
+    mesh.userData.adv = ADVERTISERS[adv];
+    return mesh;
+  });
+  return [frames, ...faces];
 }
 
 // ---------------------------------------------------------------- остановки

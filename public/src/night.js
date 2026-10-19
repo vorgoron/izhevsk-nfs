@@ -218,7 +218,7 @@ export class DayNight {
     this.sky.setNight(s, this.dir);
     fog.color.copy(this.sky.horizon);
     this.scene.background.copy(this.sky.horizon);
-    if (this.ads) this.ads.face.emissiveIntensity = lerp(0.35, 0.9);
+    if (this.ads) for (const f of this.ads.faces) f.emissiveIntensity = lerp(0.35, 0.9);
     if (this.headlight) {
       this.headlight.intensity = 60 * s;
       this.headlight.visible = s > 0.01;

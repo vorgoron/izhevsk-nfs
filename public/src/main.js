@@ -255,7 +255,7 @@ async function main() {
         html = `<h4>Гонка · ${rows.length}</h4>` + rows.map((x, k) => `<div${x.me ? ' class="me"' : ''}><span>${k + 1}.</span>${dot(x.model, x.color)}${esc(x.name)}`
           + `<em>${x.t != null ? formatTime(x.t) : race.state === 'countdown' || k === 0 || x.p >= lead ? '' : `−${Math.round(lead - x.p)} м`}</em></div>`).join('');
       } else {
-        html = `<h4>В комнате · ${rows.length}</h4>` + rows.map((x) => `<div${x.me ? ' class="me"' : ''}>${dot(x.model, x.color)}${esc(x.name)}${x.me ? '<em>ты</em>' : ''}</div>`).join('');
+        html = `<h4>Вместе · ${rows.length}</h4>` + rows.map((x) => `<div${x.me ? ' class="me"' : ''}>${dot(x.model, x.color)}${esc(x.name)}${x.me ? '<em>ты</em>' : ''}</div>`).join('');
       }
     }
     if (html !== rosterHtml) { rosterHtml = html; $('roster').innerHTML = html; $('roster').hidden = !html; }
@@ -418,9 +418,12 @@ async function main() {
         clearTimeout(copied);
         copied = setTimeout(() => { copied = 0; menu.sync(); }, 4000);
         menu.sync();
+        if (!menu.isOpen) notice('Ссылка для друзей скопирована — отправьте её');
       }, () => {});
     },
     city: () => { clearTimeout(copied); copied = 0; net.join(CITY); },
+    // Страница «Трюки» в меню (с плаката-подсказки).
+    tricks: () => { menu.open(); sound.setPaused(true); menu.page('tricks'); },
     // Нитро за деньги: долить баллон, на сколько хватает.
     nitro: () => {
       const got = Math.min(1 - car.nitro, Math.max(0, wallet.balance) / PRICES.nitro);
@@ -557,6 +560,26 @@ async function main() {
     dragX = e.clientX;
     dragY = e.clientY;
     sinceDrag = 0;
+  });
+  // Нажатие без перетаскивания — по рекламному щиту? Ссылка рекламодателя или действие игры (build.js, ADVERTISERS).
+  let tapAt = null;
+  cv.addEventListener('pointerdown', (e) => { tapAt = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  ray.far = 220;
+  cv.addEventListener('pointerup', (e) => {
+    if (!tapAt || garage.isOpen || menu.isOpen || starting) return;
+    const quick = Math.hypot(e.clientX - tapAt.x, e.clientY - tapAt.y) < 8 && performance.now() - tapAt.t < 450;
+    tapAt = null;
+    if (!quick) return;
+    const r = cv.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObjects([...chunks.mats.ads.meshes], false)[0];
+    const ad = hit?.object.userData.adv;
+    if (!ad) return;
+    track('ad_click', { ad: ad.key });
+    if (ad.url) window.open(ad.url, '_blank', 'noopener');
+    else actions[ad.act]?.();
   });
   const endDrag = (e) => {
     if (e.pointerId !== dragId) return;

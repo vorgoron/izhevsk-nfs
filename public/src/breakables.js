@@ -128,22 +128,23 @@ export class Breakables {
     this.#add(trunks, trunks.userData.spots.map(([x, y, z, s]) => ({ kind: KINDS.tree, x, y, z, r: KINDS.tree.r * s })));
   }
 
-  // Щиты квадрата (buildBillboardChunk): рамы — InstancedMesh, плакаты — общая геометрия по 8 вершин на щит.
-  addBoards(frames, faces) {
-    const pos = faces.geometry.attributes.position;
-    this.#add(frames, frames.userData.spots.map(({ x, y, z, dx, dz }, i) => {
+  // Щиты квадрата (buildBillboardChunk): рамы — InstancedMesh, плакаты — геометрия на рекламодателя (faces[adv]),
+  // по 8 вершин на щит (k — номер щита в ней).
+  addBoards(frames, ...faceList) {
+    this.#add(frames, frames.userData.spots.map(({ x, y, z, dx, dz, adv, k }, i) => {
       const a = Math.atan2(dx, dz);
+      const faces = faceList[adv], pos = faces.geometry.attributes.position;
       let saved = null;
       return {
         kind: KINDS.board, x, y, z, a,
         hide: () => {
-          saved = pos.array.slice(i * 24, i * 24 + 24);
-          pos.array.fill(0, i * 24, i * 24 + 24); // все вершины в одной точке — треугольников не видно
+          saved = pos.array.slice(k * 24, k * 24 + 24);
+          pos.array.fill(0, k * 24, k * 24 + 24); // все вершины в одной точке — треугольников не видно
           pos.needsUpdate = true;
           return hideInstance(frames, i);
         },
         show: (m) => {
-          if (saved) { pos.array.set(saved, i * 24); pos.needsUpdate = true; }
+          if (saved) { pos.array.set(saved, k * 24); pos.needsUpdate = true; }
           showInstance(frames, i, m);
         },
         // Плакаты — свой кусок геометрии в осях щита (UV те же, поэтому смена плаката идёт и на обломке).
@@ -151,7 +152,7 @@ export class Breakables {
           const g = new THREE.Group();
           g.add(new THREE.Mesh(frames.geometry, frames.material));
           const fg = new THREE.BufferGeometry();
-          const attr = (name, n) => new THREE.Float32BufferAttribute(faces.geometry.attributes[name].array.slice(i * 8 * n, (i + 1) * 8 * n), n);
+          const attr = (name, n) => new THREE.Float32BufferAttribute(faces.geometry.attributes[name].array.slice(k * 8 * n, (k + 1) * 8 * n), n);
           fg.setAttribute('position', new THREE.Float32BufferAttribute(saved, 3));
           fg.setAttribute('normal', attr('normal', 3));
           fg.setAttribute('uv', attr('uv', 2));

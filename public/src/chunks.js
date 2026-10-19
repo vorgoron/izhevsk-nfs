@@ -66,6 +66,7 @@ export class ChunkManager {
     if (ads) group.add(...ads.map((o) => tag(o, 'щиты')));
     if (poles) this.breakables?.addPoles(poles);
     if (ads) this.breakables?.addBoards(...ads);
+    if (ads) for (const o of ads.slice(1)) this.mats.ads.meshes.add(o); // плакаты — для нажатия по ним
     const stops = buildStopChunk(w, info, this.mats.stops);
     if (stops) group.add(...stops.map((o) => tag(o, 'остановки')));
     const fences = buildFenceChunk(w, info, this.mats.fences);
@@ -81,7 +82,7 @@ export class ChunkManager {
       if (!o.isMesh) return;
       if (o.isInstancedMesh || o.userData.pieces) this.breakables?.remove(o);
       // Общие материалы и геометрии деревьев не трогаем; своё — геометрии и текстура земли.
-      if (o.material === this.mats.ads.face) { o.geometry.dispose(); return; }
+      if (this.mats.ads.faces.includes(o.material)) { o.geometry.dispose(); this.mats.ads.meshes.delete(o); return; }
       if (!o.isInstancedMesh) o.geometry.dispose();
       else o.dispose();
       if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls
