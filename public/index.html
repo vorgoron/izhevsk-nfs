@@ -158,6 +158,32 @@
     #camwarn small { font-size: 13px; opacity: .8; }
     #camwarn.fast { background: rgba(200,30,20,.75); animation: pulse-cam .6s ease-in-out infinite; }
     @keyframes pulse-cam { 50% { transform: scale(1.06); } }
+    #money-log .info { background: rgba(30,90,150,.85); }
+    /* Большая карта (citymap.js): холст на весь экран, сверху — строка с маршрутом и кнопками. */
+    #citymap { position: fixed; inset: 0; z-index: 17; display: none; background: #15181b; touch-action: none; }
+    #citymap.open { display: block; }
+    #citymap canvas { width: 100%; height: 100%; cursor: crosshair; }
+    #citymap .bar { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left));
+      background: linear-gradient(rgba(10,12,14,.85), rgba(10,12,14,0)); }
+    #citymap .bar b { font-size: 20px; font-style: italic; }
+    #citymap .info { flex: 1; min-width: 0; font-size: 15px; color: #8fd0ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #citymap button { font: inherit; font-size: 14px; font-weight: 600; color: #fff; cursor: pointer; background: rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,.3); border-radius: 8px; padding: 6px 12px; }
+    #citymap button:hover { background: rgba(40,44,48,.85); }
+    #citymap button[hidden] { display: none; }
+    #citymap kbd { margin-left: 6px; font-family: inherit; font-size: 11px; opacity: .65; border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 4px; }
+    #citymap .zoom { position: absolute; right: calc(14px + env(safe-area-inset-right)); bottom: 60px; display: flex; flex-direction: column; gap: 6px; }
+    #citymap .zoom button { width: 40px; height: 40px; padding: 0; font-size: 20px; }
+    #citymap .legend { position: absolute; left: calc(14px + env(safe-area-inset-left)); bottom: calc(10px + env(safe-area-inset-bottom)); display: flex;
+      flex-wrap: wrap; gap: 6px 14px; font-size: 13px; background: rgba(10,12,14,.7); border-radius: 8px; padding: 6px 10px; }
+    #citymap .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+    #citymap .legend i.me { background: #ff3b30; }
+    #citymap .legend i.lm { background: #e0b84a; }
+    #citymap .legend .hint { opacity: .6; }
+    body.touch #citymap kbd { display: none; }
+    body.touch #citymap .bar b { display: none; }
+    body.touch #citymap .legend { font-size: 11px; }
     /* Дрифт (drift.js): очки по центру над спидометром. */
     #drift { left: 50%; bottom: 22%; transform: translateX(-50%) scale(.9); font-size: 34px; font-weight: 900; font-style: italic; color: #ffd23f;
       opacity: 0; transition: opacity .2s, transform .2s; white-space: nowrap; }

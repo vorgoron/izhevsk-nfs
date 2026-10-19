@@ -19,7 +19,7 @@ function chevronGeometry() {
 }
 
 export class RouteGuide {
-  constructor(world, scene, color = '#ffd23f') {
+  constructor(world, scene) {
     this.world = world;
     this.mesh = new THREE.InstancedMesh(chevronGeometry(), new THREE.MeshBasicMaterial({
       color: '#ffffff', transparent: true, opacity: 0.9, depthWrite: false, fog: false, side: THREE.DoubleSide,
@@ -28,7 +28,7 @@ export class RouteGuide {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 2;
     this.mesh.count = 0;
-    this.base = new THREE.Color(color);
+    this.base = new THREE.Color();
     this.mesh.setColorAt(0, this.base);
     scene.add(this.mesh);
     this.route = null;
@@ -38,9 +38,10 @@ export class RouteGuide {
     this.c = new THREE.Color();
   }
 
-  // Новый маршрут — массив точек [x, z]; null — убрать стрелки.
-  set(route) {
+  // Новый маршрут — массив точек [x, z] и цвет стрелок; null — убрать стрелки.
+  set(route, color = '#ffd23f') {
     this.route = route?.length > 1 ? route : null;
+    this.base.set(color);
     this.cursor = 0;
     if (!this.route) this.mesh.count = 0;
   }

@@ -29,6 +29,7 @@ import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.j
 import { Cameras } from './cameras.js';
 import { Drift } from './drift.js';
 import { RouteGuide } from './guide.js';
+import { CityMap } from './citymap.js';
 import { CLEAR_ALT } from './car.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
@@ -373,7 +374,13 @@ async function main() {
       try { localStorage.setItem('fps', fpsCap); } catch {}
     },
     garage: () => { resume(); garage.toggle(); },
-    map: () => $('minimap').classList.toggle('big'),
+    // Большая карта (citymap.js): как меню — пауза.
+    map: () => {
+      if (garage.isOpen) return;
+      menu.close();
+      citymap.toggle();
+      sound.setPaused(citymap.isOpen);
+    },
     fullscreen: toggleFullscreen,
     // Позвать друзей: своя комната и ссылка на неё в буфер обмена (не вышло — ссылка видна в адресе).
     invite: () => {
@@ -396,6 +403,7 @@ async function main() {
     },
   };
   let copied = 0; // таймер надписи «ссылка скопирована», 0 — не показываем
+  let citymap = null; // большая карта — создаётся после меню (меню уже спрашивает её состояние)
   const resume = () => { menu.close(); sound.setPaused(false); };
   // После любого действия (клавишей, кнопкой) меню показывает актуальные значения.
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
@@ -406,13 +414,28 @@ async function main() {
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
     radio: { names: STATIONS.map((s) => s.name), get: () => radio.station, select: (i) => radio.select(i) },
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, bigMap: $('minimap').classList.contains('big'),
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
       money: formatMoney(wallet.balance), nitro: car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
     setName: (v) => net.setName(v),
   });
   game.menu = menu;
+  // Большая карта: значки — заправки, достопримечательности, камеры, другие игроки; маршрут гонки — жёлтым.
+  citymap = new CityMap({
+    world, car,
+    base: isTouch ? 0.14 : 0.2,
+    poi: () => [
+      ...fuel.stations.map((s) => ({ kind: 'fuel', name: s.name, x: s.cx, z: s.cz })),
+      ...landmarks.markers.map((m) => ({ kind: 'landmark', name: m.name, x: m.x, z: m.z })),
+      ...cameras.list.map((c) => ({ kind: 'camera', name: `камера ${c.lim}`, x: c.x, z: c.z })),
+      ...[...net.ghosts.values()].filter((g) => g.mesh?.visible).map((g) => ({ kind: 'ghost', name: g.name, x: g.mesh.position.x, z: g.mesh.position.z })),
+    ],
+    extra: () => (race.state === 'running' || race.state === 'countdown' ? [{ route: race.route, color: '#ffd23f' }] : []),
+    onRoute: (route) => { navRoute = route; offRoute = 0; menu.sync(); },
+  });
+  citymap.onClose = () => { sound.setPaused(menu.isOpen); menu.sync(); };
+  game.citymap = citymap;
   $('menu-btn').addEventListener('click', actions.menu);
   $('race-btn').addEventListener('click', actions.race);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
@@ -685,7 +708,7 @@ async function main() {
     const size = mm.width;
     const scale = MINIMAP_SCALE;
     const [xmin, zmin] = world.bounds;
-    const zoom = mm.classList.contains('big') ? 0.35 : 1.1;
+    const zoom = 1.1;
     const cx = (car.pos.x - xmin) * scale, cz = (car.pos.y - zmin) * scale;
     mg.save();
     mg.fillStyle = '#111';
@@ -730,6 +753,18 @@ async function main() {
       if (!g.mesh?.visible) continue;
       mg.beginPath();
       mg.arc((g.mesh.position.x - xmin) * scale, (g.mesh.position.z - zmin) * scale, 5 / zoom, 0, 7);
+      mg.fill();
+    }
+    if (navRoute && !(race.route.length && race.state !== 'finished' && race.state !== 'idle')) {
+      mg.beginPath();
+      navRoute.forEach(([x, z], i) => mg[i ? 'lineTo' : 'moveTo']((x - xmin) * scale, (z - zmin) * scale));
+      mg.strokeStyle = 'rgba(74,179,255,0.9)';
+      mg.lineWidth = 4 / zoom;
+      mg.stroke();
+      const t = citymap.target;
+      mg.beginPath();
+      mg.arc((t.x - xmin) * scale, (t.z - zmin) * scale, 6 / zoom, 0, 7);
+      mg.fillStyle = '#4ab3ff';
       mg.fill();
     }
     if (race.route.length && race.state !== 'finished') {
@@ -799,6 +834,33 @@ async function main() {
       fuelPtr.style.left = `${box.left + r + Math.cos(a) * r}px`;
       fuelPtr.style.top = `${box.top + r + Math.sin(a) * r}px`;
     }
+  }
+
+  // ---------------------------------------------------------------- маршрут по карте
+
+  // Доехал до точки — маршрут убираем; съехал с маршрута дальше 45 м на 2 с — строим заново отсюда.
+  let offRoute = 0;
+  function navigate(dt) {
+    const t = citymap.target;
+    if (!t) return;
+    if (Math.hypot(t.x - car.pos.x, t.z - car.pos.y) < 25) {
+      citymap.clear();
+      notice(`Приехали${t.name ? `: ${t.name}` : ''}`);
+      return;
+    }
+    if (guide.route !== navRoute) return; // идёт гонка — её стрелки
+    const { d } = guide.locate(car.pos.x, car.pos.y);
+    offRoute = d > 45 ? offRoute + dt : 0;
+    if (offRoute > 2) { offRoute = 0; citymap.reroute(); }
+  }
+  // Сообщение плашкой по центру сверху (там же, где деньги).
+  function notice(text) {
+    const div = document.createElement('div');
+    div.className = 'info';
+    div.textContent = text;
+    $('money-log').prepend(div);
+    setTimeout(() => div.classList.add('out'), 2600);
+    setTimeout(() => div.remove(), 3200);
   }
 
   // ---------------------------------------------------------------- штрафы и награды
@@ -939,6 +1001,7 @@ async function main() {
   progress(1);
   await startScreen();
   starting = false;
+  setTimeout(() => citymap.prepare(), 3000); // подложку большой карты — заранее, чтобы она открылась сразу
   track('game_start', { model: garage.choice.model, touch: isTouch, room: net.room !== CITY });
   if (!choice.saved) garage.open();
   // Заставка с логотипом гаснет поверх уже идущей игры.
@@ -958,8 +1021,8 @@ async function main() {
     }
     perf?.begin();
     const dt = Math.min(clock.getDelta(), 0.1);
-    // Меню — пауза: мир стоит, только перерисовываем кадр.
-    if (menu.isOpen) {
+    // Меню и большая карта — пауза: мир стоит, только перерисовываем кадр.
+    if (menu.isOpen || citymap.isOpen) {
       acc = 0;
       renderer.render(scene, camera);
       perf?.end();
@@ -1001,8 +1064,9 @@ async function main() {
     landmarks.group.userData.update(performance.now() / 1000);
     // Стрелки на дороге: в гонке — по её маршруту, иначе — до точки, выбранной на карте.
     const route = race.state === 'running' || race.state === 'countdown' ? race.route : navRoute;
-    if (route !== guide.route) guide.set(route);
+    if (route !== guide.route) guide.set(route, route === navRoute ? '#4ab3ff' : '#ffd23f');
     guide.update(car);
+    navigate(dt);
     updateCamera(dt);
     skyDome.update(dt, camera);
     dayNight.update(dt);

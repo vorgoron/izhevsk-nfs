@@ -8,7 +8,7 @@ const CAMERAS = ['сзади', 'из салона', 'сверху', 'кино'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, bigMap, fullscreen };
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, fullscreen };
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
   // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
@@ -43,7 +43,7 @@ export class Menu {
       <button data-act="night">Время суток <b data-v="night"></b><kbd>Y</kbd></button>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
       <button data-act="fps">Кадров в секунду <b data-v="fps"></b><kbd>L</kbd></button>
-      <button data-act="map">Миникарта <b data-v="bigMap"></b><kbd>M</kbd></button>
+      <button data-act="map">Карта города <b data-v="nav"></b><kbd>M</kbd></button>
       ${fs ? '<button data-act="fullscreen">Во весь экран <b data-v="fullscreen"></b><kbd>F</kbd></button>' : ''}
       <button data-page="tricks">Трюки <b data-v="tricks"></b><i>›</i></button>
       <div class="keys">
@@ -114,7 +114,7 @@ export class Menu {
       camera: CAMERAS[s.camera],
       night: s.night,
       fps: s.fps ? `до ${s.fps}` : 'без предела',
-      bigMap: s.bigMap ? 'крупная' : 'обычная',
+      nav: s.nav ?? '',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
       volume: s.sound ? `${Math.round(this.volume.get('master') * 100)}%` : 'звук выкл',
       net: { online: `· ${s.city ? 'общий город' : 'своя комната'} · ${s.players} в игре`, connecting: '· подключение…', offline: '· нет связи', solo: '· общий город · пока без других игроков' }[s.netStatus],
@@ -130,7 +130,7 @@ export class Menu {
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'night', 'bigMap', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;
