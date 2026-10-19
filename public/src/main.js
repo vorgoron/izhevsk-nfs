@@ -429,7 +429,7 @@ async function main() {
     if (!e.repeat && !e.defaultPrevented && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
   });
-  setupTouch({ keys, analog, actions, press });
+  const touch = setupTouch({ keys, analog, actions, press });
   $('minimap').addEventListener('click', actions.map);
   addEventListener('keyup', (e) => keys.delete(e.code));
   addEventListener('blur', () => keys.clear());
@@ -439,7 +439,7 @@ async function main() {
     left: keys.has('KeyA') || keys.has('ArrowLeft'),
     right: keys.has('KeyD') || keys.has('ArrowRight'),
     brake: keys.has('Space'),
-    nitro: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+    nitro: keys.has('ShiftLeft') || keys.has('ShiftRight') || (touch.nitro && keys.has('KeyW')), // на телефоне нитро взводится касанием и горит под газом
     steer: analog.steer,
   });
 
@@ -681,6 +681,7 @@ async function main() {
     $('speed').textContent = Math.round(Math.abs(car.speed) * 3.6);
     $('nitro-fill').style.width = `${car.nitro * 100}%`;
     $('nitro').classList.toggle('locked', !!car.nitroLocked); // пусто — ждём четверть баллона
+    touch.update(car);
     const r = world.nearestRoad(car.pos.x, car.pos.y, 12);
     const street = r?.seg.road.name;
     if (street && street !== lastStreet) {

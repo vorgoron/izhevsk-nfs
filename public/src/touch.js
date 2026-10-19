@@ -6,7 +6,8 @@ export const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart'
 const STEER_PX = 70; // на сколько пикселей тянуть до полного поворота руля
 
 export function setupTouch({ keys, analog, actions, press }) {
-  if (!isTouch) return;
+  const ctl = { nitro: false, update() {} };
+  if (!isTouch) return ctl;
   document.body.classList.add('touch');
 
   // iOS: без этого двойной тап и щипок масштабируют страницу, долгое нажатие — меню.
@@ -18,7 +19,7 @@ export function setupTouch({ keys, analog, actions, press }) {
     <div id="steer-zone"><div id="steer-base"><div id="steer-knob"></div></div><span>руль</span></div>
     <div id="pedals">
       <button data-key="Space" class="pedal small">ручник</button>
-      <button data-key="ShiftLeft" class="pedal small nitro">нитро</button>
+      <button id="nitro-btn" class="pedal small nitro">нитро</button>
       <button data-key="KeyS" class="pedal brake">тормоз</button>
       <button data-key="KeyW" class="pedal gas">газ</button>
     </div>
@@ -43,6 +44,14 @@ export function setupTouch({ keys, analog, actions, press }) {
     });
     for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, up);
   }
+
+  // Нитро — переключатель, а не педаль: одним пальцем газ и нитро сразу не нажать. Касание взводит
+  // нитро, и оно горит, пока держишь газ; гаснет от второго касания, тормоза или пустого баллона.
+  const nitroBtn = ui.querySelector('#nitro-btn');
+  const arm = (on) => { ctl.nitro = on; nitroBtn.classList.toggle('on', on); };
+  nitroBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); arm(!ctl.nitro); });
+  ui.querySelector('[data-key=KeyS]').addEventListener('pointerdown', () => arm(false));
+  ctl.update = (car) => { if (ctl.nitro && car.nitroLocked) arm(false); };
 
   for (const b of ui.querySelectorAll('[data-act]')) {
     b.addEventListener('pointerdown', (e) => {
@@ -80,6 +89,7 @@ export function setupTouch({ keys, analog, actions, press }) {
     zone.classList.remove('on');
   };
   for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) zone.addEventListener(ev, release);
+  return ctl;
 }
 
 export function toggleFullscreen() {
