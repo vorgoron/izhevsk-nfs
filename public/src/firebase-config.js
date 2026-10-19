@@ -8,6 +8,7 @@ export const firebaseConfig = {
   storageBucket: 'izh-car.firebasestorage.app',
   messagingSenderId: '382282983682',
   appId: '1:382282983682:web:90daf268f72c8a8113ba1b',
+  measurementId: 'G-RE56VPWW5Z',
 };
 
 export const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/11.0.2';

@@ -23,6 +23,7 @@ import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { Net, CITY } from './net.js';
+import { track } from './analytics.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
 const $ = (id) => document.getElementById(id);
@@ -187,6 +188,7 @@ async function main() {
   const garage = new Garage(choice, {
     onChange: setVehicle,
     onClose: (changed) => {
+      if (changed) track('car_select', { model: garage.choice.model, color: garage.choice.color });
       if (changed && race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
     },
   });
@@ -208,7 +210,10 @@ async function main() {
       car.nitro = 1; car.fuel = Math.max(car.fuel, 0.5);
     }
   };
-  race.onFinish = (t) => { if (race.shared) net.finishRace(t); };
+  race.onFinish = (t) => {
+    track('race_finish', { time: +t.toFixed(2), shared: race.shared });
+    if (race.shared) net.finishRace(t);
+  };
   // Список справа — кто в комнате; в общей гонке — по местам: финишировавшие по времени,
   // остальные по проеханному (своё считаем сами, чужое приходит в записи игрока, p).
   const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
@@ -317,7 +322,9 @@ async function main() {
     race: () => {
       resume();
       const p = net.shared && race.pick(car.pos.x, car.pos.y);
-      if (!p || !net.startRace(p.from, p.to)) race.start(car.pos.x, car.pos.y);
+      const shared = !!p && net.startRace(p.from, p.to);
+      if (!shared) race.start(car.pos.x, car.pos.y);
+      track('race_start', { shared });
     },
     camera: () => { camMode = (camMode + 1) % 3; },
     night: () => dayNight.toggle(),
@@ -331,6 +338,7 @@ async function main() {
     // Позвать друзей: своя комната и ссылка на неё в буфер обмена (не вышло — ссылка видна в адресе).
     invite: () => {
       const link = net.inviteLink();
+      track('invite');
       navigator.clipboard?.writeText(link).then(() => {
         // «Скопирована» на 4 с; меню само не перерисовывается — снимает надпись таймер.
         clearTimeout(copied);
@@ -737,6 +745,7 @@ async function main() {
   progress(1);
   await startScreen();
   starting = false;
+  track('game_start', { model: garage.choice.model, touch: isTouch, room: net.room !== CITY });
   if (!choice.saved) garage.open();
   // Заставка с логотипом гаснет поверх уже идущей игры.
   $('loading').classList.add('done');
