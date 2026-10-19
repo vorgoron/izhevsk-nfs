@@ -766,9 +766,11 @@ def fence_kind(tags, ctx):
     return {"industrial": "panel", "village": None}.get(ctx, "bars")
 
 
-def fences(inside, roads, road_nodes, areas, buildings):
+def fences(inside, roads, road_nodes, areas, buildings, footbridges):
     """Заборы, стены, изгороди: [{"k": вид, "h": высота, "p": точки}], уже с проёмами — ворота и
-    калитки (точки barrier=gate… на линии), тропинки через забор, дороги поперёк и сам забор на полотне."""
+    калитки (точки barrier=gate… на линии), тропинки через забор, дороги поперёк и сам забор на полотне.
+    Перила пешеходных мостов (в OSM — заборы по краю настила без bridge=*) и заборы с layer ≥ 1 не
+    берём: на земле они встали бы поперёк улицы и путей под мостом."""
     # Индекс осей дорог (кроме мостов и тоннелей: под мостом забор остаётся).
     CELL = 50
     rgrid = {}
@@ -812,11 +814,28 @@ def fences(inside, roads, road_nodes, areas, buildings):
         houses = [v for i in (-1, 0, 1) for j in (-1, 0, 1) for v in bgrid.get((int(x // BC) + i, int(z // BC) + j), ())]
         return "village" if sum(houses) >= 3 and sum(houses) * 2 >= len(houses) else None
 
+    def seg_dist(x, z, a, b):
+        ex, ez = b[0] - a[0], b[1] - a[1]
+        q = min(1, max(0, ((x - a[0]) * ex + (z - a[1]) * ez) / (ex * ex + ez * ez or 1)))
+        return math.hypot(x - a[0] - ex * q, z - a[1] - ez * q)
+
+    def on_bridge(x, z):
+        for fb in footbridges:
+            p = fb["p"]
+            if fb["a"] and point_in(x, z, p):
+                return True
+            edges = zip(p, p[1:] + p[:1]) if fb["a"] else zip(p, p[1:])
+            if any(seg_dist(x, z, a, b) < (1.5 if fb["a"] else fb["w"] / 2 + 1.5) for a, b in edges):
+                return True
+        return False
+
     out, total = [], 0.0
     for wid, (nds, tags) in ways.items():
         if tags.get("barrier") not in ("fence", "wall", "hedge", "jersey_barrier", "city_wall"):
             continue
         if tags.get("bridge") not in (None, "no") or tags.get("tunnel") not in (None, "no"):
+            continue
+        if (parse_num(tags.get("layer")) or 0) >= 1:
             continue
         nds = [n for n in nds if n in nodes]
         if len(nds) < 2:
@@ -897,6 +916,8 @@ def fences(inside, roads, road_nodes, areas, buildings):
             if s1 - s0 < 1:
                 continue
             p = [at(s0)] + [[round(x, 2), round(z, 2)] for (x, z), a in zip(pts, acc) if s0 < a < s1] + [at(s1)]
+            if on_bridge(*at((s0 + s1) / 2)):
+                continue
             out.append({"k": kind, "h": h, "p": p})
             total += s1 - s0
     print(f"fences: {len(out)} pieces, {total / 1000:.0f} km")
@@ -1321,7 +1342,7 @@ def build_city():
     classify_bridges(roads, road_nodes, waterways, rails)
     apply_gis(buildings)
     mark_village_houses(buildings)
-    fence_list = fences(inside, roads, road_nodes, areas, buildings)
+    fence_list = fences(inside, roads, road_nodes, areas, buildings, footbridges)
     buildings = cut_passages(buildings, roads, road_nodes)
     aligned = align_tram_tracks()
     for r in rails:
