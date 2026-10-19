@@ -31,6 +31,15 @@
           "$other": { ".validate": false }
         }
       }
+    },
+    "users": {
+      "$uid": {
+        "progress": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && auth.token.email_verified === true",
+          ".validate": "newData.hasChildren(['money', 't']) && newData.child('money').isNumber()"
+        }
+      }
     }
   }
 }

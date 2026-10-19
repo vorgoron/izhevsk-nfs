@@ -31,6 +31,7 @@ import { Drift } from './drift.js';
 import { RouteGuide } from './guide.js';
 import { CityMap } from './citymap.js';
 import { Gauges } from './gauges.js';
+import { Account } from './account.js';
 import { CLEAR_ALT } from './car.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
@@ -206,6 +207,7 @@ async function main() {
     onChange: setVehicle,
     onClose: (changed) => {
       if (changed) track('car_select', { model: garage.choice.model, color: garage.choice.color });
+      if (changed) game.account?.save();
       if (changed && race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
     },
   });
@@ -434,7 +436,8 @@ async function main() {
     },
   };
   let copied = 0; // таймер надписи «ссылка скопирована», 0 — не показываем
-  let citymap = null; // большая карта — создаётся после меню (меню уже спрашивает её состояние)
+  let citymap = null; // большая карта и аккаунт — создаются после меню (меню уже спрашивает их состояние)
+  let account = null;
   const resume = () => { menu.close(); sound.setPaused(false); };
   // После любого действия (клавишей, кнопкой) меню показывает актуальные значения.
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
@@ -450,8 +453,18 @@ async function main() {
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
       money: formatMoney(wallet.balance), nitro: car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
     setName: (v) => net.setName(v),
+    account: { state: () => account ?? { status: 'out' }, start: () => account.start(), send: (e) => account.send(e), signOut: () => account.signOut() },
   });
   game.menu = menu;
+  // Аккаунт по почте (account.js): прогресс — в базу при каждом изменении денег и выезде из гаража.
+  account = new Account({
+    wallet,
+    vehicle: () => garage.choice,
+    setVehicle: (v) => { if (garage.set(v)) setVehicle(garage.choice.model, garage.choice.color, garage.choice.options); },
+    onChange: () => menu.sync(),
+  });
+  wallet.onChange = () => account.save();
+  game.account = account;
   // Большая карта: значки — заправки, достопримечательности, камеры, другие игроки; маршрут гонки — жёлтым.
   citymap = new CityMap({
     world, car,

@@ -159,6 +159,13 @@ python3 tools/gis_extract.py "…/Сведения по ОЖФ Удмуртск�
 - `public/src/net.js` — мультиплеер через Firebase Realtime Database (проект `izh-car`, конфиг в
   `public/src/firebase-config.js`, правила в `database.rules.json`, заливка — `firebase deploy --only database`):
   в общем городе пока без сети (лимиты Firebase), `?room=…` — своя комната с другими игроками; чужие машины с никами; столкновения каждый считает для своей машины сам.
+- `public/src/account.js` — аккаунт по почте (меню → «Аккаунт»): вход по ссылке из письма (Firebase Auth, без пароля),
+  прогресс (деньги, купленные детали, машина, рекорды) — в `users/<uid>/progress`, пишется через 3 с после изменений.
+  При входе: в аккаунте уже есть прогресс — берутся его деньги и машина, детали объединяются; нет — заливается свой.
+  Отдельное приложение Firebase с постоянным входом (у мультиплеера — свой анонимный вход на вкладку).
+  **Чтобы заработало:** в консоли Firebase (izh-car) → Authentication → Sign-in method включить Email/Password с
+  «Email link (passwordless sign-in)»; в Authorized domains — `izh-car.web.app` и `vorgoron.ru`; правила базы —
+  `firebase deploy --only database` (в `database.rules.json` добавлен `users/$uid/progress`).
 - `public/src/analytics.js` — Google Analytics через Firebase (тот же проект, `measurementId` в конфиге): `track(событие, параметры)`,
   SDK в фоне; на `localhost` не считает.
   В комнате «Новая гонка» (N) — общая: старт у запустившего, финиш случайный, всех ставит в стартовую

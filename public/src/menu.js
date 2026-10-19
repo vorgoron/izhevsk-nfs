@@ -13,7 +13,9 @@ export class Menu {
   // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
   // shared (гонка общая — в своей комнате на связи). money — баланс, nitro — цена долива баллона (или «полный»).
-  constructor({ actions, state, volume, radio, setName }) {
+  // account — вход по почте (account.js): { state() → { status, email, error }, start(), send(email), signOut() }.
+  constructor({ actions, state, volume, radio, setName, account }) {
+    this.account = account;
     this.actions = actions;
     this.state = state;
     this.volume = volume;
@@ -34,6 +36,7 @@ export class Menu {
       <h3>Сеть <span data-v="net"></span></h3>
       <button data-page="name">Имя <b data-v="name"></b><i>›</i></button>
       <button data-act="invite">Позвать друзей <b data-v="invite"></b></button>
+      <button data-page="account">Аккаунт <b data-v="account"></b><i>›</i></button>
       <button data-act="city" data-show="room">Ездить одному, без друзей</button>
       <h3>Настройки</h3>
       <button data-act="sound">Звук <b data-v="sound"></b><kbd>V</kbd></button>
@@ -57,6 +60,14 @@ export class Menu {
       <input data-name maxlength="10" autocomplete="nickname" enterkeyhint="done" spellcheck="false">
       <p class="hint">До 10 знаков. Его видят другие игроки над вашей машиной и на её номере.</p>
       <button data-page="main" class="go">‹ Готово <kbd>Esc</kbd></button>
+      </div>
+      <div class="page" data-page="account" hidden>
+      <h2>Аккаунт</h2>
+      <p class="hint" data-acc="text"></p>
+      <input data-acc="email" type="email" autocomplete="email" enterkeyhint="send" spellcheck="false" placeholder="почта">
+      <button data-acc="send" class="go">Прислать ссылку для входа</button>
+      <button data-acc="out">Выйти из аккаунта</button>
+      <button data-page="main">‹ Назад <kbd>Esc</kbd></button>
       </div>
       <div class="page" data-page="tricks" hidden>
       <h2>Трюки</h2>
@@ -97,6 +108,10 @@ export class Menu {
     for (const r of el.querySelectorAll('[data-vol]')) {
       r.addEventListener('input', () => { this.volume.set(r.dataset.vol, r.value / 100); this.sync(); });
     }
+    const email = el.querySelector('[data-acc=email]');
+    el.querySelector('[data-acc=send]').addEventListener('click', () => account.send(email.value));
+    email.addEventListener('keydown', (e) => { if (e.key === 'Enter') account.send(email.value); });
+    el.querySelector('[data-acc=out]').addEventListener('click', () => account.signOut());
     this.wheel = new Wheel(radio.names, { get: radio.get, select: (i) => { radio.select(i); this.sync(); } });
     el.querySelector('[data-wheel]').replaceWith(this.wheel.el);
     // Клик мимо панели — продолжить.
@@ -124,13 +139,14 @@ export class Menu {
       race: s.shared ? 'со всеми в комнате' : '',
       tricks: 'kickflip, backflip',
       money: s.money,
+      account: { in: this.account?.state().email, sent: 'письмо отправлено' }[this.account?.state().status] ?? 'войти по почте',
       nitro: s.nitro,
     };
     s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;
@@ -140,6 +156,19 @@ export class Menu {
       this.el.querySelector(`[data-vol-out="${r.dataset.vol}"]`).textContent = `${pct}%`;
     }
     this.el.querySelector('.volumes').classList.toggle('off', !s.sound);
+    // Аккаунт: что с входом и что можно сделать.
+    const a = this.account?.state() ?? { status: 'out' };
+    const acc = (k) => this.el.querySelector(`[data-acc=${k}]`);
+    acc('text').textContent = {
+      out: 'Войдите по почте — деньги, детали, машина и рекорды сохранятся и будут на любом устройстве. Пароль не нужен: пришлём ссылку.',
+      loading: 'Подождите…',
+      sent: `Письмо со ссылкой отправлено на ${a.email}. Откройте её на этом или другом устройстве — и вы в аккаунте.`,
+      in: `Вы вошли: ${a.email}. Прогресс сохраняется в аккаунте.`,
+      error: a.error,
+    }[a.status];
+    acc('email').hidden = acc('send').hidden = a.status === 'in' || a.status === 'loading';
+    acc('send').textContent = a.status === 'sent' ? 'Прислать ещё раз' : 'Прислать ссылку для входа';
+    acc('out').hidden = a.status !== 'in';
     this.wheel.sync();
   }
 
@@ -150,6 +179,7 @@ export class Menu {
     for (const p of this.el.querySelectorAll('.page')) p.hidden = p.dataset.page !== name;
     this.sync();
     if (name === 'name') this.nameIn.focus();
+    if (name === 'account') this.account?.start();
     if (name === 'radio') {
       this.wheel.show();
       this.wheel.wheel.focus({ preventScroll: true });

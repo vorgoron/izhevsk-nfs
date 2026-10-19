@@ -174,4 +174,13 @@ export class Garage {
   }
 
   toggle() { this.isOpen ? this.close() : this.open(); }
+
+  // Выбор извне (из аккаунта, account.js): запомнить и показать; машину на сцене меняет вызывающий.
+  set({ model, color, options }) {
+    if (!MODELS[model]) return false;
+    this.choice = { model, color: color || MODELS[model].colors[0], options: pickOptions(MODELS[model], options || {}) };
+    save(this.choice);
+    this.#render();
+    return true;
+  }
 }
