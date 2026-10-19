@@ -17,6 +17,8 @@ const BUSES = 6;
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
 const GRID = 100; // м: клетка сетки рёбер
 const CORNER = 9; // м: столько до узла и после него поворот идёт по кривой, а не углом
+const TURN = 0.3; // рад: излом маршрута круче — поворот, его кривая берёт прямую и через короткие рёбра
+const ROUTE = 80; // м: маршрут машины известен на столько вперёд и назад
 const BUS_PALETTE = ['#f2c230', '#e8e8e8', '#3d8f4f', '#d9442f'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
 // Удары: массы в тоннах (игрок — легковушка), упругость (кузова мнутся — отскок слабый), трение
@@ -138,6 +140,8 @@ export class Traffic {
     this.sparks = new HitFX(scene);
     this.bangs = []; // удары машин трафика между собой — для звука (забирает Sound.traffic)
     this.wallC = new THREE.Vector2();
+    this.np = []; // узлы маршрута для #pose: положение и поворот ли (переиспользуются)
+    this.nt = [];
   }
 
   // Направленный граф полос: двусторонняя улица — два ребра со сдвигом вправо.
@@ -203,9 +207,10 @@ export class Traffic {
       const d = Math.hypot(x - px, z - pz);
       if (d < minD || d > SPAWN_MAX) continue;
       if (this.vehicles.some((o) => o.active && Math.hypot(o.x - x, o.z - z) < 14)) continue;
-      Object.assign(v, { edge: e, next: this.#choose(e), prev: null, off, sk: 1, s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), acc: 0,
+      Object.assign(v, { route: [e], ri: 0, end: false, off, sk: 1, s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), acc: 0,
         lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true,
         knock: null, blend: null, roll: 0, rollV: 0, pitch: 0, pitchV: 0 });
+      this.#route(v);
       return;
     }
     v.active = false;
@@ -242,11 +247,11 @@ export class Traffic {
     const e = v.edge;
     let limit = Math.min(v.maxSpeed, e.v) * v.mood;
 
-    // Крутой поворот впереди — сбросить скорость.
-    const rest = e.len - v.s;
-    if (v.next) {
-      const cos = v.next.dx * e.dx + v.next.dz * e.dz;
-      if (cos < 0.75 && rest < 25) limit = Math.min(limit, 4 + rest * 0.5 + cos * 3);
+    // Крутой поворот впереди (и за короткими рёбрами) — сбросить скорость.
+    const rest = e.len - v.s, r = v.route;
+    for (let i = v.ri, d = rest; i + 1 < r.length && d < 25; d += r[++i].len) {
+      const cos = r[i].dx * r[i + 1].dx + r[i].dz * r[i + 1].dz;
+      if (cos < 0.75) { limit = Math.min(limit, 4 + d * 0.5 + cos * 3); break; }
     }
 
     // Светофор на этом или следующем ребре: стоим у стоп-линии на красный и на жёлтый,
@@ -334,9 +339,8 @@ export class Traffic {
     while (v.s > v.edge.len) {
       v.s -= v.edge.len;
       if (!v.next) { v.active = false; return; }
-      v.prev = v.edge;
-      v.edge = v.next;
-      v.next = this.#choose(v.edge);
+      v.ri++;
+      this.#route(v);
     }
 
     // Сдвиг от оси дороги плавно идёт к своей полосе (перестроение, на новом ребре полос меньше —
@@ -366,33 +370,88 @@ export class Traffic {
     v.dz = Math.cos(v.heading);
   }
 
-  // Точка машины на пути и направление пути [x, z, dx, dz]. У узла путь — кубическая кривая от полосы
-  // прежнего ребра к полосе следующего (на прямой — та же прямая), иначе угол срезается рывком.
+  // Маршрут машины: рёбра позади и впереди текущего (v.route[v.ri]), не меньше ROUTE м в обе стороны,
+  // чтобы поворот видел прямую до соседнего поворота и сквозь короткие рёбра (узлы переходов, примыканий).
+  // v.edge / v.prev / v.next — текущее, прошлое и следующее рёбра из маршрута.
+  #route(v) {
+    const r = v.route;
+    let ahead = 0;
+    for (let i = v.ri + 1; i < r.length; i++) ahead += r[i].len;
+    while (ahead < ROUTE && !v.end) {
+      const n = this.#choose(r[r.length - 1]);
+      if (!n) { v.end = true; break; }
+      r.push(n);
+      ahead += n.len;
+    }
+    let behind = 0;
+    for (let i = 0; i < v.ri; i++) behind += r[i].len;
+    while (v.ri > 0 && behind - r[0].len >= ROUTE) { behind -= r.shift().len; v.ri--; }
+    v.edge = r[v.ri];
+    v.prev = r[v.ri - 1] ?? null;
+    v.next = r[v.ri + 1] ?? null;
+  }
+
+  // Точка машины на пути и направление пути [x, z, dx, dz]. Путь — полоса маршрута со сдвигом v.off, у узла —
+  // кубическая кривая между точками полосы до и после него (иначе угол срезается рывком). Поворот (угол больше
+  // TURN) берёт прямую через сколько угодно коротких рёбер, но не больше половины расстояния до соседнего
+  // поворота; мелкий излом — только до середины своих рёбер и не заходя на кривую поворота.
   #pose(v) {
-    const e = v.edge;
+    const r = v.route, D = v.s;
     v.sk = 1;
-    let c = null, u;
-    if (v.next && v.next.a === e.b) {
-      c = this.#corner(e, v.next, v.off);
-      if (e.len - v.s < c.inA) u = (v.s - e.len + c.inA) / (c.inA + c.outB);
-      else c = null;
+    let base = 0; // начало маршрута от начала текущего ребра
+    for (let i = 0; i < v.ri; i++) base -= r[i].len;
+    // Узлы маршрута: положение (от начала текущего ребра) и поворот ли.
+    const P = this.np, T = this.nt;
+    P.length = T.length = 0;
+    let p = base;
+    for (let j = 1; j < r.length; j++) {
+      const a = r[j - 1], b = r[j];
+      p += a.len;
+      P.push(p);
+      T.push(Math.abs(Math.atan2(a.dx * b.dz - a.dz * b.dx, a.dx * b.dx + a.dz * b.dz)) > TURN);
     }
-    if (!c && v.prev && v.prev.b === e.a) {
-      c = this.#corner(v.prev, e, v.off);
-      if (v.s < c.outB) u = (v.s + c.inA) / (c.inA + c.outB);
-      else c = null;
+    const end = p + r[r.length - 1].len;
+    // Ближайшие повороты вокруг узла k: границы их кривых, чтобы мелкий излом на них не заходил.
+    let lo = 0, hi = 0, found = false, behindHi = -Infinity, aheadLo = Infinity;
+    for (let k = 0; k < P.length; k++) {
+      if (!T[k] || P[k] < D - 60 || P[k] > D + 60) continue;
+      let prev = base, next = end;
+      for (let q = k - 1; q >= 0; q--) if (T[q]) { prev = (P[q] + P[k]) / 2; break; }
+      for (let q = k + 1; q < P.length; q++) if (T[q]) { next = (P[q] + P[k]) / 2; break; }
+      const [x, y] = this.#cross(r[k], r[k + 1], v.off);
+      // Не короче 3 м в каждую сторону: на крутом левом пересечение полос далеко за узлом, а концы кривой
+      // до узла на a и после него на b и так по нужные стороны от него.
+      const l = P[k] - Math.max(0.25, Math.min(P[k] - prev, Math.max(3, CORNER - x)));
+      const h = P[k] + Math.max(0.25, Math.min(next - P[k], Math.max(3, CORNER + y)));
+      if (D >= l && D <= h) { lo = l; hi = h; found = true; break; }
+      if (h < D) behindHi = Math.max(behindHi, h);
+      else aheadLo = Math.min(aheadLo, l);
     }
-    if (!c) return [e.ax + e.dx * v.s - e.dz * v.off, e.az + e.dz * v.s + e.dx * v.off, e.dx, e.dz];
-    // Ручки — к точке пересечения полос, 2/3 расстояния до неё: на прямой кривая проходится равномерно.
-    const { a, b, dA, dB, cx, cz } = c, hA = (2 / 3) * Math.max(dA, 0.5), hB = (2 / 3) * Math.max(dB, 0.5);
-    const p0x = cx - a.dx * dA, p0z = cz - a.dz * dA, p3x = cx + b.dx * dB, p3z = cz + b.dz * dB;
-    const p1x = p0x + a.dx * hA, p1z = p0z + a.dz * hA, p2x = p3x - b.dx * hB, p2z = p3z - b.dz * hB;
-    const t = Math.max(0, Math.min(1, u)), m = 1 - t;
+    // Мелкий излом у концов текущего ребра.
+    if (!found) {
+      const e = v.edge;
+      for (const k of [v.ri - 1, v.ri]) {
+        if (k < 0 || k >= P.length || T[k]) continue;
+        const [x, y] = this.#cross(r[k], r[k + 1], v.off);
+        const l = Math.max(P[k] - Math.min(r[k].len / 2, CORNER - x), behindHi);
+        const h = Math.min(P[k] + Math.min(r[k + 1].len / 2, CORNER + y), aheadLo);
+        if (h - l > 0.3 && D >= l && D <= h && l <= P[k] && h >= P[k]) { lo = l; hi = h; found = true; break; }
+      }
+      if (!found) return [e.ax + e.dx * D - e.dz * v.off, e.az + e.dz * D + e.dx * v.off, e.dx, e.dz];
+    }
+    // Кривая между точками полосы на lo и hi, ручки — как у дуги окружности на угол θ между касательными:
+    // хорда / (3 cos²(θ/4)). На прямой это треть хорды (проходится равномерно), и длина меняется с углом
+    // плавно — от пересечения касательных брать нельзя: на почти прямом изломе оно скачет и улетает.
+    const [p0x, p0z, ax, az] = this.#lanePt(v, base, lo), [p3x, p3z, bx, bz] = this.#lanePt(v, base, hi);
+    const c4 = Math.cos(Math.acos(Math.max(-1, Math.min(1, ax * bx + az * bz))) / 4);
+    const h = Math.max(Math.hypot(p3x - p0x, p3z - p0z), (hi - lo) / 4) / (3 * c4 * c4);
+    const p1x = p0x + ax * h, p1z = p0z + az * h, p2x = p3x - bx * h, p2z = p3z - bz * h;
+    const t = (D - lo) / (hi - lo), m = 1 - t;
     const k0 = m * m * m, k1 = 3 * m * m * t, k2 = 3 * m * t * t, k3 = t * t * t;
     const d0 = m * m, d1 = 2 * m * t, d2 = t * t;
     let dx = d0 * (p1x - p0x) + d1 * (p2x - p1x) + d2 * (p3x - p2x), dz = d0 * (p1z - p0z) + d1 * (p2z - p1z) + d2 * (p3z - p2z);
     const l = Math.hypot(dx, dz);
-    if (l > 1e-6) { dx /= l; dz /= l; } else { dx = b.dx; dz = b.dz; }
+    if (l > 1e-6) { dx /= l; dz /= l; } else { dx = bx; dz = bz; }
     // Длина кривой (по хордам) → во сколько раз медленнее идёт s по оси, чтобы скорость по полосе была настоящей.
     let len = 0, qx = p0x, qz = p0z;
     for (let i = 1; i <= 8; i++) {
@@ -400,27 +459,27 @@ export class Traffic {
       const nx = a0 * p0x + a1 * p1x + a2 * p2x + a3 * p3x, nz = a0 * p0z + a1 * p1z + a2 * p2z + a3 * p3z;
       len += Math.hypot(nx - qx, nz - qz); qx = nx; qz = nz;
     }
-    v.sk = (c.inA + c.outB) / Math.max(len, 0.1);
+    v.sk = (hi - lo) / Math.max(len, 0.1);
     return [k0 * p0x + k1 * p1x + k2 * p2x + k3 * p3x, k0 * p0z + k1 * p1z + k2 * p2z + k3 * p3z, dx, dz];
   }
 
-  // Поворот с ребра a на ребро b на полосе со сдвигом off. Кривая строится вокруг точки (cx, cz), где
-  // пересекаются линии полос (на повороте направо она до узла, налево — за ним), на CORNER в обе стороны;
-  // inA — за сколько до конца a кривая начинается, outB — через сколько от начала b кончается (не дальше
-  // середины ребра — чтобы не налезать на соседний поворот); dA, dB — от начала и конца кривой до (cx, cz).
-  // Считать от самого узла нельзя: на повороте направо полоса пересекает поперечную раньше узла,
-  // и кривая от узла шла бы назад — машина крутилась петлёй.
-  #corner(a, b, off) {
+  // Точка полосы маршрута на расстоянии d от начала текущего ребра (base — начало маршрута) и её направление.
+  #lanePt(v, base, d) {
+    const r = v.route;
+    let i = 0;
+    while (i < r.length - 1 && d > base + r[i].len) base += r[i++].len;
+    const e = r[i], s = d - base;
+    return [e.ax + e.dx * s - e.dz * v.off, e.az + e.dz * s + e.dx * v.off, e.dx, e.dz];
+  }
+
+  // Где пересекаются полосы рёбер a и b со сдвигом off: x — вдоль a от узла, y — вдоль b от узла. На повороте
+  // направо это до узла, налево — за ним; кривая — CORNER в обе стороны от этой точки. Считать от самого узла
+  // нельзя: на широкой улице правая полоса пересекает поперечную раньше узла, и кривая шла бы назад петлёй.
+  #cross(a, b, off) {
     const cr = a.dx * b.dz - a.dz * b.dx;
-    let x = 0, y = 0; // где пересекаются полосы: x — вдоль a от узла, y — вдоль b от узла
-    if (Math.abs(cr) > 0.05) {
-      const wx = off * (a.dz - b.dz), wz = off * (b.dx - a.dx); // off · (правая b − правая a)
-      x = Math.max(-15, Math.min(15, (wx * b.dz - wz * b.dx) / cr));
-      y = Math.max(-15, Math.min(15, -(a.dx * wz - a.dz * wx) / cr));
-    }
-    const inA = Math.max(0.5, Math.min(a.len / 2, CORNER - x)), outB = Math.max(0.5, Math.min(b.len / 2, CORNER + y));
-    const s = a.len + x;
-    return { a, b, inA, outB, dA: inA + x, dB: outB - y, cx: a.ax + a.dx * s - a.dz * off, cz: a.az + a.dz * s + a.dx * off };
+    if (Math.abs(cr) <= 0.05) return [0, 0];
+    const wx = off * (a.dz - b.dz), wz = off * (b.dx - a.dx); // off · (правая b − правая a)
+    return [Math.max(-15, Math.min(15, (wx * b.dz - wz * b.dx) / cr)), Math.max(-15, Math.min(15, -(a.dx * wz - a.dz * wx) / cr))];
   }
 
   // Страховка: если две попутные машины всё же наехали друг на друга (слияние полос, развилка,
