@@ -1,148 +1,118 @@
-// Сборка public/models/oda.glb из STL-модели ИЖ-2126 «Ода» (сплошная модель для печати: без цветов
-// и частей, колёса срощены с кузовом). Части раскладываются по положению и наклону граней: стёкла —
-// в силуэте салона, фары и фонари — по месту на носу и корме, бамперы и низ — чёрный пластик,
-// колёса — внутри окружностей вокруг осей (вырезаются из кузова, одно колесо — отдельной частью).
-// Границы сняты с ортогональных видов модели с сеткой 10 см.
+// Сборка public/models/oda.glb из модели «izh2126_oda_rework_dcs» (87-Motors, Sketchfab, CC-BY-4.0).
+// Исходник — мод для BeamNG: в одном файле все варианты деталей (капот с вырезом, четыре передних бампера,
+// обвес, спойлер, шашка такси, V8, каркас, ковши) плюс салон и подвеска. Берём только стоковый кузов
+// по именам узлов (детей «Collada visual scene group»), каждому узлу — свои материалы и роль. Колёс в
+// исходнике нет — колесо с колпаком берётся из собранной модели Москвича (public/models/moskvich.glb).
 //
-//   cd tools/models && npm install && node oda.mjs путь/к/модели.stl
+//   cd tools/models && npm install && node oda.mjs путь/к/izh2126_oda_rework_dcs/scene.gltf
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bbox, hex, simplify, writeGlb } from './lib.mjs';
+import { bbox, hex, readGlbPart, readGltf, simplify, writeGlb } from './lib.mjs';
 
-const src = resolve(process.argv[2] || `${process.env.HOME}/Downloads/0fae390382b029e3018a7625a8925c82.stl`);
+const src = resolve(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), '../../3d-models/izh2126_oda_rework_dcs/scene.gltf'));
 const out = resolve(dirname(fileURLToPath(import.meta.url)), '../../public/models/oda.glb');
 
-// Масштаб: длина по паспорту 4,068 м; модель шире настоящей (1,9 м против 1,65) — ширину ужимаем.
-const LENGTH = 4.068, WIDTH_K = 0.86;
+// Модель длиннее настоящей (база 2,65 м против 2,47) и чуть шире — по длине и ширине кузова приводим к
+// паспорту (4,068 × 1,65), высоту не трогаем: крыша и так на 1,35 м.
+const LENGTH = 4.068, WIDTH = 1.65;
+// Колёс нет: центры — по тормозным дискам спереди и мосту сзади, радиус — 165/70 R13. Колесо — Москвича
+// (r 0,3), ужатое до нашего радиуса. LIFT — кузов выше над колёсами: у исходника посадка занижена.
+const WHEEL = { r: 0.28, y: 0.28, front: 1.35, rear: -1.3, x: 0.7 }, LIFT = 0.05;
+const wheelSrc = resolve(dirname(fileURLToPath(import.meta.url)), '../../public/models/moskvich.glb'), WHEEL_SRC_R = 0.3;
 
-// Цвета и сколько треугольников оставить.
-const LOOK = {
-  paint: ['paint', '#ffffff', 4200],
-  glass: ['detail', '#26333f', 500],
-  black: ['detail', '#1b1c1f', 1300],
-  plate: ['detail', '#f0f0ea', 60],
-  head: ['lights', '#fff6d8', 150],
-  amber: ['lights', '#ffb030', 60],
-  tail: ['lights', '#ff2a1a', 120],
-  tire: ['wheel', '#151618', 130],
-  hub: ['wheel', '#9ea3a8', 50],
+const PAINT = '#ffffff', BLACK = '#1b1c1f', UNDER = '#151618', GLASS = '#26333f', CHROME = '#c8ccd0';
+const HEAD = '#fff6d8', AMBER = '#ffb030', RED = '#ff2a1a', REVERSE = '#f4f2ea';
+
+// Узел → { материал: [часть, цвет, доля треугольников] }; '*' — все остальные материалы узла.
+// Материалов без записи (салонные обивки дверей и т. п.) в игре нет.
+const body = { kuzov: ['paint', PAINT, 0.12] };
+const door = { ...body, izh_plastic: ['detail', BLACK, 0.3], Matte__FF999999__spec: ['detail', '#2a2c30', 0.3] };
+const NODES = {
+  izh_kuzov: { kuzov: ['paint', PAINT, 0.07] },
+  izh_bonnet: body, izh_wingl: body, izh_wingr: body,
+  izh_trunk: { ...body, izh_plastic: ['detail', BLACK, 0.2], Matte__FF999999__spec: ['detail', CHROME, 0.5] },
+  izh_door_lf: door, izh_door_rf: door, izh_door_lr: door, izh_door_rr: door,
+  izh_door_lf_mirror: { '*': ['detail', BLACK, 0.08] }, izh_door_rf_mirror: { '*': ['detail', BLACK, 0.08] },
+  izh_windscreen: { '*': ['detail', GLASS, 0.6] }, izh_glass_trunk: { '*': ['detail', GLASS, 1] },
+  izh_door_lf_glass: { '*': ['detail', GLASS, 1] }, izh_door_rf_glass: { '*': ['detail', GLASS, 1] },
+  izh_door_lr_glass: { '*': ['detail', GLASS, 1] }, izh_door_rr_glass: { '*': ['detail', GLASS, 1] },
+  izh_sidel: { '*': ['detail', GLASS, 1] }, izh_sider: { '*': ['detail', GLASS, 1] },
+  izh_rezinki_stekla: { '*': ['detail', BLACK, 0.12] }, // уплотнители стёкол
+  izh_bump_front_ok: { '*': ['detail', BLACK, 0.25] }, izh_bumper_rear_ok: { '*': ['detail', BLACK, 0.25] },
+  izh_reshotka: { izh_plastic: ['detail', BLACK, 0.5], Matte__FFFFFFFF__spec: ['detail', CHROME, 1] }, // решётка и эмблема
+  izh_dnishe: { under__spec: ['detail', UNDER, 0.06] }, izh_locker_l: { '*': ['detail', UNDER, 0.5] }, izh_locker_r: { '*': ['detail', UNDER, 0.5] },
+  // Фары: внутренности (отражатели, лампы) закрыты стеклом — берём стекло: сама фара, угловой поворотник, рамка.
+  izh_headlightglass_l: { farast: ['lights', HEAD, 1], optik_oda__spec: ['lights', AMBER, 1], Matte__FF050505: ['detail', BLACK, 1] },
+  izh_headlightglass_r: { farast: ['lights', HEAD, 1], optik_oda__spec: ['lights', AMBER, 1], Matte__FF050505: ['detail', BLACK, 1] },
+  izh_blinker_l: { '*': ['lights', AMBER, 0.3] }, izh_blinker_r: { '*': ['lights', AMBER, 0.3] }, // повторители на крыльях
+  // Фонари: стекло одно на всю секцию (цвета были в текстуре) — берём секции под ним.
+  izh_taillight_l: { stopsignal: ['lights', RED, 0.3], gabarity: ['lights', RED, 0.3], signall: ['lights', AMBER, 0.3],
+    reverse: ['lights', REVERSE, 0.3], optik_zad_oda__env_2_spec: ['lights', RED, 0.3], '*': ['detail', BLACK, 0.3] },
+  izh_taillight_r: { stopsignal: ['lights', RED, 0.3], gabarity: ['lights', RED, 0.3], signalr: ['lights', AMBER, 0.3],
+    reverse: ['lights', REVERSE, 0.3], optik_zad_oda__env_2_spec: ['lights', RED, 0.3], '*': ['detail', BLACK, 0.3] },
+  izh_trunk_sig: { stopsignal: ['lights', RED, 1], izh_plastic: ['detail', BLACK, 0.3] }, // третий стоп-сигнал
 };
-// Длинные треугольники исходника пересекают границы стёкол и фар; цвет берётся по центру треугольника,
-// поэтому до раскраски их дробим — иначе края стёкол идут зубцами.
-const MAX_EDGE = 0.06;
 
-// ---------------------------------------------------------------- чтение STL → координаты игры
+// ---------------------------------------------------------------- чтение: узел верхнего уровня у каждого примитива
 
-const buf = readFileSync(src);
-const n = buf.readUInt32LE(80);
-if (buf.length !== 84 + 50 * n) throw new Error('нужен двоичный STL');
-const raw = new Float32Array(n * 9);
-for (let i = 0; i < n; i++) for (let k = 0; k < 9; k++) raw[i * 9 + k] = buf.readFloatLE(84 + i * 50 + 12 + k * 4);
-// STL: z вверх, перед — в сторону −y. Игра: y вверх, перед — +z.
-const src3 = { pos: raw };
-const b0 = bbox([src3]);
-const S = LENGTH / b0.size[1];
-const game = (i) => [(raw[i * 3] - b0.mid[0]) * S * WIDTH_K, (raw[i * 3 + 2] - b0.lo[2]) * S, -(raw[i * 3 + 1] - b0.mid[1]) * S];
-// Деление пополам по длинной стороне, пока все стороны не короче MAX_EDGE.
-const out9 = [];
-const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
-function split(a, b, c) {
-  const ab = d2(a, b), bc = d2(b, c), ca = d2(c, a), m = Math.max(ab, bc, ca);
-  if (m <= MAX_EDGE * MAX_EDGE) { out9.push(...a, ...b, ...c); return; }
-  const mid = (p, q) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2];
-  if (m === ab) { const h = mid(a, b); split(a, h, c); split(h, b, c); }
-  else if (m === bc) { const h = mid(b, c); split(a, b, h); split(a, h, c); }
-  else { const h = mid(c, a); split(a, b, h); split(h, b, c); }
-}
-for (let i = 0; i < n; i++) split(game(i * 3), game(i * 3 + 1), game(i * 3 + 2));
-const tri = new Float32Array(out9);
-const nt = tri.length / 9;
-console.log('треугольников', n, '→ после дробления', nt);
-
-// Центр и нормаль треугольника.
-function info(i) {
-  const p = tri.subarray(i * 9, i * 9 + 9);
-  const c = [(p[0] + p[3] + p[6]) / 3, (p[1] + p[4] + p[7]) / 3, (p[2] + p[5] + p[8]) / 3];
-  const u = [p[3] - p[0], p[4] - p[1], p[5] - p[2]], v = [p[6] - p[0], p[7] - p[1], p[8] - p[2]];
-  const nn = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-  const l = Math.hypot(...nn) || 1;
-  return { c, nrm: nn.map((x) => x / l) };
-}
-const T = Array.from({ length: nt }, (_, i) => info(i));
-
-// ---------------------------------------------------------------- колёса
-
-// Начальная оценка (по точкам касания земли), затем уточнение по габаритам граней внутри круга.
-const guess = [[1.18, 1], [-1.15, -1]];
-const wheels = [];
-for (const [zg] of guess) for (const s of [-1, 1]) {
-  const near = T.filter(({ c }) => s * c[0] > 0.56 && Math.hypot(c[1] - 0.29, c[2] - zg) < 0.33);
-  const ys = near.map(({ c }) => c[1]), zs = near.map(({ c }) => c[2]), xs = near.map(({ c }) => s * c[0]);
-  const lo = Math.min(...ys), hi = Math.max(...ys), zlo = Math.min(...zs), zhi = Math.max(...zs);
-  wheels.push({ x: s * (Math.min(...xs) + Math.max(...xs)) / 2, y: (lo + hi) / 2, z: (zlo + zhi) / 2, r: (hi - lo + zhi - zlo) / 4, s });
-}
-// Радиус — по высоте оси: колесо стоит на земле (габариты граней задевают арку и врут на пару см).
-const R = wheels.reduce((a, w) => a + w.y, 0) / 4;
-const inWheel = (c) => wheels.find((w) => w.s * c[0] > 0.56 && Math.hypot(c[1] - w.y, c[2] - w.z) < R + 0.015);
-
-// ---------------------------------------------------------------- раскраска
-
-const zA = (y) => 0.68 - ((y - 0.95) / 0.41) * 0.46;  // линия лобового стекла и передней стойки
-const zR = (y) => -1.53 + ((y - 0.93) / 0.43) * 0.51; // задний край заднего бокового стекла
-function look({ c, nrm }, w) {
-  const [x, y, z] = c, ax = Math.abs(x), [nx, ny, nz] = nrm;
-  if (w) return Math.hypot(y - w.y, z - w.z) < 0.58 * R && w.s * x > Math.abs(w.x) ? 'hub' : 'tire';
-  if (y < 0.2) return 'black'; // днище, глушитель, брызговики
-  if (ax > 0.8 && y > 0.88 && y < 1.15 && z > 0.35 && z < 0.8) return 'black'; // зеркала
-  if (z > 1.8) {
-    if (y > 0.62 && y < 0.77 && ax > 0.3 && ax < 0.62 && nz > 0.3) return 'head';
-    if (y > 0.56 && y < 0.77 && ax >= 0.62 && ax < 0.76) return 'amber'; // поворотники на углах
-    if (y > 0.56 && y < 0.74 && ax < 0.3) return 'black'; // решётка
-    if (y > 0.37 && y < 0.5 && ax < 0.27 && nz > 0.5) return 'plate';
+const gltf = JSON.parse(readFileSync(src, 'utf8'));
+const parent = [];
+gltf.nodes.forEach((n, i) => (n.children || []).forEach((c) => (parent[c] = i)));
+const root = gltf.nodes.findIndex((n) => n.name === 'Collada visual scene group');
+const order = []; // узел каждого примитива в порядке readGltf
+(function walk(ids) {
+  for (const id of ids) {
+    const n = gltf.nodes[id];
+    if (n.mesh != null) for (const p of gltf.meshes[n.mesh].primitives) order.push({ id, lines: (p.mode ?? 4) !== 4 });
+    if (n.children) walk(n.children);
   }
-  if (z < -1.85) {
-    if (y > 0.69 && y < 0.83 && ax > 0.25 && ax < 0.8 && nz < -0.3) return 'tail';
-    if (y > 0.7 && y < 0.81 && ax < 0.24 && nz < -0.3) return 'plate';
+})(gltf.scenes[0].nodes);
+const top = (i) => { while (parent[i] !== root) i = parent[i]; return gltf.nodes[i].name; };
+const prims = readGltf(src).map((p, k) => ({ ...p, top: top(order[k].id), lines: order[k].lines })).filter((p) => !p.lines && NODES[p.top]);
+
+// ---------------------------------------------------------------- координаты игры
+
+// Перед исходника — +z, как в игре. Ноль по x и z — середина кузова, по y — земля (низ колеса).
+const all = bbox(prims), shell = bbox(prims.filter((p) => p.mat === 'kuzov'));
+const SZ = LENGTH / all.size[2], SX = WIDTH / shell.size[0];
+const groundY = WHEEL.y - WHEEL.r - LIFT; // земля под низом колеса
+for (const p of prims) {
+  for (let i = 0; i < p.pos.length; i += 3) {
+    p.pos[i] = (p.pos[i] - all.mid[0]) * SX;
+    p.pos[i + 1] -= groundY;
+    p.pos[i + 2] = (p.pos[i + 2] - all.mid[2]) * SZ;
   }
-  if ((z > 1.45 && y < 0.565) || (z < -1.42 && y < 0.585)) return 'black'; // бамперы
-  // Стёкла: лобовое, заднее (двери багажника), боковые в силуэте салона (стойки — тоже тёмные, как у «Оды»).
-  if (nz > 0.25 && ny > 0.25 && ny < 0.92 && y > 0.97 && y < 1.39 && z > 0.1 && z < 0.8 && ax < 0.66) return 'glass';
-  if (nz < -0.25 && ny < 0.92 && y > 1.0 && z < -1.0 && ax < 0.68) return 'glass';
-  if (Math.abs(nx) > 0.55 && y > 0.94 && y < 1.365 && z < zA(y) - 0.02 && z > zR(y) + 0.02) return 'glass';
-  return 'paint';
 }
 
-const groups = {};
-const ref = wheels.find((w) => w.s > 0 && w.z > 0); // колесо-образец: переднее правое
-for (let i = 0; i < nt; i++) {
-  const w = inWheel(T[i].c);
-  if (w && w !== ref) continue; // остальные колёса игра ставит сама
-  const key = look(T[i], w);
-  const g = (groups[key] ??= []);
-  const p = tri.slice(i * 9, i * 9 + 9);
-  if (w) for (let k = 0; k < 9; k += 3) { p[k] -= w.x; p[k + 1] -= w.y; p[k + 2] -= w.z; } // колесо — вокруг своей оси
-  g.push(p);
-}
+// ---------------------------------------------------------------- части
 
+const groups = new Map(); // часть|цвет|доля → примитивы
+for (const p of prims) {
+  const role = NODES[p.top][p.mat] || NODES[p.top]['*'];
+  if (!role) continue;
+  const key = role.join('|');
+  if (!groups.has(key)) groups.set(key, []);
+  groups.get(key).push(p);
+}
 const parts = { paint: [], detail: [], lights: [], wheel: [] };
+for (const g of readGlbPart(wheelSrc, 'wheel')) parts.wheel.push({ ...g, pos: g.pos.map((v) => (v * WHEEL.r) / WHEEL_SRC_R) });
 const stat = {};
-for (const [key, [part, color, count]] of Object.entries(LOOK)) {
-  const list = groups[key];
-  if (!list) continue;
-  const pos = new Float32Array(list.length * 9);
-  list.forEach((p, i) => pos.set(p, i * 9));
-  const g = simplify([{ pos, idx: Uint32Array.from({ length: list.length * 3 }, (_, i) => i) }], count / list.length, { lockBorder: true });
+for (const [key, list] of groups) {
+  const [part, color, keep] = key.split('|');
+  const g = simplify(list, +keep);
   parts[part].push({ ...g, color: hex(color) });
-  stat[key] = `${list.length} → ${g.idx.length / 3}`;
+  stat[`${part} ${color} ×${keep}`] = `${list.reduce((s, p) => s + p.idx.length / 3, 0)} → ${g.idx.length / 3}`;
 }
 console.table(stat);
 
-const fr = wheels.filter((w) => w.z > 0), rr = wheels.filter((w) => w.z < 0);
-const avg = (l, f) => +(l.reduce((s, w) => s + f(w), 0) / l.length).toFixed(3);
-const wheelSpec = { r: +R.toFixed(3), front: avg(fr, (w) => w.z), rear: avg(rr, (w) => w.z), track: avg(wheels, (w) => Math.abs(w.x)) };
-const body = bbox([{ pos: tri }]);
-console.log('колёса', wheelSpec, 'центры по высоте', wheels.map((w) => w.y.toFixed(3)).join(' '), '| длина', body.size[2].toFixed(2), 'ширина', body.size[0].toFixed(2), 'высота', body.hi[1].toFixed(2));
+const wheels = {
+  r: WHEEL.r, front: +((WHEEL.front - all.mid[2]) * SZ).toFixed(3), rear: +((WHEEL.rear - all.mid[2]) * SZ).toFixed(3),
+  track: +(WHEEL.x * SX).toFixed(3),
+};
+const length = +(all.size[2] * SZ).toFixed(3), width = +(shell.size[0] * SX).toFixed(3);
+console.log('колёса', wheels, '| длина', length, 'ширина', width, 'высота', (shell.hi[1] - groundY).toFixed(2), 'просвет', (shell.lo[1] - groundY).toFixed(2));
 
-// hub: диск — в самой модели колеса (игра не дорисовывает свой).
-writeGlb(out, parts, { copyright: 'ИЖ-2126 «Ода» — STL-модель (источник уточняется)', extras: { wheels: wheelSpec, length: +body.size[2].toFixed(3), width: +body.size[0].toFixed(3), hub: true } });
+const credit = 'This work is based on "izh2126_oda_rework_dcs" (https://sketchfab.com/3d-models/izh2126-oda-rework-dcs-30a9c029e82f4b62bf97d136c58a7d9c) by 87-Motors (https://sketchfab.com/87-Motors) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)';
+// hub: колпак — в самой модели колеса (игра не дорисовывает свой диск).
+writeGlb(out, parts, { copyright: credit, extras: { wheels, length, width, hub: true } });

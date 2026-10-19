@@ -67,6 +67,21 @@ export function readGltf(src) {
   return prims;
 }
 
+// Часть name готовой модели игры (GLB от writeGlb) — группами по цвету вершин: [{ pos, idx, color }].
+export function readGlbPart(src, name) {
+  const b = readFileSync(src), n = b.readUInt32LE(12);
+  const gltf = JSON.parse(b.subarray(20, 20 + n).toString()), bin = b.subarray(28 + n);
+  const prim = gltf.meshes.find((m) => m.name === name).primitives[0];
+  const pos = accessor(gltf, bin, prim.attributes.POSITION), col = accessor(gltf, bin, prim.attributes.COLOR_0);
+  const idx = accessor(gltf, bin, prim.indices), groups = new Map();
+  for (let t = 0; t < idx.length; t += 3) {
+    const key = [0, 1, 2].map((k) => col[idx[t] * 3 + k].toFixed(4)).join();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(idx[t], idx[t + 1], idx[t + 2]);
+  }
+  return [...groups].map(([key, tri]) => ({ pos, idx: Uint32Array.from(tri), color: key.split(',').map(Number) }));
+}
+
 // Центр треугольника t (индекс первой вершины в idx) примитива { pos, idx }.
 export const center = (p, t) => [0, 1, 2].map((k) => (p.pos[p.idx[t] * 3 + k] + p.pos[p.idx[t + 1] * 3 + k] + p.pos[p.idx[t + 2] * 3 + k]) / 3);
 // Часть примитива: треугольники, центр которых проходит фильтр (позиции общие с исходным).

@@ -97,7 +97,7 @@ python3 tools/gis_extract.py "…/Сведения по ОЖФ Удмуртск�
 - `public/src/vehicles.js` — машины ижевского автопрома: «Ода», Москвич-412, «Комби», «Каблучок»,
   пикап ИЖ-2715, фургон «Ода», LADA Vesta. Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
   «Ода», Москвич-412, пикап, «Каблучок» и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
-  рисуется процедурная). Собираются `tools/models` (`oda.mjs` из STL, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`; общее — `lib.mjs`).
+  рисуется процедурная). Собираются `tools/models` (`oda.mjs`, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`; общее — `lib.mjs`).
 - `public/src/garage.js` — гараж: выбор машины и цвета, хранится в localStorage; смена машины перезапускает гонку.
 - `public/src/car.js` — аркадная физика (боковое сцепление, ручник, нитро, отскок от стен); вне дороги
   (трава, лес, пустырь — `World.surfaceAt`) скорость ×0.45, разгон ×0.5, хуже сцепление, тряска и пыль.
@@ -157,5 +157,6 @@ Firebase Hosting (https://izh-car.web.app) — вручную, `firebase deploy 
   (`node pickup.mjs путь/к/IZH-2715.gltf`). Источник и лицензия: _уточняются_.
 - Модель «Каблучка» ИЖ-2715 (`public/models/kabluk.glb`) — перед и кабина от модели пикапа, будка — от SketchUp-модели
   «АЗЛК+Пирожок» (`node kabluk.mjs путь/к/IZH-2715.gltf путь/к/модели.dae`). Источник и лицензия: _уточняются_.
-- Модель ИЖ-2126 «Ода» (`public/models/oda.glb`) собрана из STL-модели `tools/models/oda.mjs`
-  (`node oda.mjs путь/к/модели.stl`). Источник и лицензия: _уточняются_.
+- Модель ИЖ-2126 «Ода» (`public/models/oda.glb`) упрощена из «[izh2126_oda_rework_dcs](https://sketchfab.com/3d-models/izh2126-oda-rework-dcs-30a9c029e82f4b62bf97d136c58a7d9c)»
+  автора [87-Motors](https://sketchfab.com/87-Motors), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
+  Пересборка: `cd tools/models && npm install && node oda.mjs путь/к/scene.gltf`.

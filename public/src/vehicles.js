@@ -76,6 +76,9 @@ export const MODELS = {
     name: 'ИЖ-2126 «Ода»', years: '1990–2005',
     about: 'Пятидверный хэтчбек — первая собственная легковая модель Ижмаша.',
     glb: 'models/oda.glb', // tools/models/oda.mjs; не загрузилась — процедурная по полям ниже
+    credit: 'Модель: «izh2126_oda_rework_dcs», 87-Motors (Sketchfab), CC BY 4.0',
+    // Номеров в модели нет (были в текстуре): спереди — на бампере, сзади — в нише между фонарями.
+    meshPlates: [{ x: 0, y: 0.385, z: 2.045, w: 0.52, h: 0.11, n: [0, 0, 1] }, { x: 0, y: 0.6, z: -1.965, w: 0.52, h: 0.11, n: [0, 0, -1] }],
     width: 1.65, cabinWidth: 1.42,
     body: [[-2.03, 0.3], [2.03, 0.3], [2.05, 0.56], [1.96, 0.78], [0.95, 0.9], [-1.9, 0.94], [-2.05, 0.62]],
     cabin: [[0.95, 0.88], [0.18, 1.39], [-1.22, 1.4], [-1.93, 0.96], [-1.9, 0.9]],
@@ -285,7 +288,7 @@ function mirrorX(geo) {
 // у колеса с диском из модели (hub) диск снаружи, его отражаем.
 function wheelGeometry(spec, seg, left = false) {
   const m = spec.mesh;
-  if (!m) return merge(wheelParts(spec.wheels, seg));
+  if (!m || !m.wheel) return merge(wheelParts(spec.wheels, seg)); // в модели нет колеса — процедурное
   if (m.hub) return (left ? m.wheelL : m.wheel).clone();
   return mergeGeometries([m.wheel.clone(), merge(wheelParts(spec.wheels, seg).slice(1))]); // шина — своя
 }
