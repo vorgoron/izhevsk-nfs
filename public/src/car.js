@@ -11,7 +11,13 @@ const ACCEL = 13;
 const BRAKE = 28;
 const REVERSE_MAX = 12;
 const GRIP = 9;           // как быстро гасится боковое скольжение
+// Ручник блокирует задние колёса: тормозит слабее педали (одна ось, ~0,55 g) и срывает зад в занос.
+// Занос (slide 0..1) держится и после ручника: под газом зад гаснет медленно — дрифт, без газа быстро.
+// Сцепление в заносе — DRIFT_GRIP; поворот в заносе сильнее (зад выносит) — до SLIDE_YAW раз.
 const DRIFT_GRIP = 1.4;
+const HANDBRAKE = 5.5;    // м/с²
+const SLIDE_ON = 6, SLIDE_GAS = 0.55, SLIDE_OFF = 2.2; // 1/с: срыв ручником, угасание под газом и без
+const SLIDE_YAW = 1.6;
 const STEER_RATE = 2.3;   // рад/с на средней скорости
 // Крен кузова в повороте: рад на 1 м/с² бокового ускорения, предел; пружина подвески (жёсткость, демпфер).
 const ROLL_K = 0.005, ROLL_MAX = 0.1, ROLL_STIFF = 70, ROLL_DAMP = 9;
@@ -76,6 +82,7 @@ export class Car {
     this.airSteer = 0;      // руль в воздухе (−1..1) — для боковых сопел
     this.yawV = 0;          // закрутка от удара, рад/с (как рост heading)
     this.skid = 0;          // после удара шины скользят, 0..1
+    this.slide = 0;         // занос от ручника, 0..1
   }
 
   // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы).
@@ -96,7 +103,7 @@ export class Car {
     this.bodyRoll = this.bodyRollV = 0;
     this.air = null;
     this.flip = this.flipP = this.alt = 0;
-    this.yawV = this.skid = 0;
+    this.yawV = this.skid = this.slide = 0;
     this.heading = heading;
     this.y = this.world.ground(x, z);
   }
@@ -164,13 +171,16 @@ export class Car {
     vf -= vf * Math.abs(vf) * 0.0004 * dt; // сопротивление воздуха
     vf -= vf * OFF_DRAG * off * dt;        // грунт тормозит
     if (vf > top + 1) vf -= Math.min(vf - top, 14 * dt); // съехал с дороги на скорости — сбрасываем до предела грунта
-    if (input.brake && !air) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 9 * dt);
+    if (input.brake && !air) vf -= Math.sign(vf) * Math.min(Math.abs(vf), HANDBRAKE * dt);
+    // Занос: ручник на ходу срывает зад; отпустил — сцепление возвращается (под газом — медленно).
+    if (input.brake && !air && Math.abs(vf) > 3) this.slide = Math.min(1, this.slide + SLIDE_ON * dt);
+    else this.slide = Math.max(0, this.slide - (input.up ? SLIDE_GAS : SLIDE_OFF) * dt);
 
     // Руль: плавно к цели, на скорости — меньше угол.
     const target = input.steer ?? (input.right ? 1 : 0) - (input.left ? 1 : 0);
     this.steer += (target - this.steer) * Math.min(1, dt * 8);
     const speedFactor = Math.min(1, Math.abs(vf) / 6) / (1 + Math.abs(vf) / 45);
-    const driftBoost = input.brake ? 1.5 : 1;
+    const driftBoost = 1 + (SLIDE_YAW - 1) * this.slide;
     this.airSteer = air ? this.steer : 0;
     const yawRate = air ? this.steer * AIR_YAW : this.steer * STEER_RATE * speedFactor * driftBoost * Math.sign(vf || 1);
     this.heading -= yawRate * dt;
@@ -180,7 +190,8 @@ export class Car {
     this.skid = Math.max(0, this.skid - dt);
 
     const skidGrip = 1 - SKID_GRIP * this.skid;
-    if (!air) vr *= Math.exp(-(input.brake ? DRIFT_GRIP : this.grip * (1 - (1 - OFF_GRIP) * off)) * skidGrip * dt);
+    const grip = this.grip * (1 - (1 - OFF_GRIP) * off);
+    if (!air) vr *= Math.exp(-(grip + (DRIFT_GRIP - grip) * this.slide) * skidGrip * dt);
     const f2 = this.forward, r2 = this.right;
     this.vel.set(f2.x * vf + r2.x * vr, f2.y * vf + r2.y * vr);
     // Сглаженное продольное ускорение — для камеры (отстаёт при разгоне).

@@ -27,6 +27,7 @@ import { Net, CITY } from './net.js';
 import { track } from './analytics.js';
 import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
 import { Cameras } from './cameras.js';
+import { Drift } from './drift.js';
 import { CLEAR_ALT } from './car.js';
 
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
@@ -807,10 +808,13 @@ async function main() {
     const shot = cameras.update(dt, car);
     if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); }
   }
-  // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху.
+  // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху. Дрифт — drift.js.
   const TRICK_PAY = { kick: 500, back: 700 }, OVER_PAY = 300;
   const jumped = new Set();
-  function tricks() {
+  const drift = new Drift($('drift'));
+  function tricks(dt) {
+    const pay = garage.isOpen ? 0 : drift.update(dt, car);
+    if (pay) wallet.earn(pay, 'дрифт');
     if (car.air && car.alt > CLEAR_ALT) {
       for (const v of traffic.vehicles) if (v.active && Math.hypot(v.x - car.pos.x, v.z - car.pos.y) < (v.bus ? 4 : 2.5)) jumped.add(v);
       for (const t of trams.near(car.pos.x, car.pos.y, 12)) if (Math.abs((car.pos.x - t.x) * t.dz - (car.pos.y - t.z) * t.dx) < 2) jumped.add(t);
@@ -851,7 +855,7 @@ async function main() {
       banner.innerHTML = `🔷 ${Math.round(car.nitro * 100)}%<small>нитро · ${formatMoney(PRICES.nitro)} полный баллон</small>`;
       banner.classList.add('show');
     } else if (car.broke && Math.abs(car.speed) < 1) {
-      banner.innerHTML = `НЕТ ДЕНЕГ<small>заработайте в гонках и трюками</small>`;
+      banner.innerHTML = `НЕТ ДЕНЕГ<small>заработайте в гонках, трюками и дрифтом</small>`;
       banner.classList.add('show');
     } else if (car.fuel <= 0 && Math.abs(car.speed) < 2 && race.state !== 'countdown') {
       banner.innerHTML = `БЕНЗИН КОНЧИЛСЯ<small>${isTouch ? '↺' : 'R'} — эвакуатор до заправки</small>`;
@@ -978,7 +982,7 @@ async function main() {
     fuel.update(dt, car, wallet);
     queues.update(dt, car);
     trams.update(dt, car);
-    tricks();
+    tricks(dt);
     car.checkStuck(dt, inp);
     net.progress = race.shared && race.state !== 'countdown' && net.race?.t === race.startAt ? race.progress(car) : null;
     net.update(dt, car);

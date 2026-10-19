@@ -158,6 +158,13 @@
     #camwarn small { font-size: 13px; opacity: .8; }
     #camwarn.fast { background: rgba(200,30,20,.75); animation: pulse-cam .6s ease-in-out infinite; }
     @keyframes pulse-cam { 50% { transform: scale(1.06); } }
+    /* Дрифт (drift.js): очки по центру над спидометром. */
+    #drift { left: 50%; bottom: 22%; transform: translateX(-50%) scale(.9); font-size: 34px; font-weight: 900; font-style: italic; color: #ffd23f;
+      opacity: 0; transition: opacity .2s, transform .2s; white-space: nowrap; }
+    #drift.show { opacity: 1; transform: translateX(-50%) scale(1); }
+    #drift.done { color: #7dff9a; }
+    #drift.lost { color: #ff7a6a; }
+    body.touch #drift { font-size: 22px; bottom: 30%; }
     #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5; }
     #flash.on { animation: flash .45s ease-out; }
     @keyframes flash { 0% { opacity: .85; } }
@@ -365,6 +372,7 @@
   <div id="money-log" class="hud"></div>
   <div id="camwarn" class="hud" hidden></div>
   <div id="flash"></div>
+  <div id="drift" class="hud"></div>
   <div id="radio-pick"></div>
   <div id="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">участники OpenStreetMap</a> · рельеф <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a> (Mapzen, SRTM)</div>
   <div id="rotate"><div><div style="font-size:56px">📱↻</div>Поверните телефон горизонтально</div></div>
