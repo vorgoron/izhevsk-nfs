@@ -474,7 +474,8 @@ async function main() {
   });
   cv.addEventListener('pointermove', (e) => {
     if (e.pointerId !== dragId) return;
-    const k = e.pointerType === 'touch' ? 1.4 : 1; // палец — короче ход
+    // Палец — короче ход; мышь — по обеим осям в обратную сторону от пальца.
+    const k = e.pointerType === 'touch' ? 1.4 : -1;
     camYaw -= (e.clientX - dragX) * 0.006 * k;
     camPitch = Math.max(-0.25, Math.min(1.1, camPitch + (e.clientY - dragY) * 0.004 * k));
     dragX = e.clientX;
