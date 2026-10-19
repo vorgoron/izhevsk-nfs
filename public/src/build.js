@@ -167,7 +167,11 @@ export function roadMaterials(renderer) {
     // Мосты: плита, парапеты, опоры.
     concrete: new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }),
     embank: new THREE.MeshLambertMaterial({ color: '#6f7d4f', side: THREE.DoubleSide }),
-    rail: new THREE.MeshPhongMaterial({ color: '#8f9399', specular: '#e8edf2', shininess: 80, side: THREE.DoubleSide }),
+    // Рельсы лежат на 6 см выше расчётной высоты дороги, а лента асфальта между краями идёт по
+    // прямой, а не по рельефу, и сама сдвинута к камере: без сдвига сильнее асфальта рельсы на
+    // перекрёстке местами уходили под него.
+    rail: new THREE.MeshPhongMaterial({ color: '#8f9399', specular: '#e8edf2', shininess: 80, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
     pillarGeo: new THREE.BoxGeometry(1.3, 1, 1.3).translate(0, 0.5, 0),
   };
 }

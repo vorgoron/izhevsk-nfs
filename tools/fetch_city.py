@@ -8,6 +8,7 @@
 
 Запуск: python3 tools/fetch_city.py
 """
+import collections
 import json
 import math
 import os
@@ -588,38 +589,48 @@ def cut_passages(buildings, roads, road_nodes):
 # ---------------------------------------------------------------- трамваи
 
 TRACK_HALF = 1.6   # м: половина междупутья (оси путей ~3.2 м)
+TRACK_BLEND = 25.0  # м: от узла стыка/стрелки выравнивание нарастает до полного
+
+
+def _tram_ways():
+    return {wid: (nds, tags) for wid, (nds, tags) in ways.items()
+            if tags.get("railway") == "tram" and not tags.get("service") and tags.get("tunnel") in (None, "no")}
 
 
 def align_tram_tracks():
-    """Два прохода: второй уточняет по уже выровненным соседям."""
-    out = None
+    """Два прохода выравнивания (второй уточняет по уже выровненным соседям), потом сглаживание."""
+    tram = _tram_ways()
+    # Узлы, общие с другим путём, и концы — стыки, стрелки, съезды на перекрёстках: они остаются
+    # где в OSM, иначе соседние куски сдвигались по-разному и рельсы на стыке не сходились.
+    # Служебные ветки (депо, кольца) не выравниваются, но их примыкание тоже закрепляем.
+    use = collections.Counter(n for nds, tags in ways.values() if tags.get("railway") == "tram" for n in set(nds))
+    lines, pins = {}, {}
+    for wid, (nds, _) in tram.items():
+        nds = [n for n in nds if n in nodes]
+        if len(nds) < 2:
+            continue
+        p = [project(*nodes[nds[0]])]
+        pin = [True]
+        for na, nb in zip(nds, nds[1:]):
+            a, b = project(*nodes[na]), project(*nodes[nb])
+            k = max(1, math.ceil(math.dist(a, b) / 8))
+            p += [(a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k) for j in range(1, k + 1)]
+            pin += [False] * (k - 1) + [use[nb] > 1 or nb == nds[-1]]
+        lines[wid], pins[wid] = p, pin
+    out = lines
     for _ in range(2):
-        out = _align_pass(out)
+        out = _align_pass(lines, out, pins)
+    out = {wid: _smooth_track(p, pins[wid]) for wid, p in out.items()}
     print(f"tram tracks aligned: {len(out)} ways")
     return out
 
 
-def _align_pass(prev):
+def _align_pass(orig, lines, pins):
     """Пути двухпутной линии в OSM нарисованы независимо и местами сходятся/расходятся.
     Каждую точку пути (через ≤8 м) ставим на ±1.6 м от середины между ним и соседним
     параллельным путём (2–7 м), затем сглаживаем. Где соседа нет (развилки, одиночный
-    путь, перекрёстки) — как в OSM. Возвращает {way id: [(x, z)]}."""
-    lines = {}
-    for wid, (nds, tags) in ways.items():
-        if tags.get("railway") != "tram" or tags.get("service") or tags.get("tunnel") not in (None, "no"):
-            continue
-        if prev is not None:
-            if wid in prev:
-                lines[wid] = prev[wid]
-            continue
-        p = [project(*nodes[n]) for n in nds if n in nodes]
-        if len(p) < 2:
-            continue
-        r = [p[0]]
-        for a, b in zip(p, p[1:]):
-            k = max(1, math.ceil(math.dist(a, b) / 8))
-            r += [(a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k) for j in range(1, k + 1)]
-        lines[wid] = r
+    путь, перекрёстки) — как в OSM. У закреплённых узлов (pins) — как в OSM, сдвиг
+    нарастает на TRACK_BLEND. Возвращает {way id: [(x, z)]}."""
     cell = 20.0
     grid = {}
     for wid, p in lines.items():
@@ -630,6 +641,22 @@ def _align_pass(prev):
                     grid.setdefault((gx, gz), []).append((wid, a, b))
     out = {}
     for wid, p in lines.items():
+        o, pin = orig[wid], pins[wid]
+        # Расстояние вдоль пути до ближайшего закреплённого узла — вес сдвига.
+        acc = [0.0]
+        for i in range(1, len(o)):
+            acc.append(acc[-1] + math.dist(o[i - 1], o[i]))
+        near = [math.inf] * len(o)
+        last = -math.inf
+        for i in range(len(o)):
+            if pin[i]:
+                last = acc[i]
+            near[i] = acc[i] - last
+        last = math.inf
+        for i in range(len(o) - 1, -1, -1):
+            if pin[i]:
+                last = acc[i]
+            near[i] = min(near[i], last - acc[i])
         q = []
         fixed = []
         for i, P in enumerate(p):
@@ -649,21 +676,68 @@ def _align_pass(prev):
                 D = math.dist(P, Q)
                 if 1.5 < D < 9 and (best is None or D < best[0]):
                     best = (D, Q)
-            if best:
+            wgt = min(1.0, near[i] / TRACK_BLEND)
+            if best and wgt > 0:
                 Q = best[1]
                 mx, mz = (P[0] + Q[0]) / 2, (P[1] + Q[1]) / 2
                 side = 1 if (P[0] - Q[0]) * -dz + (P[1] - Q[1]) * dx > 0 else -1
-                q.append((mx - dz * TRACK_HALF * side, mz + dx * TRACK_HALF * side))
+                A = (mx - dz * TRACK_HALF * side, mz + dx * TRACK_HALF * side)
+                q.append((o[i][0] + (A[0] - o[i][0]) * wgt, o[i][1] + (A[1] - o[i][1]) * wgt))
                 fixed.append(True)
             else:
-                q.append(P)
+                q.append(o[i])
                 fixed.append(False)
-        # Сглаживание (концы на месте — стыки с соседними кусками).
+        # Сглаживание (закреплённые узлы на месте).
         for _ in range(3):
-            q = [q[0]] + [((q[i - 1][0] + 2 * q[i][0] + q[i + 1][0]) / 4, (q[i - 1][1] + 2 * q[i][1] + q[i + 1][1]) / 4)
-                          if (fixed[i - 1] or fixed[i] or fixed[i + 1]) else q[i] for i in range(1, len(q) - 1)] + [q[-1]]
-        out[wid] = [(round(x, 2), round(z, 2)) for x, z in q]
+            q = [q[i] if pin[i] or i in (0, len(q) - 1) or not (fixed[i - 1] or fixed[i] or fixed[i + 1]) else
+                 ((q[i - 1][0] + 2 * q[i][0] + q[i + 1][0]) / 4, (q[i - 1][1] + 2 * q[i][1] + q[i + 1][1]) / 4)
+                 for i in range(len(q))]
+        out[wid] = q
     return out
+
+
+def _smooth_track(p, pin):
+    """Повороты путей в OSM — ломаные из редких точек. Между закреплёнными узлами срезаем углы
+    (Chaikin, 3 раза: дуга вместо ломаной), потом убираем лишние точки на прямых (≤ 3 см)."""
+    out = [p[0]]
+    start = 0
+    for i in range(1, len(p)):
+        if not pin[i] and i < len(p) - 1:
+            continue
+        seg = p[start:i + 1]
+        for _ in range(3):
+            if len(seg) < 3:
+                break
+            nxt = [seg[0]]
+            for a, b in zip(seg, seg[1:]):
+                nxt += [(0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]),
+                        (0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1])]
+            nxt[1], nxt[-1] = seg[0], seg[-1]  # концы куска на месте
+            seg = [nxt[0]] + nxt[2:-1] + [seg[-1]]
+        out += _simplify(seg, 0.03)[1:]
+        start = i
+    return [(round(x, 2), round(z, 2)) for x, z in out]
+
+
+def _simplify(p, eps):
+    """Дуглас — Пекер (без рекурсии: после сглаживания в куске тысячи точек)."""
+    keep = [False] * len(p)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(p) - 1)]
+    while stack:
+        i0, i1 = stack.pop()
+        (ax, az), (bx, bz) = p[i0], p[i1]
+        L = math.hypot(bx - ax, bz - az) or 1e-9
+        best, bd = None, eps
+        for i in range(i0 + 1, i1):
+            d = abs((p[i][0] - ax) * (bz - az) - (p[i][1] - az) * (bx - ax)) / L
+            if d > bd:
+                best, bd = i, d
+        if best is not None:
+            keep[best] = True
+            stack += [(i0, best), (best, i1)]
+    return [q for q, k in zip(p, keep) if k]
+
 
 def tram_routes(aligned):
     """Маршруты трамваев (route=tram): ломаная по путям в порядке участников отношения,
