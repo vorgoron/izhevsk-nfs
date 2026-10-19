@@ -1,5 +1,5 @@
-// Гараж: выбор машины и цвета. Панель справа, камера облетает машину (main.js).
-import { MODELS, DEFAULT_MODEL } from './vehicles.js';
+// Гараж: выбор машины, цвета и деталей (у машин с options). Панель справа, камера облетает машину (main.js).
+import { MODELS, DEFAULT_MODEL, pickOptions } from './vehicles.js';
 
 const STORE = 'vehicle';
 const MAX = { kmh: 190, accel: 1, grip: 1.06 };
@@ -7,17 +7,19 @@ const MAX = { kmh: 190, accel: 1, grip: 1.06 };
 export function loadChoice() {
   try {
     const v = JSON.parse(localStorage.getItem(STORE));
-    if (v && MODELS[v.model]) return { model: v.model, color: v.color || MODELS[v.model].colors[0], saved: true };
+    if (v && MODELS[v.model]) {
+      return { model: v.model, color: v.color || MODELS[v.model].colors[0], options: pickOptions(MODELS[v.model], v.options || {}), saved: true };
+    }
   } catch {}
-  return { model: DEFAULT_MODEL, color: MODELS[DEFAULT_MODEL].colors[0], saved: false };
+  return { model: DEFAULT_MODEL, color: MODELS[DEFAULT_MODEL].colors[0], options: pickOptions(MODELS[DEFAULT_MODEL]), saved: false };
 }
 
 function save(choice) {
-  try { localStorage.setItem(STORE, JSON.stringify({ model: choice.model, color: choice.color })); } catch {}
+  try { localStorage.setItem(STORE, JSON.stringify({ model: choice.model, color: choice.color, options: choice.options })); } catch {}
 }
 
 export class Garage {
-  // onChange(model, color) — сразу при выборе (меняем машину на глазах); onClose(changed).
+  // onChange(model, color, options) — сразу при выборе (меняем машину на глазах); onClose(changed).
   constructor(choice, { onChange, onClose }) {
     this.choice = { ...choice };
     this.onChange = onChange;
@@ -28,7 +30,7 @@ export class Garage {
     const el = (this.el = document.createElement('div'));
     el.id = 'garage';
     el.innerHTML = `<h2>Гараж <span>ижевский автопром</span></h2><div class="list"></div>
-      <div class="colors"></div><button class="go">Поехать <kbd>Enter</kbd></button>
+      <div class="colors"></div><div class="opts"></div><button class="go">Поехать <kbd>Enter</kbd></button>
       <div class="hint">↑↓ машина · ←→ цвет · <kbd>G</kbd> гараж</div>`;
     document.body.append(el);
     const list = el.querySelector('.list');
@@ -61,12 +63,15 @@ export class Garage {
     this.#render();
   }
 
-  #pick(model, color) {
-    if (model === this.choice.model && color === this.choice.color) return;
-    this.choice = { model, color };
+  // options — только для той же машины; у другой — детали по умолчанию.
+  #pick(model, color, options = model === this.choice.model ? this.choice.options : {}) {
+    options = pickOptions(MODELS[model], options);
+    const same = model === this.choice.model && color === this.choice.color && JSON.stringify(options) === JSON.stringify(this.choice.options);
+    if (same) return;
+    this.choice = { model, color, options };
     this.changed = true;
     this.#render();
-    this.onChange(model, color);
+    this.onChange(model, color, options);
   }
 
   #render() {
@@ -83,6 +88,22 @@ export class Garage {
       b.classList.toggle('on', color === this.choice.color);
       b.addEventListener('click', () => this.#pick(this.choice.model, color));
       box.append(b);
+    }
+    const opts = this.el.querySelector('.opts');
+    opts.innerHTML = '';
+    const spec = MODELS[this.choice.model];
+    for (const slot of (spec.mesh && spec.options) || []) { // модель не загрузилась — процедурная, деталей нет
+      const row = document.createElement('div');
+      row.className = 'opt';
+      row.innerHTML = `<span>${slot.name}</span>`;
+      for (const [v, label] of slot.variants) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.classList.toggle('on', this.choice.options[slot.key] === v);
+        b.addEventListener('click', () => this.#pick(this.choice.model, this.choice.color, { ...this.choice.options, [slot.key]: v }));
+        row.append(b);
+      }
+      opts.append(row);
     }
   }
 

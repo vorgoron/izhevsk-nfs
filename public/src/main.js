@@ -131,20 +131,20 @@ async function main() {
   // Своя машина: выбор из гаража (localStorage), по умолчанию — «Ода».
   await vehiclesReady;
   const choice = loadChoice();
-  const model = buildPlayerModel(choice.model, choice.color);
+  const model = buildPlayerModel(choice.model, choice.color, choice.options);
   model.userData.perf = 'машина игрока';
   scene.add(model);
   const car = new Car(world, model, MODELS[choice.model].stats);
-  const setVehicle = (key, color) => {
+  const setVehicle = (key, color, options) => {
     scene.remove(car.model);
     car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
     disposePlates(car.model);
-    const m = buildPlayerModel(key, color);
+    const m = buildPlayerModel(key, color, options);
     setPlate(m, net.name);
     m.userData.perf = 'машина игрока';
     scene.add(m);
     car.setModel(m, MODELS[key].stats);
-    net.setVehicle(key, color);
+    net.setVehicle(key, color, options);
     nitroFx.attach(m);
     jetFx.attach(m);
     exhaustFx.attach(m);

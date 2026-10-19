@@ -96,9 +96,11 @@ python3 tools/gis_extract.py "…/Сведения по ОЖФ Удмуртск�
   из OSM (список и OSM id — `LANDMARKS` в `tools/fetch_city.py`).
 - `public/src/vehicles.js` — машины ижевского автопрома: «Ода», Москвич-412, «Комби», «Каблучок»,
   пикап ИЖ-2715, фургон «Ода», LADA Vesta. Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
-  «Ода», Москвич-412, пикап, «Каблучок» и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
-  рисуется процедурная). Собираются `tools/models` (`oda.mjs`, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`; общее — `lib.mjs`).
-- `public/src/garage.js` — гараж: выбор машины и цвета, хранится в localStorage; смена машины перезапускает гонку.
+  «Ода», Москвич-412, «Комби», пикап, «Каблучок» и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
+  рисуется процедурная). Собираются `tools/models` (`oda.mjs`, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`, `kombi.mjs` — Москвич с новой крышей и пятой дверью; общее — `lib.mjs`).
+  У «Оды» в гараже выбираются детали (бамперы, фары, спойлер, обвес, шашка такси) — `options` в `MODELS.oda`, варианты лежат в
+  `oda.glb` отдельными мешами `o-слот-вариант-часть`; другим игрокам выбор уходит числом в строке состояния (`optionsCode`).
+- `public/src/garage.js` — гараж: выбор машины, цвета и деталей, хранится в localStorage; смена машины перезапускает гонку.
 - `public/src/car.js` — аркадная физика (боковое сцепление, ручник, нитро, отскок от стен); вне дороги
   (трава, лес, пустырь — `World.surfaceAt`) скорость ×0.45, разгон ×0.5, хуже сцепление, тряска и пыль.
 - `public/src/audio.js` — звук синтезом Web Audio: мотор с передачами, шины, ветер, нитро, удары, сигналы гонки; трафик вокруг — моторы ближайших машин (панорама, Доплер), шорох шин потока, гудки.
@@ -153,6 +155,10 @@ Firebase Hosting (https://izh-car.web.app) — вручную, `firebase deploy 
 - Модель Москвича-412 (`public/models/moskvich.glb`) упрощена из «[Car_ Moskvich 412i E](https://sketchfab.com/3d-models/car--moskvich-412i-e-01dcdf62a2134abdbc76fb1183f728e5)»
   автора [87-Motors](https://sketchfab.com/87-Motors), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
   Пересборка: `cd tools/models && npm install && node moskvich.mjs путь/к/scene.gltf`.
+- Модель ИЖ-2125 «Комби» (`public/models/kombi.glb`) — Москвич-412 из той же модели 87-Motors, позади задних дверей
+  верх заменён: крыша до кормы и пятая дверь, профиль снят с фотограмметрии «[Izh-2715 Kombi](https://sketchfab.com/3d-models/izh-2715-kombi-e2d950ee7b3d43949b9957a7cc49f407)»
+  автора [trolleway](https://sketchfab.com/trolleway), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
+  Пересборка: `node kombi.mjs` (исходник Москвича — `3d-models/car__moskvich_412i_e/scene.gltf`).
 - Модель пикапа ИЖ-2715 (`public/models/pickup.glb`) собрана из glTF `tools/models/pickup.mjs`
   (`node pickup.mjs путь/к/IZH-2715.gltf`). Источник и лицензия: _уточняются_.
 - Модель «Каблучка» ИЖ-2715 (`public/models/kabluk.glb`) — перед и кабина от модели пикапа, будка — от SketchUp-модели

@@ -63,6 +63,10 @@ export const MODELS = {
   kombi: {
     name: 'ИЖ-2125 «Комби»', years: '1973–1997',
     about: 'Лифтбек на базе 412-го — один из первых советских хэтчбеков.',
+    // Готовая модель (tools/models/kombi.mjs: Москвич с новой крышей и пятой дверью); не загрузилась —
+    // рисуется процедурная по полям ниже.
+    glb: 'models/kombi.glb',
+    credit: 'Модель: «Car_ Moskvich 412i E», 87-Motors (Sketchfab), CC BY 4.0; задок — по скану «Izh-2715 Kombi», trolleway (Sketchfab), CC BY 4.0',
     width: 1.55, cabinWidth: 1.36,
     body: [[-2.06, 0.32], [2.06, 0.32], [2.08, 0.58], [2.02, 0.8], [0.85, 0.87], [-1.95, 0.92], [-2.07, 0.62]],
     cabin: [[0.85, 0.86], [0.24, 1.44], [-0.95, 1.45], [-1.95, 0.94], [-1.95, 0.9]],
@@ -79,6 +83,16 @@ export const MODELS = {
     credit: 'Модель: «izh2126_oda_rework_dcs», 87-Motors (Sketchfab), CC BY 4.0',
     // Номеров в модели нет (были в текстуре): спереди — на бампере, сзади — в нише между фонарями.
     meshPlates: [{ x: 0, y: 0.385, z: 2.045, w: 0.52, h: 0.11, n: [0, 0, 1] }, { x: 0, y: 0.6, z: -1.965, w: 0.52, h: 0.11, n: [0, 0, -1] }],
+    // Детали на выбор в гараже: меши «o-слот-вариант-часть» в glb (tools/models/oda.mjs). Первый вариант — по
+    // умолчанию; новые слоты и варианты — только в конец (номер варианта уходит в сеть, см. optionsCode).
+    options: [
+      { key: 'front', name: 'Передний бампер', variants: [['stock', 'штатный'], ['paint', 'в цвет'], ['tune', 'тюнинг'], ['bullbar', 'кенгурятник']] },
+      { key: 'rear', name: 'Задний бампер', variants: [['stock', 'штатный'], ['paint', 'в цвет']] },
+      { key: 'lamps', name: 'Фары', variants: [['stock', 'штатные'], ['round', 'круглые']] },
+      { key: 'spoiler', name: 'Спойлер', variants: [['none', 'нет'], ['lip', 'утиный хвост'], ['wing', 'антикрыло']] },
+      { key: 'kit', name: 'Обвес', variants: [['none', 'нет'], ['wide', 'широкие арки']] },
+      { key: 'taxi', name: 'Шашка такси', variants: [['none', 'нет'], ['taxi', 'есть']] },
+    ],
     width: 1.65, cabinWidth: 1.42,
     body: [[-2.03, 0.3], [2.03, 0.3], [2.05, 0.56], [1.96, 0.78], [0.95, 0.9], [-1.9, 0.94], [-2.05, 0.62]],
     cabin: [[0.95, 0.88], [0.18, 1.39], [-1.22, 1.4], [-1.93, 0.96], [-1.9, 0.9]],
@@ -252,16 +266,18 @@ export async function loadVehicleMeshes() {
   await Promise.all(Object.values(MODELS).filter((m) => m.glb).map(async (spec) => {
     try {
       const gltf = await loader.loadAsync(spec.glb);
-      const mesh = {};
+      const mesh = {}, opts = {}; // opts: слот → вариант → часть → геометрия
       gltf.scene.traverse((o) => {
         if (!o.isMesh) return;
         const g = o.geometry.toNonIndexed();
         g.computeVertexNormals();
-        mesh[o.name] = g;
+        const [o_, slot, variant, part] = o.name.split('-');
+        if (o_ === 'o' && part) ((opts[slot] ||= {})[variant] ||= {})[part] = g;
+        else mesh[o.name] = g;
       });
       const { wheels, length, hub } = gltf.scene.userData;
       Object.assign(spec.wheels, wheels);
-      spec.mesh = { ...mesh, length, hub, wheelL: hub && mirrorX(mesh.wheel) };
+      spec.mesh = { ...mesh, opts, length, hub, wheelL: hub && mirrorX(mesh.wheel) };
     } catch (e) {
       console.warn(`Модель ${spec.name} не загрузилась, рисую процедурную`, e);
     }
@@ -293,19 +309,39 @@ function wheelGeometry(spec, seg, left = false) {
   return mergeGeometries([m.wheel.clone(), merge(wheelParts(spec.wheels, seg).slice(1))]); // шина — своя
 }
 
-function meshParts(spec, wheelsInDetail) {
+function meshParts(spec, wheelsInDetail, options) {
   const { r, front: wf, rear: wr, track } = spec.wheels, m = spec.mesh;
   const wheels = [];
   for (const z of [wf, wr]) for (const x of [-track, track]) wheels.push({ x, y: r, z, r, front: z > 0 });
-  let detail = m.detail.clone();
+  // Кузов + выбранные варианты деталей.
+  const sets = [m, ...Object.entries(pickOptions(spec, options)).map(([slot, v]) => m.opts?.[slot]?.[v]).filter(Boolean)];
+  const part = (name) => { const l = sets.map((s) => s[name]).filter(Boolean); return l.length > 1 ? mergeGeometries(l) : l[0].clone(); };
+  let detail = part('detail');
   if (wheelsInDetail) {
     detail = mergeGeometries([detail, ...wheels.map((p) => wheelGeometry(spec, 12, p.x < 0).translate(p.x, p.y, p.z))]);
   }
-  return { paint: m.paint.clone(), detail, lights: m.lights.clone(), wheels, length: m.length };
+  return { paint: part('paint'), detail, lights: part('lights'), wheels, length: m.length };
 }
 
-export function vehicleParts(spec, { wheelsInDetail = false } = {}) {
-  if (spec.mesh) return meshParts(spec, wheelsInDetail);
+// Выбор деталей { слот: вариант } с вариантами по умолчанию для недостающих и неизвестных.
+export function pickOptions(spec, options = {}) {
+  const out = {};
+  for (const o of spec.options || []) out[o.key] = o.variants.some(([v]) => v === options[o.key]) ? options[o.key] : o.variants[0][0];
+  return out;
+}
+// Выбор деталей числом для сети: номер варианта слота i — i-я десятичная цифра (вариантов в слоте < 10).
+export function optionsCode(spec, options) {
+  const o = pickOptions(spec, options);
+  return (spec.options || []).reduce((s, slot, i) => s + slot.variants.findIndex(([v]) => v === o[slot.key]) * 10 ** i, 0);
+}
+export function optionsFrom(spec, code) {
+  const out = {};
+  (spec.options || []).forEach((slot, i) => { out[slot.key] = slot.variants[Math.floor(code / 10 ** i) % 10]?.[0]; });
+  return pickOptions(spec, out);
+}
+
+export function vehicleParts(spec, { wheelsInDetail = false, options } = {}) {
+  if (spec.mesh) return meshParts(spec, wheelsInDetail, options);
   const W = spec.width, CW = spec.cabinWidth, front = Math.max(...spec.body.map((p) => p[0])), rear = Math.min(...spec.body.map((p) => p[0]));
   const paint = [], detail = [], lights = [];
   const { r, front: wf, rear: wr, track } = spec.wheels, R = r + ARCH_GAP, y0 = spec.body[0][1];
@@ -413,9 +449,9 @@ function wheelParts({ r, alloy }, seg) {
 
 // Модель для машины игрока: краска — материалом, колёса — отдельными узлами (крутятся, рулят).
 const wheelMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-export function buildPlayerModel(key, color) {
+export function buildPlayerModel(key, color, options) {
   const spec = MODELS[key] || MODELS[DEFAULT_MODEL];
-  const parts = vehicleParts(spec);
+  const parts = vehicleParts(spec, { options });
   const g = new THREE.Group();
   const paintMat = new THREE.MeshLambertMaterial({ color: color || spec.colors[0], vertexColors: true });
   const meshes = [

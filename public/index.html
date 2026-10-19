@@ -156,6 +156,13 @@
     #garage .colors { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
     #garage .colors button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); cursor: pointer; padding: 0; }
     #garage .colors button.on { border-color: #fff; box-shadow: 0 0 0 2px #ffd23f; }
+    #garage .opts { display: flex; flex-direction: column; gap: 6px; margin: -4px 0 12px; max-height: 34vh; overflow-y: auto; }
+    #garage .opts:empty { display: none; }
+    #garage .opt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
+    #garage .opt span { width: 104px; opacity: .6; }
+    #garage .opt button { font: inherit; color: #fff; background: rgba(255,255,255,.08); border: 1.5px solid transparent; border-radius: 7px;
+      padding: 4px 9px; cursor: pointer; }
+    #garage .opt button.on { border-color: #ffd23f; background: rgba(255,210,63,.14); }
     #garage .go { font: inherit; font-weight: 800; font-size: 18px; padding: 10px; border-radius: 10px; border: 0; background: #ffd23f;
       color: #15181b; cursor: pointer; }
     #garage .go kbd { font-size: 11px; font-weight: 600; opacity: .6; margin-left: 6px; }

@@ -7,7 +7,7 @@
 // В общем городе пока никого не видно и ничего не шлём (лимиты Firebase): связь — только в своей комнате. Нет связи с Firebase — игра идёт как раньше, одна.
 import * as THREE from 'three';
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
-import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates } from './vehicles.js';
+import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates, optionsCode, optionsFrom } from './vehicles.js';
 
 export const CITY = 'city'; // общий город — комната по умолчанию
 const SEND_EVERY = 0.1;      // с
@@ -62,14 +62,15 @@ function makeLabel(text) {
 
 export class Net {
   // onChange — изменилось то, что показывает меню (связь, число игроков, имя).
-  constructor(scene, { model, color }, onChange = () => {}) {
+  constructor(scene, { model, color, options }, onChange = () => {}) {
     this.scene = scene;
     this.onChange = onChange;
     this.name = loadName();
     this.model = model;
     this.color = color;
+    this.opts = optionsCode(MODELS[model], options); // детали (гараж) числом
     this.status = 'solo'; // 'solo' (общий город, без сети) | 'connecting' | 'online' | 'offline'
-    this.ghosts = new Map();    // uid → { name, model, color, mesh, label, buf, offset, spin }
+    this.ghosts = new Map();    // uid → { name, model, color, opts, mesh, label, buf, offset, spin }
     const r = new URLSearchParams(location.search).get('room')?.toLowerCase();
     this.room = r && ROOM_RE.test(r) ? r : CITY;
     this.sendT = 0;
@@ -182,9 +183,10 @@ export class Net {
     this.onChange();
   }
 
-  setVehicle(model, color) {
+  setVehicle(model, color, options) {
     this.model = model;
     this.color = color;
+    this.opts = optionsCode(MODELS[model], options);
     this.sendT = 0;
   }
 
@@ -194,7 +196,8 @@ export class Net {
       this.sendT = SEND_EVERY;
       const f = (v, n = 2) => +v.toFixed(n);
       const s = [f(car.pos.x), f(car.y), f(car.pos.y), f(car.heading, 3), f(wrap(car.pitch - car.flipP), 3), f(wrap(car.roll + car.flip), 3),
-        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now())].join(',');
+        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts].join(',');
+      // Детали — 11-м числом в s, а не своим полем: правила базы не пускают новые поля, а старые клиенты читают первые 10.
       const data = { n: this.name, s, m: this.model };
       if (this.color) data.c = this.color;
       if (this.progress != null) data.p = Math.round(this.progress);
@@ -234,7 +237,7 @@ export class Net {
     if (!v || typeof v.s !== 'string') return;
     const n = v.s.split(',').map(Number);
     if (n.length < 10 || n.some((x) => !Number.isFinite(x))) return;
-    const [x, y, z, h, p, r, br, sp, st, t] = n;
+    const [x, y, z, h, p, r, br, sp, st, t, opts = 0] = n;
     const model = Object.hasOwn(MODELS, v.m ?? '') ? v.m : DEFAULT_MODEL;
     const color = /^#[0-9a-f]{6}$/i.test(v.c ?? '') ? v.c : undefined;
     const name = cleanName(v.n) || 'Гонщик';
@@ -245,12 +248,12 @@ export class Net {
       this.ghosts.set(uid, g);
       this.onChange();
     }
-    if (g.model !== model || g.color !== color) {
+    if (g.model !== model || g.color !== color || g.opts !== opts) {
       this.#dispose(g.mesh);
-      g.mesh = buildPlayerModel(model, color);
+      g.mesh = buildPlayerModel(model, color, optionsFrom(MODELS[model], opts));
       g.mesh.userData.perf = 'другие игроки';
       this.scene.add(g.mesh);
-      g.model = model; g.color = color;
+      g.model = model; g.color = color; g.opts = opts;
       g.mesh.visible = false; // до первой расстановки
     }
     if (g.name !== name) {
