@@ -1,5 +1,6 @@
 // Камеры: столб с камерой, штраф за превышение по КоАП 12.9 (money.js); перекрёсток под камерой штрафует и
-// проезд на красный (signals.js, ctrl.cam) — на остальных красный не штрафуется.
+// проезд на красный (signals.js, ctrl.cams) — на остальных красный не штрафуется. Столб можно снести
+// (breakables.js, c.broken) — пока он лежит, камера не снимает.
 // Где стоят: комплексы из перечня Госавтоинспекции Удмуртии (city.cams: [x, z, предел км/ч или 0,
 // 1 — на перекрёсток, 0 — без скорости (нет — со скоростью)], tools/gibdd_cams.py); если их нет в собранном
 // city.json — игровые: на части перекрёстков со светофорами на крупных улицах (места выдуманные).
@@ -24,8 +25,10 @@ export class Cameras {
     const own = world.city.cams || [];
     this.list = own.length
       ? own.map(([x, z, lim, cross, speed = 1]) => {
-        if (cross) { const k = this.#nearestCtrl(signals, x, z, CROSS); if (k) k.cam = true; }
-        return speed ? this.#fromList(x, z, lim, cross, signals) : this.#atSignal(x, z, signals);
+        const c = speed ? this.#fromList(x, z, lim, cross, signals) : this.#atSignal(x, z, signals);
+        const k = cross && this.#nearestCtrl(signals, x, z, CROSS);
+        if (k) (k.cams ||= []).push(c ?? {}); // без столба — снести нечего, работает всегда
+        return c;
       }).filter(Boolean)
       : this.#fromSignals(signals);
     this.#build(scene);
@@ -109,8 +112,9 @@ export class Cameras {
       if (!ap) continue;
       const h = (Math.imul(Math.round(c.cx * 10) ^ Math.round(c.cz * 10) * 31, 2654435761) >>> 0) % 1000;
       if (h >= KEEP * 1000) continue;
-      c.cam = true;
-      out.push({ x: c.cx, z: c.cz, ...this.#behind(ap), lim: ap.e.road.ms || CITY_LIMIT });
+      const cam = { x: c.cx, z: c.cz, ...this.#behind(ap), lim: ap.e.road.ms || CITY_LIMIT };
+      c.cams = [cam];
+      out.push(cam);
     }
     return out;
   }
@@ -126,6 +130,7 @@ export class Cameras {
     const white = new THREE.MeshLambertMaterial({ color: '#e9ebe6' });
     const black = new THREE.MeshBasicMaterial({ color: '#0d1013' });
     const meshes = [[pole, grey], [arm, grey], [box, white], [lens, black]].map(([g, m]) => new THREE.InstancedMesh(g, m, n));
+    this.meshes = meshes; // общая матрица на камеру — для сноса (breakables.addCameras)
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
     const up = new THREE.Vector3(0, 1, 0);
     this.list.forEach((c, i) => {
@@ -149,9 +154,9 @@ export class Cameras {
 
   // Расстояние до столба, если машина перед объективом (по ту сторону столба, куда смотрит камера) и едет
   // на него (курс навстречу, объектив смотрит по (sin face, cos face)); проехали столб, сзади, мимо — Infinity.
-  // Камера без скорости (только перекрёсток) — тоже Infinity.
+  // Камера без скорости (только перекрёсток) и снесённая — тоже Infinity.
   #facing(c, car) {
-    if (c.speed === false) return Infinity;
+    if (c.speed === false || c.broken) return Infinity;
     const [px, pz] = c.pole, dx = px - car.pos.x, dz = pz - car.pos.y;
     if (Math.abs(dx) > WARN || Math.abs(dz) > WARN) return Infinity;
     const lx = Math.sin(c.face), lz = Math.cos(c.face), f = car.forward;

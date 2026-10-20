@@ -202,6 +202,7 @@ async function main() {
   const signals = owned('светофоры', () => new Signals(world, traffic, scene));
   breakables.addSignals(signals);
   const cameras = owned('камеры', () => new Cameras(world, signals, scene));
+  breakables.addCameras(cameras);
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
   const garage = new Garage(choice, {
@@ -480,7 +481,7 @@ async function main() {
     poi: () => [
       ...fuel.stations.map((s) => ({ kind: 'fuel', name: s.name, x: s.cx, z: s.cz })),
       ...landmarks.markers.map((m) => ({ kind: 'landmark', name: m.name, x: m.x, z: m.z })),
-      ...cameras.list.map((c) => ({ kind: 'camera', name: c.speed === false ? 'камера на перекрёстке' : `камера ${c.lim}`, x: c.x, z: c.z })),
+      ...cameras.list.filter((c) => !c.broken).map((c) => ({ kind: 'camera', name: c.speed === false ? 'камера на перекрёстке' : `камера ${c.lim}`, x: c.x, z: c.z })),
       ...[...net.ghosts.values()].filter((g) => g.mesh?.visible).map((g) => ({ kind: 'ghost', name: g.name, x: g.mesh.position.x, z: g.mesh.position.z })),
     ],
     extra: () => (race.state === 'running' || race.state === 'countdown' ? [{ route: race.route, color: '#ffd23f' }] : []),
@@ -795,6 +796,7 @@ async function main() {
     // и значок на столбе (поверх всего).
     const camIcons = [];
     for (const c of cameras.list) {
+      if (c.broken) continue;
       const [px, pz] = c.pole;
       if (Math.abs(px - car.pos.x) > view || Math.abs(pz - car.pos.y) > view) continue;
       const x = (px - xmin) * scale, z = (pz - zmin) * scale, a = Math.atan2(Math.cos(c.face), Math.sin(c.face));

@@ -1,4 +1,4 @@
-// Ломаемое у дорог: фонарные столбы, светофоры, рекламные щиты, лёгкие заборы кусками (деревья — тоже здесь, но не ломаются). Машина сносит их ударом быстрее
+// Ломаемое у дорог: фонарные столбы, светофоры, камеры, рекламные щиты, лёгкие заборы кусками (деревья — тоже здесь, но не ломаются). Машина сносит их ударом быстрее
 // breakV (по нормали), медленнее — упирается, как в стену. Снесённое — отдельный меш на тех же
 // геометриях: падает от удара (поворот вокруг основания под тяжестью), скользит и ложится; экземпляр
 // на месте спрятан. Обратно встаёт, когда игрок уехал далеко. Сбитые машины трафика тоже сносят.
@@ -13,6 +13,7 @@ import { World } from './world.js';
 const KINDS = {
   pole: { r: 0.18, h: 9, tip: 0.15, breakV: 3, loss: 0.25, kick: 0.35 },
   signal: { r: 0.12, h: 4.1, tip: 0.2, breakV: 2, loss: 0.12, kick: 0.3 },
+  camera: { r: 0.11, h: 5.6, tip: 0.2, breakV: 3, loss: 0.15, kick: 0.3 },
   board: { r: 0.5, h: 8.55, tip: 0.3, breakV: 6, loss: 0.45, kick: 0.15 },
   tree: { r: 0.3, h: 6, breakV: Infinity }, // не сбить: упираешься на любой скорости; r — на масштаб 1
   // Кусок забора (≤ 5 м): отрезок толщиной 2r, высота — своя у куска; падает плашмя поперёк.
@@ -198,6 +199,28 @@ export class Breakables {
       });
     });
     this.#add(signals, items);
+  }
+
+  // Камеры (cameras.js): столб, консоль, корпус и объектив — одна матрица на камеру. Снесена — не снимает
+  // (c.broken), встала на место — снова работает.
+  addCameras(cameras) {
+    const meshes = cameras.meshes ?? [];
+    if (!meshes.length) return;
+    this.#add(cameras, cameras.list.map((c, i) => {
+      meshes[0].getMatrixAt(i, _m);
+      const e = _m.elements;
+      let saved = null;
+      return {
+        kind: KINDS.camera, x: e[12], y: e[13], z: e[14], a: Math.atan2(e[8], e[10]),
+        hide: () => { c.broken = true; saved = meshes.map((mesh) => hideInstance(mesh, i)); return saved[0]; },
+        show: () => { c.broken = false; meshes.forEach((mesh, k) => showInstance(mesh, i, saved[k])); },
+        make: () => {
+          const g = new THREE.Group();
+          for (const mesh of meshes) g.add(new THREE.Mesh(mesh.geometry, mesh.material));
+          return g;
+        },
+      };
+    }));
   }
 
   #near(x, z, fn) {
