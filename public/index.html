@@ -228,53 +228,87 @@
     @keyframes flash { 0% { opacity: .85; } }
     #attr a { color: inherit; }
 
-    /* ---------- гараж ---------- */
-    #garage { position: fixed; right: 0; top: 0; bottom: 0; width: min(46vw, 420px); z-index: 15; display: none; flex-direction: column;
-      background: rgba(16,19,22,.86); backdrop-filter: blur(6px); padding: 18px 16px calc(14px + env(safe-area-inset-bottom));
+    /* ---------- гараж (автосалон): панель справа, машины лентой снизу ---------- */
+    #garage { --side: min(40vw, 400px); --strip: 96px; display: none; }
+    #garage.open { display: block; }
+    #garage .side { position: fixed; right: 0; top: 0; bottom: 0; width: var(--side); z-index: 15; display: flex; flex-direction: column;
+      background: rgba(16,19,22,.88); backdrop-filter: blur(6px); padding: 16px 16px calc(12px + env(safe-area-inset-bottom));
       padding-right: calc(16px + env(safe-area-inset-right)); box-sizing: border-box; }
-    #garage.open { display: flex; }
-    #garage h2 { margin: 0 0 12px; font-size: 24px; font-style: italic; }
-    #garage h2 .money { float: right; font-size: 18px; font-style: normal; color: #7dff9a; margin-top: 4px; }
-    #garage .opt button small { opacity: .7; font-size: 10.5px; margin-left: 3px; }
-    #garage h2 span { display: block; font-size: 13px; font-style: normal; font-weight: 400; opacity: .6; margin-top: 2px; }
-    #garage .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-    #garage .card { text-align: left; color: #fff; font: inherit; background: rgba(255,255,255,.06); border: 2px solid transparent;
-      border-radius: 10px; padding: 10px 12px; cursor: pointer; }
-    #garage .card.on { border-color: #ffd23f; background: rgba(255,210,63,.1); }
-    #garage .card b { font-size: 16px; }
-    #garage .card small { margin-left: 8px; opacity: .6; }
-    #garage .card p { margin: 4px 0 8px; font-size: 12.5px; opacity: .75; line-height: 1.35; }
-    #garage .card p.credit { margin-top: -4px; font-size: 10.5px; opacity: .5; }
+    #garage h2 { margin: 0 0 10px; font-size: 22px; font-style: italic; }
+    #garage h2 .money { float: right; font-size: 18px; font-style: normal; color: #7dff9a; margin-top: 2px; }
+    #garage .info b { font-size: 17px; }
+    #garage .info small { opacity: .6; margin-left: 4px; }
+    #garage .info em { float: right; font-style: normal; font-weight: 700; color: #ffd23f; }
+    #garage .info em.own { color: #7dff9a; font-weight: 400; }
+    #garage .info p { margin: 4px 0 6px; font-size: 12.5px; opacity: .75; line-height: 1.35; }
+    #garage .info p.credit { margin-top: -2px; font-size: 10.5px; opacity: .5; }
     #garage .stat { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: .85; margin-top: 3px; }
     #garage .stat span { width: 68px; }
-    #garage .stat i { flex: 1; height: 5px; border-radius: 3px; background: linear-gradient(90deg, #ffd23f var(--v), rgba(255,255,255,.12) var(--v)); }
-    #garage .colors { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    #garage .stat i { flex: 1; height: 5px; border-radius: 3px;
+      background: linear-gradient(90deg, #ffd23f var(--v), #7dff9a var(--v) var(--u), rgba(255,255,255,.12) var(--u)); }
+    #garage .sys { display: flex; gap: 6px; margin-top: 6px; min-height: 4px; }
+    #garage .sys span { font-size: 10.5px; padding: 1px 7px; border-radius: 6px; background: rgba(47,168,255,.25); color: #9ef0ff; }
+    #garage .tabs { display: flex; gap: 6px; margin: 10px 0 8px; }
+    #garage .tabs button { flex: 1; font: inherit; font-weight: 700; font-size: 13px; color: #fff; background: rgba(255,255,255,.06);
+      border: 0; border-bottom: 2px solid transparent; border-radius: 7px 7px 0 0; padding: 7px; cursor: pointer; }
+    #garage .tabs button.on { border-bottom-color: #ffd23f; background: rgba(255,210,63,.12); }
+    #garage .pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    #garage .pane[hidden] { display: none; }
+    #garage .colors { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 6px; }
     #garage .colors button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); cursor: pointer; padding: 0; }
     #garage .colors button.on { border-color: #fff; box-shadow: 0 0 0 2px #ffd23f; }
-    #garage .opts { display: flex; flex-direction: column; gap: 6px; margin: -4px 0 12px; max-height: 34vh; overflow-y: auto; }
-    #garage .opts:empty { display: none; }
+    #garage .opts, #garage .ups { display: flex; flex-direction: column; gap: 6px; }
     #garage .opt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
-    #garage .opt span { width: 104px; opacity: .6; }
+    #garage .opt > span { width: 96px; opacity: .6; }
     #garage .opt button { font: inherit; color: #fff; background: rgba(255,255,255,.08); border: 1.5px solid transparent; border-radius: 7px;
-      padding: 4px 9px; cursor: pointer; }
+      padding: 5px 9px; cursor: pointer; }
+    #garage .opt button small { opacity: .7; font-size: 10.5px; margin-left: 3px; }
     #garage .opt button.on { border-color: #ffd23f; background: rgba(255,210,63,.14); }
-    #garage .card .price { float: right; font-style: normal; font-size: 13px; font-weight: 700; color: #ffd23f; margin-top: 2px; }
-    #garage .card.own .price { color: #7dff9a; font-weight: 400; opacity: .8; }
-    #garage .ups { display: flex; flex-direction: column; gap: 6px; margin: -4px 0 12px; max-height: 30vh; overflow-y: auto; }
-    #garage .ups-head { font-size: 12px; font-weight: 700; opacity: .8; }
+    #garage .ups-head { font-size: 12px; opacity: .7; }
     #garage .ups .opt button:disabled { opacity: .35; cursor: default; }
     #garage .ups .opt button.poor small { color: #ff8a7a; }
-    #garage .ups .about { flex-basis: 100%; padding-left: 108px; font-size: 10.5px; opacity: .5; }
-    body.touch #garage .ups .about { display: none; }
-    #garage .go { font: inherit; font-weight: 800; font-size: 18px; padding: 10px; border-radius: 10px; border: 0; background: #ffd23f;
+    #garage .ups .about { flex-basis: 100%; padding-left: 100px; font-size: 10.5px; opacity: .5; }
+    #garage .actions { display: flex; gap: 8px; margin-top: 10px; }
+    #garage .go { flex: 1; font: inherit; font-weight: 800; font-size: 17px; padding: 10px; border-radius: 10px; border: 0; background: #ffd23f;
       color: #15181b; cursor: pointer; }
-    #garage .go kbd { font-size: 11px; font-weight: 600; opacity: .6; margin-left: 6px; }
+    #garage .go.poor { background: #5d6b78; color: #fff; cursor: default; }
+    #garage .back { font: inherit; font-size: 13px; color: #fff; background: rgba(255,255,255,.1); border: 0; border-radius: 10px; padding: 0 12px; cursor: pointer; }
+    #garage .back[hidden] { display: none; }
     #garage .hint { font-size: 11px; opacity: .55; margin-top: 8px; text-align: center; }
-    body.touch #garage .hint, body.touch #garage .go kbd { display: none; }
+    #garage .strip { position: fixed; left: 0; right: var(--side); bottom: 0; height: var(--strip); z-index: 15; display: flex; gap: 8px;
+      align-items: stretch; overflow-x: auto; scroll-snap-type: x proximity; box-sizing: border-box;
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); padding-left: calc(12px + env(safe-area-inset-left));
+      background: linear-gradient(transparent, rgba(16,19,22,.75) 35%); scrollbar-width: none; }
+    #garage .strip::-webkit-scrollbar { display: none; }
+    #garage .card { flex: 0 0 168px; scroll-snap-align: center; text-align: left; color: #fff; font: inherit; background: rgba(20,24,28,.78);
+      border: 2px solid rgba(255,255,255,.12); border-radius: 10px; padding: 7px 10px; cursor: pointer; display: flex; flex-direction: column;
+      justify-content: center; gap: 1px; position: relative; }
+    #garage .card.on { border-color: #ffd23f; background: rgba(60,52,20,.85); }
+    #garage .card b { font-size: 13px; line-height: 1.2; padding-right: 12px; }
+    #garage .card small { font-size: 11px; opacity: .55; }
+    #garage .card .price { font-style: normal; font-size: 12.5px; font-weight: 700; color: #ffd23f; }
+    #garage .card.own .price { color: #7dff9a; font-weight: 400; }
+    #garage .card .dot { position: absolute; right: 8px; top: 8px; width: 10px; height: 10px; border-radius: 50%; }
     body.in-garage #touch, body.in-garage #speedo, body.in-garage #minimap { display: none; }
-    body.touch #garage { padding-top: calc(10px + env(safe-area-inset-top)); }
-    body.touch #garage h2 { font-size: 18px; margin-bottom: 8px; }
-    body.touch #garage .card p { display: none; }
+    /* телефон: панель уже, без описаний, лента ниже */
+    body.touch #garage { --side: min(46vw, 360px); --strip: 74px; }
+    body.touch #garage .side { padding: calc(8px + env(safe-area-inset-top)) 12px calc(8px + env(safe-area-inset-bottom)); padding-right: calc(12px + env(safe-area-inset-right)); }
+    body.touch #garage h2 { font-size: 16px; margin-bottom: 4px; }
+    body.touch #garage h2 .money { font-size: 15px; }
+    body.touch #garage .info b { font-size: 14px; }
+    body.touch #garage .info p, body.touch #garage .info small, body.touch #garage .hint, body.touch #garage .ups .about { display: none; }
+    body.touch #garage .stat { margin-top: 1px; }
+    body.touch #garage .tabs { margin: 6px 0 6px; }
+    body.touch #garage .tabs button { padding: 5px; }
+    body.touch #garage .colors button { width: 26px; height: 26px; }
+    body.touch #garage .opt > span { width: 100%; }
+    body.touch #garage .go { font-size: 15px; padding: 8px; }
+    body.touch #garage .actions { margin-top: 6px; }
+    body.touch #garage { --strip: 80px; }
+    body.touch #garage .card { flex-basis: 136px; padding: 5px 8px; }
+    body.touch #garage .card b { font-size: 12px; }
+    body.touch #garage .card .price { font-size: 12px; }
+    body.touch #garage .card small { display: none; }
 
     /* ---------- меню-пауза (menu.js) ---------- */
     #menu { position: fixed; inset: 0; z-index: 16; display: none; place-items: center; background: rgba(10,12,14,.55); backdrop-filter: blur(4px); }

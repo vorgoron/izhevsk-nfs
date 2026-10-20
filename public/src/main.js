@@ -797,15 +797,15 @@ async function main() {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
     }
-    // Гараж: камера облетает машину, кадр сдвинут влево от панели.
+    // Гараж: камера облетает машину, кадр сдвинут влево от панели и вверх от ленты машин.
     if (garage.isOpen) {
       orbit += dt * 0.35;
       const c = new THREE.Vector3(car.pos.x, car.y + 0.7, car.pos.y);
       camera.position.set(c.x + Math.sin(orbit) * 6.5, c.y + 1.6, c.z + Math.cos(orbit) * 6.5);
       camera.lookAt(c);
       camera.fov = 50;
-      const panel = Math.min(innerWidth * 0.46, 420);
-      camera.setViewOffset(innerWidth, innerHeight, panel / 2, 0, innerWidth, innerHeight);
+      const f = garage.frame();
+      camera.setViewOffset(innerWidth, innerHeight, f.right / 2, f.bottom / 2, innerWidth, innerHeight);
       camera.updateProjectionMatrix();
       car.model.visible = true;
       return;
