@@ -4,6 +4,7 @@ import * as THREE from 'three';
 // Скорость, разгон и сцепление — от модели (vehicles.js), здесь базовые величины.
 const NITRO_K = 1.3;      // нитро: верхняя скорость ×1.3
 const NITRO_UNLOCK = 0.25; // после опустошения нитро снова доступно с этого запаса
+const NITRO_REFILL = 0.06; // 1/с: баллон сам наполняется, пока нитро не горит (~17 с с нуля); за деньги — сразу
 // Нитро само не восполняется — баллон заправляют за деньги на АЗС или в меню (fuel.js, money.js).
 // Вне дороги (трава, лес, пустырь): доля от максимальной скорости, разгона, сцепления; торможение грунтом.
 const OFF_SPEED = 0.45, OFF_ACCEL = 0.5, OFF_GRIP = 0.6, OFF_DRAG = 0.08;
@@ -161,7 +162,7 @@ export class Car {
     if (input.up || (input.down && vf <= 0.5)) {
       this.fuel = Math.max(0, this.fuel - (Math.abs(vf) * dt + 0.3 * dt) / TANK_M * this.eco * (nitroOn ? 3 : 1));
     }
-    if (nitroOn) this.nitro = Math.max(0, this.nitro - 0.35 * dt);
+    this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -0.35 : NITRO_REFILL) * dt));
     const top = (nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed) * (1 - (1 - OFF_SPEED) * off);
     const accel = this.accel * (1 - (1 - OFF_ACCEL) * off);
 
