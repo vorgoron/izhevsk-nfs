@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import {
   buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, buildPoleChunk, buildBillboardChunk,
   buildStopChunk, stopMaterials, buildFenceChunk, fenceMaterials,
-  drawMinimapTile, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
+  drawMinimapTile, MINIMAP_SCALE, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
 
 const TREE_NEAR = 450; // м до квадрата: ближе — подробные деревья
@@ -137,11 +137,20 @@ export class ChunkManager {
   }
 }
 
-// Миникарта из тайлов по квадратам: рисуются при первом показе, держим последние ~160.
+// Миникарта из тайлов по квадратам: рисуются при первом показе, держим последние ~MINIMAP_TILES.
+// Разрешение тайлов (res, пикселей на метр) — под экран; сменилось — кэш заново.
+const MINIMAP_TILES = 48; // квадрат 510 м при 1,25 px/м — 1,6 МБ
 export class MinimapTiles {
   constructor(world) {
     this.world = world;
     this.cache = new Map();
+    this.res = MINIMAP_SCALE;
+  }
+
+  setRes(res) {
+    if (res === this.res) return;
+    this.res = res;
+    this.cache.clear();
   }
 
   tile(ci, cj) {
@@ -152,9 +161,9 @@ export class MinimapTiles {
       this.cache.set(key, t);
       return t;
     }
-    t = drawMinimapTile(this.world, this.world.chunkInfo(ci, cj));
+    t = drawMinimapTile(this.world, this.world.chunkInfo(ci, cj), this.res);
     this.cache.set(key, t);
-    if (this.cache.size > 160) this.cache.delete(this.cache.keys().next().value);
+    if (this.cache.size > MINIMAP_TILES) this.cache.delete(this.cache.keys().next().value);
     return t;
   }
 

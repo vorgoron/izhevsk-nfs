@@ -2,7 +2,8 @@
 // два пальца — масштаб. На карте — машина, заправки, достопримечательности, камеры, другие игроки, маршрут.
 // Нажатие на место или значок — маршрут туда по улицам (стрелки на дороге — guide.js). Пока карта открыта,
 // игра стоит, как в меню.
-// Подложка (вода, парки, дома, улицы) рисуется один раз в отдельный холст — в фоне после старта (prepare).
+// Подложка (вода, парки, дома, улицы) рисуется один раз в отдельный холст — в фоне после старта (prepare);
+// крупнее её масштаба поверх ложатся плитки, нарисованные вектором под масштаб (#tiles).
 
 const ZOOM_MIN = 0.04, ZOOM_MAX = 2.5; // экранных пикселей на метр
 const TAP = 8;             // px: сдвиг меньше — нажатие, а не перетаскивание
@@ -11,11 +12,23 @@ const SNAP = 300;          // м: нажатие дальше от улиц — 
 
 const SLICE = 6;            // мс: столько за раз рисуется подложка в фоне
 const BATCH = 300;         // домов в одном пути подложки
+const CELL = 250;          // м: ячейка индекса, по которому плитка берёт своё
+const TILE = 512;          // px: сторона плитки (вектором, когда карта крупнее подложки)
+const TILES = 64;          // плиток в памяти (по 1 МБ); видимые не выбрасываются
+const TILE_MS = 12;        // мс за кадр на новые плитки
+const NAMES_ZOOM = 0.45;   // крупнее — названия улиц
+const NUMBERS_ZOOM = 1.3;  // крупнее — номера домов
+const BEND = 0.3;          // рад: насколько может повернуть улица под одной подписью
+const NAME_GAP = 320;      // px: одна и та же улица подписана не чаще
+const NAME_FONT = '600 11px system-ui, sans-serif';
+const NUMBER_FONT = '10px system-ui, sans-serif';
 
 const ROAD_COLOR = { trunk: '#e8b44a', primary: '#e8c46a', secondary: '#d9d2bd', tertiary: '#c9c4b5' };
 
 export class CityMap {
   #work = null; // недорисованная подложка (генератор #steps)
+  tiles = new Map(); // 'k/i/j' → холст плитки, по давности использования
+  widths = new Map(); // шрифт + текст → ширина, px
 
   // world, car; poi() — значки: [{ kind: 'fuel'|'landmark'|'camera'|'ghost', name, x, z }];
   // onRoute(route | null, target) — проложен / сброшен маршрут.
@@ -28,7 +41,7 @@ export class CityMap {
     this.onRoute = onRoute;
     this.extra = extra; // () => [{ route, color }] — маршрут гонки и т. п.
     this.isOpen = false;
-    this.target = null; // { x, z, name, route }
+    this.target = null; // { x, z — конец маршрута, place — выбранное место [x, z], name, end, route }
     this.zoom = 0.25;
     this.cx = 0; this.cz = 0;
 
@@ -86,57 +99,242 @@ export class CityMap {
     return this.baseCv;
   }
 
-  // Подложка по шагам (генератор): вода и парки, реки, дома пачками по BATCH (весь город одним путём
-  // заливается секундами), улицы. Холст — в baseCv по окончании.
+  // Подложка по шагам (генератор): весь город в один холст масштаба B. Холст — в baseCv по окончании.
   *#steps() {
-    const w = this.world, [xmin, zmin, xmax, zmax] = w.bounds;
+    const [xmin, zmin, xmax, zmax] = this.world.bounds;
     const c = document.createElement('canvas');
     c.width = Math.ceil((xmax - xmin) * this.B);
     c.height = Math.ceil((zmax - zmin) * this.B);
     const g = c.getContext('2d');
-    const tx = (x) => (x - xmin) * this.B, tz = (z) => (z - zmin) * this.B;
-    const ring = (p) => { g.moveTo(tx(p[0][0]), tz(p[0][1])); for (const [x, z] of p) g.lineTo(tx(x), tz(z)); g.closePath(); };
     g.fillStyle = '#1b1f22';
     g.fillRect(0, 0, c.width, c.height);
-    for (const a of w.city.areas) {
-      const color = a.k === 'water' ? '#24465c' : a.k === 'park' ? (a.f ? '#1f2e1c' : '#25331f') : a.k === 'grass' ? '#222b1f' : a.k === 'industrial' ? '#24242a' : null;
-      if (!color) continue;
-      g.beginPath();
-      ring(a.p);
-      for (const h of a.holes || []) ring(h);
-      g.fillStyle = color;
-      g.fill('evenodd');
-      yield;
-    }
-    g.lineCap = g.lineJoin = 'round';
-    g.strokeStyle = '#24465c';
-    for (const r of w.city.waterways) {
-      g.beginPath();
-      r.p.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)));
-      g.lineWidth = Math.max(0.8, r.w * this.B);
-      g.stroke();
-      yield;
-    }
-    g.fillStyle = '#30343a';
-    const bs = w.city.buildings;
-    for (let i = 0; i < bs.length; i += BATCH) {
-      g.beginPath();
-      for (let j = i; j < Math.min(i + BATCH, bs.length); j++) ring(bs[j].p);
-      g.fill();
-      yield;
-    }
-    // Улицы: сначала мелкие, крупные — поверх.
-    const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
-    const roads = [...w.roads].sort((a, b) => order(a.k) - order(b.k));
-    for (const r of roads) {
-      g.beginPath();
-      r.n.forEach((id, i) => { const [x, z] = w.nodes[id]; g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)); });
-      g.lineWidth = Math.max(r.k in ROAD_COLOR ? 1.6 : 0.8, r.w * this.B);
-      g.strokeStyle = ROAD_COLOR[r.k] ?? '#6f6d68';
-      g.stroke();
-      yield;
-    }
+    const { items } = yield* this.#index();
+    yield* this.#paint(g, this.B, xmin, zmin, items.map((_, i) => i));
     this.baseCv = c;
+  }
+
+  // Всё, что на подложке, — одним списком в порядке рисования (вода и парки, реки, дома, улицы: мелкие, крупные
+  // поверх) и сетка ячеек по CELL м с номерами того, что в них попадает, — чтобы плитка брала только своё.
+  *#index() {
+    if (this.idx) return this.idx;
+    const w = this.world, [xmin, zmin, xmax, zmax] = w.bounds;
+    const nx = Math.ceil((xmax - xmin) / CELL), nz = Math.ceil((zmax - zmin) / CELL);
+    const cells = Array.from({ length: nx * nz }, () => []), items = [];
+    const add = (it, pad = 0) => {
+      let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+      for (const [x, z] of it.p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      it.bb = [x0, z0, x1, z1];
+      const id = items.push(it) - 1;
+      const cx = (x) => Math.max(0, Math.min(nx - 1, Math.floor((x - xmin) / CELL)));
+      const cz = (z) => Math.max(0, Math.min(nz - 1, Math.floor((z - zmin) / CELL)));
+      for (let j = cz(z0 - pad); j <= cz(z1 + pad); j++) for (let i = cx(x0 - pad); i <= cx(x1 + pad); i++) cells[j * nx + i].push(id);
+    };
+    for (const a of w.city.areas) {
+      const c = a.k === 'water' ? '#24465c' : a.k === 'park' ? (a.f ? '#1f2e1c' : '#25331f') : a.k === 'grass' ? '#222b1f' : a.k === 'industrial' ? '#24242a' : null;
+      if (c) add({ k: 'a', p: a.p, holes: a.holes, c });
+    }
+    for (const r of w.city.waterways) add({ k: 'l', p: r.p, w: r.w, min: 0.8, c: '#24465c' }, r.w);
+    yield;
+    for (const b of w.city.buildings) add({ k: 'b', p: b.p, a: b.a, st: b.st });
+    yield;
+    const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
+    for (const r of [...w.roads].sort((a, b) => order(a.k) - order(b.k))) {
+      add({ k: 'l', p: r.n.map((id) => w.nodes[id]), w: r.w, min: r.k in ROAD_COLOR ? 1.6 : 0.8, c: ROAD_COLOR[r.k] ?? '#6f6d68',
+        name: r.name && short(r.name), rank: order(r.k) }, r.w);
+    }
+    return (this.idx = { items, cells, nx, nz, seen: new Uint32Array(items.length), frame: 0 });
+  }
+
+  // Рисует items[ids] (ids — по возрастанию, это и есть порядок) в масштабе S пикселей на метр, (ox, oz) — левый
+  // верхний угол. Дома — общим путём пачками по BATCH (весь город одним путём заливается секундами).
+  *#paint(g, S, ox, oz, ids) {
+    const items = this.idx.items;
+    const tx = (x) => (x - ox) * S, tz = (z) => (z - oz) * S;
+    const ring = (p) => { g.moveTo(tx(p[0][0]), tz(p[0][1])); for (const [x, z] of p) g.lineTo(tx(x), tz(z)); g.closePath(); };
+    g.lineCap = g.lineJoin = 'round';
+    g.fillStyle = '#30343a';
+    let houses = 0;
+    const flush = () => { if (houses) { g.fillStyle = '#30343a'; g.fill(); houses = 0; } };
+    for (const id of ids) {
+      const it = items[id];
+      if (it.k === 'b') {
+        if (!houses) g.beginPath();
+        ring(it.p);
+        if (++houses === BATCH) { flush(); yield; }
+        continue;
+      }
+      flush();
+      g.beginPath();
+      if (it.k === 'a') {
+        ring(it.p);
+        for (const h of it.holes || []) ring(h);
+        g.fillStyle = it.c;
+        g.fill('evenodd');
+      } else {
+        it.p.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)));
+        g.lineWidth = Math.max(it.min, it.w * S);
+        g.strokeStyle = it.c;
+        g.stroke();
+      }
+      yield;
+    }
+    flush();
+  }
+
+  // ---------------------------------------------------------------- плитки
+
+  // Крупнее подложки — плитки TILE×TILE, нарисованные вектором под масштаб: уровень k — B·2^k пикселей экрана на
+  // метр, ближайший не мельче нужного. Каждая рисуется один раз и кешируется (до TILES последних); не успели
+  // за TILE_MS — пока видна размытая подложка, дорисовываем в следующих кадрах.
+  #tiles(g, dpr, W, H) {
+    const need = this.zoom * dpr;
+    if (need <= this.B * 1.25) return;
+    const k = Math.min(Math.ceil(Math.log2(ZOOM_MAX * 2 / this.B)), Math.ceil(Math.log2(need / this.B)));
+    const S = this.B * 2 ** k, m = TILE / S; // м на плитку
+    const [xmin, zmin, xmax, zmax] = this.world.bounds;
+    const cell = (v, lo, hi) => Math.max(0, Math.min(Math.floor((hi - lo) / m), Math.floor((v - lo) / m)));
+    const i0 = cell(this.#wx(0), xmin, xmax), i1 = cell(this.#wx(W), xmin, xmax);
+    const j0 = cell(this.#wz(0), zmin, zmax), j1 = cell(this.#wz(H), zmin, zmax);
+    const px = (v) => Math.round(v * dpr), end = performance.now() + TILE_MS;
+    let missing = false;
+    g.save();
+    g.beginPath();
+    g.rect(this.#sx(xmin), this.#sz(zmin), (xmax - xmin) * this.zoom, (zmax - zmin) * this.zoom);
+    g.clip();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const key = `${k}/${i}/${j}`;
+      let t = this.tiles.get(key);
+      if (t) this.tiles.delete(key);
+      else if (performance.now() < end) t = this.#tile(S, xmin + i * m, zmin + j * m);
+      else { missing = true; continue; }
+      this.tiles.set(key, t); // в конец: недавно нужная
+      const x0 = px(this.#sx(xmin + i * m)), x1 = px(this.#sx(xmin + (i + 1) * m));
+      const y0 = px(this.#sz(zmin + j * m)), y1 = px(this.#sz(zmin + (j + 1) * m));
+      g.drawImage(t, x0, y0, x1 - x0, y1 - y0);
+    }
+    g.restore();
+    const keep = Math.max(TILES, (i1 - i0 + 1) * (j1 - j0 + 1));
+    for (const key of this.tiles.keys()) { if (this.tiles.size <= keep) break; this.tiles.delete(key); }
+    if (missing && !this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
+  }
+
+  // ---------------------------------------------------------------- подписи
+
+  // Названия улиц (крупнее NAMES_ZOOM) — вдоль улицы на самом длинном её отрезке, буквами вверх; одна улица —
+  // не чаще раза в NAME_GAP px, крупные — первыми. Номера домов (крупнее NUMBERS_ZOOM) — в середине дома, если
+  // помещаются. Налезающее на уже написанное не пишем. Каждый кадр поверх подложки: текст не режется плитками.
+  #names(g, W, H) {
+    if (this.zoom < NAMES_ZOOM) return;
+    const { items, cells, nx, nz, seen } = this.idx, [xmin, zmin] = this.world.bounds, frame = ++this.idx.frame;
+    const ci = (v, lo, n) => Math.max(0, Math.min(n - 1, Math.floor((v - lo) / CELL)));
+    const roads = [], houses = [];
+    for (let j = ci(this.#wz(0), zmin, nz); j <= ci(this.#wz(H), zmin, nz); j++) {
+      for (let i = ci(this.#wx(0), xmin, nx); i <= ci(this.#wx(W), xmin, nx); i++) {
+        for (const id of cells[j * nx + i]) {
+          if (seen[id] === frame) continue;
+          seen[id] = frame;
+          const it = items[id];
+          if (it.name) roads.push(it);
+          else if (it.a && this.zoom >= NUMBERS_ZOOM) houses.push(it);
+        }
+      }
+    }
+    // Занятое место — сетка по 64 px с прямоугольниками [x0, y0, x1, y1].
+    const occ = new Map(), Q = 64;
+    const span = (r, f) => { for (let y = Math.floor(r[1] / Q); y <= Math.floor(r[3] / Q); y++) for (let x = Math.floor(r[0] / Q); x <= Math.floor(r[2] / Q); x++) f(`${x},${y}`); };
+    const fits = (r) => {
+      if (r[0] < 0 || r[1] < 0 || r[2] > W || r[3] > H) return false;
+      let ok = true;
+      span(r, (k) => { for (const o of occ.get(k) ?? []) if (o[0] < r[2] && r[0] < o[2] && o[1] < r[3] && r[1] < o[3]) ok = false; });
+      return ok;
+    };
+    const take = (r) => span(r, (k) => (occ.get(k) ?? occ.set(k, []).get(k)).push(r));
+    // Не под плашками карты и не под подписями значков (их пишем позже, поверх).
+    for (const el of this.el.querySelectorAll('.bar, .zoom, .legend')) { const b = el.getBoundingClientRect(); take([b.left, b.top, b.right, b.bottom]); }
+    for (const p of this.poi()) {
+      const dy = p.kind === 'landmark' && this.zoom > 0.3 ? 15 : p.kind === 'fuel' && this.zoom > 0.5 ? 16 : 0;
+      const x = this.#sx(p.x), y = this.#sz(p.z);
+      take([x - 10, y - 10, x + 10, y + 10]);
+      if (dy) { const w = this.#textW(p.name, '600 12px system-ui, sans-serif') / 2 + 5; take([x - w, y + dy - 8, x + w, y + dy + 8]); }
+    }
+
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.font = NAME_FONT;
+    const cand = [];
+    for (const it of roads) {
+      // Самый длинный почти прямой кусок улицы (поворот от начала куска ≤ BEND): подпись — по его хорде.
+      let best = 0, bx, by, ba, run = 0, a0 = 0, rx = 0, ry = 0;
+      for (let i = 1; i < it.p.length; i++) {
+        const x0 = this.#sx(it.p[i - 1][0]), y0 = this.#sz(it.p[i - 1][1]), x1 = this.#sx(it.p[i][0]), y1 = this.#sz(it.p[i][1]);
+        const a = Math.atan2(y1 - y0, x1 - x0), d = Math.abs(((a - a0 + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+        if (!run || d > BEND) { run = 0; a0 = a; rx = x0; ry = y0; }
+        run += Math.hypot(x1 - x0, y1 - y0);
+        if (run > best) { best = run; bx = (rx + x1) / 2; by = (ry + y1) / 2; ba = Math.atan2(y1 - ry, x1 - rx); }
+      }
+      const w = this.#textW(it.name, NAME_FONT);
+      if (best < w + 16) continue;
+      if (ba > Math.PI / 2) ba -= Math.PI; else if (ba < -Math.PI / 2) ba += Math.PI;
+      cand.push({ it, x: bx, y: by, a: ba, w, len: best });
+    }
+    cand.sort((a, b) => a.it.rank - b.it.rank || b.len - a.len);
+    const placed = new Map(); // название → [[x, y]]
+    for (const c of cand) {
+      const same = placed.get(c.it.name) ?? [];
+      if (same.some(([x, y]) => Math.hypot(x - c.x, y - c.y) < NAME_GAP)) continue;
+      const hw = (Math.abs(Math.cos(c.a)) * c.w + Math.abs(Math.sin(c.a)) * 14) / 2;
+      const hh = (Math.abs(Math.sin(c.a)) * c.w + Math.abs(Math.cos(c.a)) * 14) / 2;
+      const r = [c.x - hw, c.y - hh, c.x + hw, c.y + hh];
+      if (!fits(r)) continue;
+      take(r);
+      placed.set(c.it.name, [...same, [c.x, c.y]]);
+      g.save();
+      g.translate(c.x, c.y);
+      g.rotate(c.a);
+      g.strokeStyle = 'rgba(12,14,16,.85)';
+      g.lineWidth = 3;
+      g.strokeText(c.it.name, 0, 0.5);
+      g.fillStyle = '#ece6d6';
+      g.fillText(c.it.name, 0, 0.5);
+      g.restore();
+    }
+
+    g.font = NUMBER_FONT;
+    g.fillStyle = '#9aa1aa';
+    for (const it of houses) {
+      const [x0, z0, x1, z1] = it.bb, w = this.#textW(it.a, NUMBER_FONT);
+      if ((x1 - x0) * this.zoom < w + 4 || (z1 - z0) * this.zoom < 14) continue;
+      const x = this.#sx((x0 + x1) / 2), y = this.#sz((z0 + z1) / 2);
+      const r = [x - w / 2 - 2, y - 7, x + w / 2 + 2, y + 7];
+      if (!fits(r)) continue;
+      take(r);
+      g.fillText(it.a, x, y + 0.5);
+    }
+  }
+
+  #textW(text, font) {
+    const key = font + text;
+    let w = this.widths.get(key);
+    if (w === undefined) { this.g.font = font; this.widths.set(key, (w = this.g.measureText(text).width)); }
+    return w;
+  }
+
+  #tile(S, x0, z0) {
+    const c = document.createElement('canvas');
+    c.width = c.height = TILE;
+    const g = c.getContext('2d');
+    g.fillStyle = '#1b1f22';
+    g.fillRect(0, 0, TILE, TILE);
+    const { cells, nx, nz } = this.idx, [xmin, zmin] = this.world.bounds, m = TILE / S;
+    const ids = new Set();
+    const ci = (v, lo, n) => Math.max(0, Math.min(n - 1, Math.floor((v - lo) / CELL)));
+    for (let j = ci(z0, zmin, nz); j <= ci(z0 + m, zmin, nz); j++) {
+      for (let i = ci(x0, xmin, nx); i <= ci(x0 + m, xmin, nx); i++) for (const id of cells[j * nx + i]) ids.add(id);
+    }
+    for (const _ of this.#paint(g, S, x0, z0, [...ids].sort((a, b) => a - b)));
+    return c;
   }
 
   // ---------------------------------------------------------------- вид
@@ -200,25 +398,54 @@ export class CityMap {
     }
     if (hit) return this.go(hit.x, hit.z, hit.kind === 'fuel' ? `АЗС ${hit.name}` : hit.name);
     const x = this.#wx(sx), z = this.#wz(sy);
+    const house = this.#houseAt(x, z);
+    if (house) {
+      const street = this.world.city.streets?.[house.st];
+      const [x0, z0, x1, z1] = house.bb;
+      return this.go((x0 + x1) / 2, (z0 + z1) / 2, address(street, house.a) ?? this.world.nearestRoad(x, z, 60)?.seg.road.name, street);
+    }
     const name = this.world.nearestRoad(x, z, 60)?.seg.road.name;
     this.go(x, z, name || null);
   }
 
-  // Маршрут от машины до точки по графу улиц. false — туда не проехать.
-  go(x, z, name) {
-    const w = this.world;
-    const to = w.nearestGraphNode(x, z), [nx, nz] = w.nodes[to];
-    if (Math.hypot(nx - x, nz - z) > SNAP) return this.#info('Туда не проехать — выберите место у дороги'), false;
-    const route = this.route(to);
+  // Дом под точкой (x, z) — из индекса подложки.
+  #houseAt(x, z) {
+    const { items, cells, nx, nz } = this.#idxNow(), [xmin, zmin] = this.world.bounds;
+    const i = Math.floor((x - xmin) / CELL), j = Math.floor((z - zmin) / CELL);
+    if (i < 0 || j < 0 || i >= nx || j >= nz) return null;
+    for (const id of cells[j * nx + i]) {
+      const it = items[id];
+      if (it.k !== 'b' || x < it.bb[0] || x > it.bb[2] || z < it.bb[1] || z > it.bb[3]) continue;
+      let inside = false;
+      for (let k = 0, p = it.p, m = p.length - 1; k < p.length; m = k++) {
+        if ((p[k][1] > z) !== (p[m][1] > z) && x < ((p[m][0] - p[k][0]) * (z - p[k][1])) / (p[m][1] - p[k][1]) + p[k][0]) inside = !inside;
+      }
+      if (inside) return it;
+    }
+    return null;
+  }
+
+  #idxNow() {
+    if (!this.idx) this.#base();
+    return this.idx;
+  }
+
+  // Маршрут от машины до места (x, z): до ближайшего к нему места на улице (у дома — лучше на улице
+  // его адреса), на своей полосе; дальше до самого места — пунктиром на карте. false — туда не проехать.
+  go(x, z, name, street = null) {
+    const end = this.world.navEnd(x, z, street, SNAP);
+    if (!end) return this.#info('Туда не проехать — выберите место у дороги'), false;
+    const route = this.route(end);
     if (!route) return this.#info('Маршрут не найден'), false;
-    this.target = { x: nx, z: nz, name, node: to, route };
+    const [ex, ez] = route[route.length - 1];
+    this.target = { x: ex, z: ez, place: [x, z], name, end, route };
     this.onRoute(route, this.target);
     this.draw();
     return true;
   }
 
-  // Путь от машины до узла to — массив точек [x, z], первая — где машина (world.navRoute: по своей
-  // стороне, без встречки, назад — через разворот).
+  // Путь от машины до узла или места на улице to (world.navEnd) — массив точек [x, z], первая — где машина
+  // (world.navRoute: по своей стороне, без встречки, назад — через разворот).
   route(to) {
     return this.world.navRoute(this.car.pos.x, this.car.pos.y, this.car.heading, to);
   }
@@ -226,9 +453,10 @@ export class CityMap {
   // Перестроить маршрут от текущего места (съехал с маршрута).
   reroute() {
     if (!this.target) return;
-    const route = this.route(this.target.node);
+    const route = this.route(this.target.end);
     if (!route) return;
     this.target.route = route;
+    [this.target.x, this.target.z] = route[route.length - 1];
     this.onRoute(route, this.target);
   }
 
@@ -258,6 +486,8 @@ export class CityMap {
     const base = this.#base(), [xmin, zmin] = this.world.bounds;
     g.imageSmoothingEnabled = true;
     g.drawImage(base, this.#sx(xmin), this.#sz(zmin), base.width / this.B * this.zoom, base.height / this.B * this.zoom);
+    this.#tiles(g, dpr, W, H);
+    this.#names(g, W, H);
 
     const line = (route, color, width) => {
       g.beginPath();
@@ -272,8 +502,19 @@ export class CityMap {
     };
     for (const { route, color } of this.extra?.() ?? []) if (route?.length > 1) line(route, color, 4);
     if (this.target) {
-      line(this.target.route, '#4ab3ff', 5);
-      this.#pin(this.#sx(this.target.x), this.#sz(this.target.z));
+      const { route, place: [px, pz], x, z } = this.target;
+      line(route, '#4ab3ff', 5);
+      if (Math.hypot(px - x, pz - z) > 3) { // от улицы до самого места — пешком
+        g.beginPath();
+        g.moveTo(this.#sx(x), this.#sz(z));
+        g.lineTo(this.#sx(px), this.#sz(pz));
+        g.setLineDash([2, 5]);
+        g.strokeStyle = '#4ab3ff';
+        g.lineWidth = 3;
+        g.stroke();
+        g.setLineDash([]);
+      }
+      this.#pin(this.#sx(px), this.#sz(pz));
     }
 
     // Значки: подписи достопримечательностей — когда карта достаточно крупная; налезающая на другую — не пишем.
@@ -362,11 +603,19 @@ export class CityMap {
     this.isOpen = false;
     this.el.classList.remove('open');
     document.body.classList.remove('in-map');
+    this.tiles.clear(); // память — игре
     this.onClose?.();
   }
 
   toggle() { this.isOpen ? this.close() : this.open(); }
 }
+
+// «улица Пушкинская» → «ул. Пушкинская»: подпись короче, на улице помещается чаще.
+const SHORT = { улица: 'ул.', проспект: 'пр.', переулок: 'пер.', проезд: 'пр-д', бульвар: 'б-р', площадь: 'пл.', шоссе: 'ш.', набережная: 'наб.', тракт: 'тр.' };
+const short = (name) => name.replace(/[а-яё]+/gi, (w) => SHORT[w.toLowerCase()] ?? w);
+
+// «Пушкинская улица», «210» → «Пушкинская ул., 210»; без номера — null.
+const address = (street, num) => (num ? (street ? `${short(street)}, ${num}` : `дом ${num}`) : null);
 
 export const routeLen = (r) => r.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - r[i - 1][0], p[1] - r[i - 1][1]) : 0), 0);
 const fmtDist = (d) => (d < 1000 ? `${Math.round(d / 10) * 10} м` : `${(d / 1000).toFixed(1)} км`);

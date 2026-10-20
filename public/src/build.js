@@ -2331,9 +2331,11 @@ export function buildFenceChunk(world, info, mats) {
 export const MINIMAP_SCALE = 0.5; // пикселей на метр (1 px = 2 м)
 
 // Тайл миникарты на квадрат: вода и парки, дома (свои и соседей — что заходит за край), дороги.
-export function drawMinimapTile(world, info) {
+// S — пикселей плитки на метр (под экран: на retina и большой миникарте — крупнее MINIMAP_SCALE); тонкие линии —
+// не тоньше, чем были при MINIMAP_SCALE.
+export function drawMinimapTile(world, info, S = MINIMAP_SCALE) {
   const { x0, z0, x1, z1, data } = info;
-  const S = MINIMAP_SCALE;
+  const k = S / MINIMAP_SCALE;
   const c = document.createElement('canvas');
   c.width = Math.ceil((x1 - x0) * S);
   c.height = Math.ceil((z1 - z0) * S);
@@ -2354,7 +2356,7 @@ export function drawMinimapTile(world, info) {
   for (const w of data.waterways) {
     g.beginPath();
     w.p.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)));
-    g.lineWidth = Math.max(1, w.w * S);
+    g.lineWidth = Math.max(k, w.w * S);
     g.stroke();
   }
   g.fillStyle = '#34373a';
@@ -2377,7 +2379,7 @@ export function drawMinimapTile(world, info) {
     const p = r.n.map((i) => world.nodes[i]);
     g.moveTo(tx(p[0][0]), tz(p[0][1]));
     for (const [x, z] of p) g.lineTo(tx(x), tz(z));
-    g.lineWidth = Math.max(1.2, r.w * S);
+    g.lineWidth = Math.max(1.2 * k, r.w * S);
     g.strokeStyle = MARKED_CLASSES.has(r.k) ? '#c9c4b5' : '#7c7a74';
     g.stroke();
   }

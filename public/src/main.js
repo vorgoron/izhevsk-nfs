@@ -780,11 +780,18 @@ async function main() {
   const northEl = $('north');
   const mg = mm.getContext('2d');
   function drawMinimap() {
-    const size = mm.width;
+    // Рисуем в единицах холста 440×440 (размер в разметке), а сам холст — под экран: на retina и большой
+    // миникарте 440 px растягивались до 840 и мылили. Тайлы — в разрешении, которое холст покажет.
+    const size = 440;
     const scale = MINIMAP_SCALE;
     const [xmin, zmin] = world.bounds;
     const zoom = 1.1;
+    const px = Math.round(mm.clientWidth * Math.min(devicePixelRatio, 2));
+    if (px && mm.width !== px) mm.width = mm.height = px;
+    const k = mm.width / size;
+    minimap.setRes(scale * Math.min(3, Math.ceil(zoom * k * 2) / 2));
     const cx = (car.pos.x - xmin) * scale, cz = (car.pos.y - zmin) * scale;
+    mg.setTransform(k, 0, 0, k, 0, 0);
     mg.save();
     mg.fillStyle = '#111';
     mg.fillRect(0, 0, size, size);
