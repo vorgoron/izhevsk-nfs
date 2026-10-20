@@ -4,6 +4,7 @@ import { MARKED_CLASSES, SIDEWALK, SOFT_FENCES, TRAM_BED, TRAM_DROP, TRAM_GRASS,
 import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
 import { SPECIES, LEAF, treeGeometry, LEAF_GLSL } from './trees.js';
+import { shopColors, shopLine } from './shops.js';
 
 const AREA_COLORS = {
   water: '#3d6f8e', park: '#4f6b3a', grass: '#6c8448', sand: '#cdbb8a', industrial: '#7a7670', paved: '#9a968e',
@@ -837,8 +838,9 @@ const FACADES = [
   { w: 6.0, draw: publicB },    // 10
   { w: 3.6, draw: stalin },     // 11 малоэтажный послевоенный
   { w: 3.2, draw: panelEnd },   // 12 глухой торец панельного дома
+  { w: 3.0, draw: vitrine },    // 13 витрина магазина под вывеской (только низ стены)
 ];
-const END_WALL = 12;
+const END_WALL = 12, VITRINE = 13;
 
 // Маска «не красить в цвет стены» (стекло, рамы, вставки): рисуется параллельно атласу, потом
 // уходит в альфу атласа (0.5 — свой цвет, 1 — умножить на цвет стены, 0.25 — стекло: свой цвет,
@@ -996,6 +998,18 @@ function publicB(g, ground, rnd) {
 function panelEnd(g) {
   seams(g, 256);
 }
+// Витрина магазина: сверху облицовка под вывеску (≈0.8 м, красится вершинным цветом — по вывеске), ниже стекло
+// во всю ширину в тёмной раме и цоколь. Оба ряда одинаковые: на склоне витрина бывает в два ряда.
+function vitrine(g, ground, rnd) {
+  shade(g, 0.15, 0, 32, FA.W, 4);
+  g.fillStyle = '#34383c';
+  g.fillRect(0, 36, FA.W, 92);
+  raw(0, 36, FA.W, 92);
+  for (const x of [14, 268]) glass(g, x, 44, 230, 70, rnd, { sill: false, mull: false, frame: '#34383c' });
+  g.fillStyle = '#5a5e62';
+  g.fillRect(0, 116, FA.W, 12);
+  raw(0, 116, FA.W, 12);
+}
 
 function facadeAtlas(renderer) {
   const c = document.createElement('canvas');
@@ -1073,7 +1087,7 @@ function facadeMaterial(renderer) {
         }
         diffuseColor *= sampledDiffuseColor;`)
       .replace('#include <color_fragment>', 'diffuseColor.rgb *= mix(vec3(1.0), vColor, tintMask);')
-      // Ночью горит часть окон (плитками атласа); первый этаж (витрины) — чаще.
+      // Ночью горит часть окон (плитками атласа); первый этаж — чаще, витрины магазинов — все.
       // Тёплые и холодные, разной яркости; горящее окно не освещается, а светится само.
       .replace('#include <emissivemap_fragment>', `
         if (uNight > 0.0 && glassMask > 0.0) {
@@ -1082,7 +1096,7 @@ function facadeMaterial(renderer) {
           float seed = floor(fract(vFac.x) * 2100.0 + 0.5);
           float h = fract(sin(dot(win, vec2(12.9898, 78.233)) + seed * 0.917 + stripe * 3.7) * 43758.5453);
           float h2 = fract(h * 157.31);
-          float on = step(fu.y < 1.0 ? 0.45 : 0.68, h);
+          float on = stripe == ${VITRINE}.0 ? 1.0 : step(fu.y < 1.0 ? 0.45 : 0.68, h);
           vec3 lamp = mix(vec3(1.0, 0.72, 0.38), vec3(0.85, 0.9, 1.0), step(0.8, h2)) * (0.55 + 0.6 * fract(h2 * 31.7));
           float lit = on * glassMask * uNight;
           diffuseColor.rgb *= 1.0 - lit;
@@ -1233,6 +1247,50 @@ function domeMeshes(domes, mats) {
 // Куски одного дома, разрезанного аркой (общий g): индекс по g, чтобы уровень крыши был общим.
 let pieceIndex = null;
 
+// Вывески дома (city.shops → [x, z, угол, ширина, дом, вид, текст]): по объекту дома, строится один раз.
+let shopIndex = null;
+function shopsOf(world, b) {
+  if (!shopIndex) {
+    shopIndex = new Map();
+    for (const s of world.city.shops || []) {
+      const q = world.city.buildings[s[4]];
+      (shopIndex.get(q) || shopIndex.set(q, []).get(q)).push(s);
+    }
+  }
+  return shopIndex.get(b);
+}
+
+// Витрины на ребре стены: участки [a, b] м вдоль ребра под вывесками этого ребра (вывеска ± 0.6 м; участки ближе
+// 2.5 м друг к другу и к углу сливаются), линия верха — межэтажная над вывеской (shopLine), цвет облицовки — по
+// вывеске, приглушённый серым; у слитых вывесок разного цвета — тёмно-серый.
+const FRONT_PAD = 0.6, FRONT_JOIN = 2.5;
+const FRONT_GREY = new THREE.Color('#c9cac6'), FRONT_MIXED = new THREE.Color('#5d6165');
+function shopfronts(world, signs, x1, z1, x2, z2, len, nx, nz, gmax, fh, extra, top) {
+  const dx = (x2 - x1) / len, dz = (z2 - z1) / len;
+  const out = [];
+  for (const [x, z, a, w, , k, text] of signs) {
+    if (nx * Math.sin(a) + nz * Math.cos(a) < 0.95) continue;
+    const t = (x - x1) * dx + (z - z1) * dz, off = (x - x1) * nx + (z - z1) * nz;
+    if (Math.abs(off) > 0.3 || t < -0.5 || t > len + 0.5) continue;
+    const line = Math.min(shopLine(world.terrain(x, z), gmax, fh, extra), top - 0.15);
+    const color = new THREE.Color(shopColors(k, text)[0]).lerp(FRONT_GREY, 0.4);
+    out.push({ a: Math.max(0, t - w / 2 - FRONT_PAD), b: Math.min(len, t + w / 2 + FRONT_PAD), line, color });
+  }
+  if (!out.length) return null;
+  out.sort((p, q) => p.a - q.a);
+  const merged = [out[0]];
+  for (const f of out.slice(1)) {
+    const m = merged[merged.length - 1];
+    if (f.a - m.b >= FRONT_JOIN) { merged.push(f); continue; }
+    m.b = Math.max(m.b, f.b);
+    m.line = Math.max(m.line, f.line);
+    if (!m.color.equals(f.color)) m.color = FRONT_MIXED; // у вывесок разный цвет — облицовка нейтральная
+  }
+  if (merged[0].a < FRONT_JOIN) merged[0].a = 0;
+  if (len - merged[merged.length - 1].b < FRONT_JOIN) merged[merged.length - 1].b = len;
+  return merged;
+}
+
 export function buildBuildingChunk(world, list, mats) {
   const wp = [], wn = [], wc = [], wuv = [], wf = [];
   const rp = [], rc = [];
@@ -1307,6 +1365,7 @@ export function buildBuildingChunk(world, list, mats) {
     // Панельные дома: короткие стены длинного дома — глухие торцы.
     let longest = 0;
     for (let i = 0; i < pts.length; i++) longest = Math.max(longest, Math.hypot(pts[(i + 1) % pts.length][0] - pts[i][0], pts[(i + 1) % pts.length][1] - pts[i][1]));
+    const signs = shopsOf(world, b);
     for (const ring of [pts, ...holes]) {
     const rc_ = stand && ring !== pts ? seats : col;
     let u = 0;
@@ -1316,21 +1375,40 @@ export function buildBuildingChunk(world, list, mats) {
       if (len < 0.01 || (ring === pts && skip.has(i))) continue;
       const nx = (z2 - z1) / len, nz = -(x2 - x1) / len;
       const band = (fac === 0 || fac === 7) && len < 16 && len < longest * 0.4 ? END_WALL : fac;
-      const u1 = u, u2 = u + len / FACADES[band].w;
-      const vb = (base - gmax) / fh + extra, vt = b.h / fh + extra;
-      // a=(p1,base) b=(p2,base) c=(p2,top) d=(p1,top); треугольники (a,c,b) и (a,d,c)
-      const quad = [
-        [x1, base, z1, u1, vb], [x2, top, z2, u2, vt], [x2, base, z2, u2, vb],
-        [x1, base, z1, u1, vb], [x1, top, z1, u1, vt], [x2, top, z2, u2, vt],
-      ];
-      for (const [x, y, z, uu, vv] of quad) {
-        wp.push(x, y, z);
-        wn.push(nx, 0, nz);
-        wc.push(rc_.r, rc_.g, rc_.b);
-        wuv.push(uu, vv);
-        wf.push(band + 0.01 + (hash % 997) / 2100, floors && floors + extra);
+      // Кусок стены от s0 до s1 м вдоль ребра, по высоте y0…y1; v — этажи от gmax (как у всей стены),
+      // u — непрерывно по ребру для своей полосы.
+      const piece = (s0, s1, y0, y1, bd, c) => {
+        const w = FACADES[bd].w, ua = bd === band ? u + s0 / w : s0 / w, ub = bd === band ? u + s1 / w : s1 / w;
+        const ax = x1 + (x2 - x1) * s0 / len, az = z1 + (z2 - z1) * s0 / len;
+        const bx = x1 + (x2 - x1) * s1 / len, bz = z1 + (z2 - z1) * s1 / len;
+        const va = (y0 - gmax) / fh + extra, vb = (y1 - gmax) / fh + extra;
+        // a=(p1,низ) b=(p2,низ) c=(p2,верх) d=(p1,верх); треугольники (a,c,b) и (a,d,c)
+        const quad = [
+          [ax, y0, az, ua, va], [bx, y1, bz, ub, vb], [bx, y0, bz, ub, va],
+          [ax, y0, az, ua, va], [ax, y1, az, ua, vb], [bx, y1, bz, ub, vb],
+        ];
+        for (const [x, y, z, uu, vv] of quad) {
+          wp.push(x, y, z);
+          wn.push(nx, 0, nz);
+          wc.push(c.r, c.g, c.b);
+          wuv.push(uu, vv);
+          wf.push(bd + 0.01 + (hash % 997) / 2100, floors && floors + extra);
+        }
+      };
+      // Под вывесками — витрины: низ стены до линии вывески другой полосой, выше — как было.
+      const fronts = ring === pts && signs && floors ? shopfronts(world, signs, x1, z1, x2, z2, len, nx, nz, gmax, fh, extra, top) : null;
+      let s = 0;
+      for (const f of fronts || []) {
+        if (f.a > s) piece(s, f.a, base, top, band, rc_);
+        piece(f.a, f.b, f.line, top, band, rc_);
+        // Витрина — один этаж под вывеской; ниже (цоколь, на склоне — нижние ряды) — обычный фасад.
+        const row0 = Math.max(base, gmax - extra * fh, f.line - fh);
+        if (row0 > base) piece(f.a, f.b, base, row0, band, rc_);
+        piece(f.a, f.b, row0, f.line, VITRINE, f.color);
+        s = f.b;
       }
-      u = u2;
+      if (s < len) piece(s, len, base, top, band, rc_);
+      u += len / FACADES[band].w;
     }
     }
 

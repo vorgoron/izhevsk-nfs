@@ -7,6 +7,7 @@ import {
   drawMinimapTile, MINIMAP_SCALE, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
 import { buildPropChunk, propMaterials } from './props.js';
+import { buildShopChunk, SHOP_NEAR } from './shops.js';
 
 const TREE_NEAR = 450; // м до квадрата: ближе — подробные деревья
 
@@ -50,7 +51,7 @@ export class ChunkManager {
   #build(ci, cj) {
     const w = this.world, info = w.chunkInfo(ci, cj);
     const group = new THREE.Group();
-    group.userData = { ci, cj, trees: [] };
+    group.userData = { ci, cj, trees: [], shops: null };
     const tag = (o, label) => ((o.userData.perf = label), o); // разбивка треугольников в `?perf`
     group.add(tag(buildTerrainChunk(w, info, this.texSize, this.renderer), 'рельеф'));
     if (info.data.runs.length) group.add(tag(buildRoadChunk(w, info.data.runs, this.mats.roads), 'дороги'));
@@ -113,6 +114,23 @@ export class ChunkManager {
       const d = this.#dist(ci, cj, px, pz), cur = trees[0].geometry === trees[0].userData.lod[1];
       const far = cur ? d > TREE_NEAR - 60 : d > TREE_NEAR;
       if (far !== cur) for (const t of trees) t.geometry = t.userData.lod[far ? 1 : 0];
+    }
+    // Вывески — только у ближних квадратов (у каждого своя текстура); не больше одного квадрата за кадр.
+    let signs = 0;
+    for (const group of this.loaded.values()) {
+      const { ci, cj, shops } = group.userData, d = this.#dist(ci, cj, px, pz);
+      if (shops && d > SHOP_NEAR + 100) {
+        group.remove(shops);
+        shops.geometry.dispose();
+        shops.material.map.dispose();
+        shops.material.dispose();
+        group.userData.shops = null;
+      } else if (shops === null && d < SHOP_NEAR && !signs) {
+        signs++;
+        const mesh = buildShopChunk(this.world, this.world.chunkInfo(ci, cj), this.renderer);
+        group.userData.shops = mesh || false; // false — в квадрате вывесок нет
+        if (mesh) group.add(((mesh.userData.perf = 'вывески'), mesh));
+      }
     }
     // Рядом с машиной — сразу и без лимита (после эвакуатора, рестарта гонки).
     for (const { i, j } of this.#wanted(px, pz, 600)) if (!this.loaded.has(this.#key(i, j))) this.#build(i, j);

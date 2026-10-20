@@ -412,13 +412,18 @@ def ring_xy(ids):
     return pts
 
 
-def poly_area(pts):
+def poly_area_signed(pts):
+    """Площадь со знаком: > 0 — обход, у которого наружная нормаль ребра (dz, -dx), как в браузере."""
     a = 0.0
     for i in range(len(pts)):
         x1, z1 = pts[i]
         x2, z2 = pts[(i + 1) % len(pts)]
         a += x1 * z2 - x2 * z1
-    return abs(a) / 2
+    return a / 2
+
+
+def poly_area(pts):
+    return abs(poly_area_signed(pts))
 
 
 COLOUR = re.compile(r"^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|[a-z]+)$")
@@ -879,6 +884,190 @@ def transport_stops(inside):
             continue
         out.append([round(x, 1), round(z, 1), {"yes": 1, "no": 0}.get(t.get("shelter"), 2)])
     print(f"stops: {len(out)}")
+    return out
+
+
+# ---------------------------------------------------------------- вывески
+
+# Вывески на фасадах: магазины, банки, аптеки, кафе, конторы из OSM (точки внутри дома или у стены, реже —
+# сам контур дома с shop=*). Вид вывески в браузере — по виду k (цвет), известные сети — своим цветом по названию.
+SHOP_KIND = {
+    "supermarket": "food", "convenience": "food", "greengrocer": "food", "butcher": "food", "bakery": "food",
+    "alcohol": "food", "beverages": "food", "dairy": "food", "confectionery": "food", "seafood": "food",
+    "pastry": "food", "farm": "food", "frozen_food": "food", "deli": "food", "tea": "food", "coffee": "food",
+    "outpost": "post", "car_repair": "auto", "car": "auto", "car_parts": "auto", "tyres": "auto",
+    "hairdresser": "beauty", "beauty": "beauty", "cosmetics": "beauty", "perfumery": "beauty", "chemist": "beauty",
+    "money_lender": "bank", "pawnbroker": "bank",
+}
+AMENITY_KIND = {
+    "pharmacy": "pharm", "bank": "bank", "bureau_de_change": "bank", "money_transfer": "bank",
+    "cafe": "cafe", "fast_food": "cafe", "restaurant": "cafe", "bar": "cafe", "pub": "cafe", "ice_cream": "cafe",
+    "food_court": "cafe", "post_office": "post", "clinic": "med", "dentist": "med", "doctors": "med",
+    "veterinary": "med", "car_wash": "auto", "driving_school": "office", "library": "office", "cinema": "cafe",
+    "theatre": "office", "nightclub": "cafe",
+}
+# Без названия — что написано на вывеске.
+SHOP_GENERIC = {
+    "supermarket": "Продукты", "convenience": "Продукты", "greengrocer": "Овощи-фрукты", "butcher": "Мясо",
+    "bakery": "Хлеб", "alcohol": "Напитки", "beverages": "Напитки", "outpost": "Пункт выдачи",
+    "car_repair": "Автосервис", "car_parts": "Автозапчасти", "tyres": "Шиномонтаж", "hairdresser": "Парикмахерская",
+    "beauty": "Салон красоты", "cosmetics": "Косметика", "clothes": "Одежда", "shoes": "Обувь", "florist": "Цветы",
+    "hardware": "Хозтовары", "doityourself": "Стройматериалы", "mobile_phone": "Связь", "electronics": "Электроника",
+    "furniture": "Мебель", "kiosk": "Киоск", "pet": "Зоотовары", "books": "Книги", "optician": "Оптика",
+    "jewelry": "Ювелирный", "tobacco": "Табак", "variety_store": "Всё по одной цене", "pharmacy": "Аптека",
+    "bank": "Банк", "cafe": "Кафе", "fast_food": "Кафе", "restaurant": "Ресторан", "bar": "Бар", "pub": "Пивной бар",
+    "post_office": "Почта России", "dentist": "Стоматология", "clinic": "Клиника", "doctors": "Медцентр",
+    "car_wash": "Автомойка", "veterinary": "Ветклиника", "money_lender": "Займы", "pawnbroker": "Ломбард",
+    "ice_cream": "Мороженое", "travel_agency": "Турагентство", "fitness_centre": "Фитнес", "hotel": "Гостиница",
+}
+SIGN_GAP = 0.5        # м между вывесками на одной стене
+SIGN_REACH = 10.0     # м: точка вне дома — к стене не дальше
+SIGN_PER_WALL = 6
+
+
+def shop_kind(t):
+    """Вид вывески и что на ней написано; None — вывески нет (школы, банкоматы, стоянки…)."""
+    if t.get("disused:shop") or t.get("shop") in ("vacant", "no"):
+        return None
+    if "shop" in t:
+        k, key = SHOP_KIND.get(t["shop"], "shop"), t["shop"]
+    elif t.get("amenity") in AMENITY_KIND:
+        k, key = AMENITY_KIND[t["amenity"]], t["amenity"]
+    elif "office" in t or "craft" in t:
+        k, key = "office", t.get("office") or t.get("craft")
+    elif t.get("leisure") == "fitness_centre" or t.get("tourism") in ("hotel", "hostel"):
+        k, key = "office", t.get("leisure") or "hotel"
+    else:
+        return None
+    text = (t.get("name") or t.get("brand") or t.get("name:ru") or SHOP_GENERIC.get(key) or "").strip()
+    if not text or k == "office" and not (t.get("name") or t.get("brand")):
+        return None  # контора без названия — пустая табличка ни к чему
+    return k, text[:40]
+
+
+def shop_signs(buildings, roads, road_nodes):
+    """Вывески: [x, z, угол лица, ширина, дом, вид, текст]. Точка — на стене;
+    угол — atan2(nx, nz) наружной нормали. Стена выбирается ближняя к точке, но с поправкой на улицу:
+    внутри большого дома ближней бывает дворовая. Вывески одной стены раздвигаются, не влезли — сужаются."""
+    pois = []
+    for nid, t in node_tags.items():
+        if (sk := shop_kind(t)):
+            pois.append((*project(*nodes[nid]), *sk))
+    for nds, t in ways.values():
+        if nds[0] == nds[-1] and (sk := shop_kind(t)):
+            pts = [project(*nodes[n]) for n in nds[:-1] if n in nodes]
+            if len(pts) >= 3:
+                pois.append((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts), *sk))
+    # Одно и то же место точкой и контуром — одна вывеска.
+    seen, uniq = {}, []
+    for p in pois:
+        key = (p[3].lower(), int(p[0] // 40), int(p[1] // 40))
+        if key not in seen:
+            seen[key] = 1
+            uniq.append(p)
+
+    cell = 50.0
+    bgrid, rgrid = {}, {}
+    for bi, b in enumerate(buildings):
+        if b.get("mh") or b["s"] == 5:
+            continue  # переходы над дорогой, трибуны и навесы
+        xs, zs = [p[0] for p in b["p"]], [p[1] for p in b["p"]]
+        for i in range(int((min(xs) - SIGN_REACH) // cell), int((max(xs) + SIGN_REACH) // cell) + 1):
+            for j in range(int((min(zs) - SIGN_REACH) // cell), int((max(zs) + SIGN_REACH) // cell) + 1):
+                bgrid.setdefault((i, j), []).append(bi)
+    for r in roads:
+        if r["k"] not in DRIVE or r["br"] or r["tu"]:
+            continue
+        pts = [road_nodes[n] for n in r["n"]]
+        for a, b in zip(pts, pts[1:]):
+            for i in range(int(min(a[0], b[0]) // cell), int(max(a[0], b[0]) // cell) + 1):
+                for j in range(int(min(a[1], b[1]) // cell), int(max(a[1], b[1]) // cell) + 1):
+                    rgrid.setdefault((i, j), []).append((a, b))
+
+    def seg_d(x, z, a, b):
+        dx, dz = b[0] - a[0], b[1] - a[1]
+        L2 = dx * dx + dz * dz or 1e-9
+        t = max(0.0, min(1.0, ((x - a[0]) * dx + (z - a[1]) * dz) / L2))
+        return math.hypot(x - a[0] - dx * t, z - a[1] - dz * t), t
+
+    def road_d(x, z):
+        ci, cj = int(x // cell), int(z // cell)
+        best = 100.0
+        for i in range(ci - 2, ci + 3):
+            for j in range(cj - 2, cj + 3):
+                for a, b in rgrid.get((i, j), ()):
+                    best = min(best, seg_d(x, z, a, b)[0])
+        return best
+
+    walls = {}  # (дом, ребро) → [(t, ширина, вид, текст)]
+    road_cache = {}
+    for x, z, k, text in uniq:
+        cand = bgrid.get((int(x // cell), int(z // cell)), ())
+        home = next((bi for bi in cand if point_in(x, z, buildings[bi]["p"])), None)
+        best = None
+        for bi in ([home] if home is not None else cand):
+            p = buildings[bi]["p"]
+            ccw = poly_area_signed(p) > 0
+            skip = set(buildings[bi].get("x", ()))
+            for i in range(len(p)):
+                a, b = p[i], p[(i + 1) % len(p)]
+                L = math.dist(a, b)
+                if L < 2.6 or i in skip:
+                    continue
+                d, t = seg_d(x, z, a, b)
+                if home is None and d > SIGN_REACH:
+                    continue
+                if (bi, i) not in road_cache:
+                    # Наружная нормаль: у обхода против часовой (x — восток, z — юг) — (dz, -dx).
+                    nx, nz = ((b[1] - a[1]) / L, -(b[0] - a[0]) / L) if ccw else (-(b[1] - a[1]) / L, (b[0] - a[0]) / L)
+                    mx, mz = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+                    # Стена в щель между домами (в 4 м перед ней другой дом) вывеску не получает.
+                    fx, fz = mx + nx * 4, mz + nz * 4
+                    shut = any(oi != bi and point_in(fx, fz, buildings[oi]["p"])
+                               for oi in bgrid.get((int(fx // cell), int(fz // cell)), ()))
+                    road_cache[(bi, i)] = None if shut else road_d(mx + nx * 1.5, mz + nz * 1.5)
+                if road_cache[(bi, i)] is None:
+                    continue
+                if home is not None:
+                    d += 0.6 * road_cache[(bi, i)]
+                if best is None or d < best[0]:
+                    best = (d, bi, i, t * L)
+        if best:
+            w = max(2.0, min(7.5, 0.9 + 0.36 * len(text)))
+            walls.setdefault(best[1:3], []).append((best[3], w, k, text))
+
+    out = []
+    for (bi, i), signs in walls.items():
+        b = buildings[bi]
+        p = b["p"]
+        a, c = p[i], p[(i + 1) % len(p)]
+        L = math.dist(a, c)
+        ccw = poly_area_signed(p) > 0
+        nx, nz = ((c[1] - a[1]) / L, -(c[0] - a[0]) / L) if ccw else (-(c[1] - a[1]) / L, (c[0] - a[0]) / L)
+        span = L - 1.0
+        signs = sorted(signs, key=lambda s: s[0])[:SIGN_PER_WALL]
+        while signs:
+            need = sum(s[1] for s in signs) + SIGN_GAP * (len(signs) - 1)
+            f = min(1.0, (span - SIGN_GAP * (len(signs) - 1)) / sum(s[1] for s in signs)) if need > span else 1.0
+            if f * min(s[1] for s in signs) >= 1.6:
+                break
+            signs.remove(max(signs, key=lambda s: s[1]))  # самую длинную — долой, остальным места больше
+        # Раздвинуть по стене: слева направо не налезая, затем вернуть за правый край.
+        ws = [s[1] * f for s in signs] if signs else []
+        cs, right = [], 0.5
+        for (t, _, _, _), w in zip(signs, ws):
+            cs.append(max(t, right + w / 2))
+            right = cs[-1] + w / 2 + SIGN_GAP
+        limit = L - 0.5
+        for j in range(len(cs) - 1, -1, -1):
+            cs[j] = min(cs[j], limit - ws[j] / 2)
+            limit = cs[j] - ws[j] / 2 - SIGN_GAP
+        for (_, _, k, text), w, cc in zip(signs, ws, cs):
+            x = a[0] + (c[0] - a[0]) * cc / L
+            z = a[1] + (c[1] - a[1]) * cc / L
+            # Дом — индекс в city.buildings: высоту вывески браузер ставит по этажам его фасада.
+            out.append([round(x, 2), round(z, 2), round(math.atan2(nx, nz), 3), round(w, 2), bi, k, text])
+    print(f"shop signs: {len(out)} of {len(uniq)} places")
     return out
 
 
@@ -1742,6 +1931,7 @@ def build_city():
         "fuel": fuel,
         "trams": tram_routes(aligned),
         "stops": transport_stops(inside),
+        "shops": shop_signs(buildings, roads, road_nodes),
         "fences": fence_list,
         "landmarks": landmark_entries(),
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
