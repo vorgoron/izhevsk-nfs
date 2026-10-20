@@ -488,6 +488,7 @@ async function main() {
     ],
     extra: () => (race.state === 'running' || race.state === 'countdown' ? [{ route: race.route, color: '#ffd23f' }] : []),
     onRoute: (route) => { navRoute = route; offRoute = 0; menu.sync(); },
+    teleport: (x, z) => { respawnAt(x, z); citymap.reroute(); },
   });
   citymap.onClose = () => { sound.setPaused(menu.isOpen); menu.sync(); };
   game.citymap = citymap;

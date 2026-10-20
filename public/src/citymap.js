@@ -36,13 +36,15 @@ export class CityMap {
 
   // world, car; poi() — значки: [{ kind: 'fuel'|'landmark'|'camera'|'ghost', name, x, z }];
   // onRoute(route | null, target) — проложен / сброшен маршрут.
+  // teleport(x, z) — Ctrl (Cmd) + нажатие: перенести машину туда (для отладки).
   // base — пикселей подложки на метр (на телефоне меньше: холст на весь город).
-  constructor({ world, car, poi, onRoute, extra, base = 0.2 }) {
+  constructor({ world, car, poi, onRoute, extra, teleport, base = 0.2 }) {
     this.world = world;
     this.B = base;
     this.car = car;
     this.poi = poi;
     this.onRoute = onRoute;
+    this.teleport = teleport;
     this.extra = extra; // () => [{ route, color }] — маршрут гонки и т. п.
     this.isOpen = false;
     this.target = null; // { x, z — конец маршрута, place — выбранное место [x, z], name, end, route }
@@ -399,12 +401,23 @@ export class CityMap {
     const up = (e) => {
       if (!pts.has(e.pointerId)) return;
       pts.delete(e.pointerId);
-      if (pts.size === 0 && moved <= TAP && e.type === 'pointerup') this.#tap(e.clientX, e.clientY);
+      if (pts.size === 0 && moved <= TAP && e.type === 'pointerup') {
+        if ((e.ctrlKey || e.metaKey) && this.teleport) this.#teleport(e.clientX, e.clientY);
+        else this.#tap(e.clientX, e.clientY);
+      }
       if (pts.size < 2) pinch = 0;
     };
     cv.addEventListener('pointerup', up);
+    cv.addEventListener('contextmenu', (e) => e.preventDefault()); // Ctrl + нажатие на Mac — это правая кнопка
     cv.addEventListener('pointercancel', up);
     cv.addEventListener('wheel', (e) => { e.preventDefault(); this.#zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+  }
+
+  // Ctrl + нажатие: машина — на ближайшую к месту дорогу, карта закрывается.
+  #teleport(sx, sy) {
+    const r = this.cv.getBoundingClientRect();
+    this.teleport(this.#wx(sx - r.left), this.#wz(sy - r.top));
+    this.close();
   }
 
   // Нажатие: значок рядом — маршрут к нему, иначе — к ближайшей улице.
