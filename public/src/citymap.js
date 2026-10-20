@@ -16,12 +16,19 @@ const CELL = 250;          // м: ячейка индекса, по которо
 const TILE = 512;          // px: сторона плитки (вектором, когда карта крупнее подложки)
 const TILES = 64;          // плиток в памяти (по 1 МБ); видимые не выбрасываются
 const TILE_MS = 12;        // мс за кадр на новые плитки
+const NAMES_ZOOM = 0.45;   // крупнее — названия улиц
+const NUMBERS_ZOOM = 1.3;  // крупнее — номера домов
+const BEND = 0.3;          // рад: насколько может повернуть улица под одной подписью
+const NAME_GAP = 320;      // px: одна и та же улица подписана не чаще
+const NAME_FONT = '600 11px system-ui, sans-serif';
+const NUMBER_FONT = '10px system-ui, sans-serif';
 
 const ROAD_COLOR = { trunk: '#e8b44a', primary: '#e8c46a', secondary: '#d9d2bd', tertiary: '#c9c4b5' };
 
 export class CityMap {
   #work = null; // недорисованная подложка (генератор #steps)
   tiles = new Map(); // 'k/i/j' → холст плитки, по давности использования
+  widths = new Map(); // шрифт + текст → ширина, px
 
   // world, car; poi() — значки: [{ kind: 'fuel'|'landmark'|'camera'|'ghost', name, x, z }];
   // onRoute(route | null, target) — проложен / сброшен маршрут.
@@ -116,6 +123,7 @@ export class CityMap {
     const add = (it, pad = 0) => {
       let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
       for (const [x, z] of it.p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      it.bb = [x0, z0, x1, z1];
       const id = items.push(it) - 1;
       const cx = (x) => Math.max(0, Math.min(nx - 1, Math.floor((x - xmin) / CELL)));
       const cz = (z) => Math.max(0, Math.min(nz - 1, Math.floor((z - zmin) / CELL)));
@@ -127,13 +135,14 @@ export class CityMap {
     }
     for (const r of w.city.waterways) add({ k: 'l', p: r.p, w: r.w, min: 0.8, c: '#24465c' }, r.w);
     yield;
-    for (const b of w.city.buildings) add({ k: 'b', p: b.p });
+    for (const b of w.city.buildings) add({ k: 'b', p: b.p, a: b.a });
     yield;
     const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
     for (const r of [...w.roads].sort((a, b) => order(a.k) - order(b.k))) {
-      add({ k: 'l', p: r.n.map((id) => w.nodes[id]), w: r.w, min: r.k in ROAD_COLOR ? 1.6 : 0.8, c: ROAD_COLOR[r.k] ?? '#6f6d68' }, r.w);
+      add({ k: 'l', p: r.n.map((id) => w.nodes[id]), w: r.w, min: r.k in ROAD_COLOR ? 1.6 : 0.8, c: ROAD_COLOR[r.k] ?? '#6f6d68',
+        name: r.name && short(r.name), rank: order(r.k) }, r.w);
     }
-    return (this.idx = { items, cells, nx, nz });
+    return (this.idx = { items, cells, nx, nz, seen: new Uint32Array(items.length), frame: 0 });
   }
 
   // Рисует items[ids] (ids — по возрастанию, это и есть порядок) в масштабе S пикселей на метр, (ox, oz) — левый
@@ -208,6 +217,108 @@ export class CityMap {
     const keep = Math.max(TILES, (i1 - i0 + 1) * (j1 - j0 + 1));
     for (const key of this.tiles.keys()) { if (this.tiles.size <= keep) break; this.tiles.delete(key); }
     if (missing && !this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
+  }
+
+  // ---------------------------------------------------------------- подписи
+
+  // Названия улиц (крупнее NAMES_ZOOM) — вдоль улицы на самом длинном её отрезке, буквами вверх; одна улица —
+  // не чаще раза в NAME_GAP px, крупные — первыми. Номера домов (крупнее NUMBERS_ZOOM) — в середине дома, если
+  // помещаются. Налезающее на уже написанное не пишем. Каждый кадр поверх подложки: текст не режется плитками.
+  #names(g, W, H) {
+    if (this.zoom < NAMES_ZOOM) return;
+    const { items, cells, nx, nz, seen } = this.idx, [xmin, zmin] = this.world.bounds, frame = ++this.idx.frame;
+    const ci = (v, lo, n) => Math.max(0, Math.min(n - 1, Math.floor((v - lo) / CELL)));
+    const roads = [], houses = [];
+    for (let j = ci(this.#wz(0), zmin, nz); j <= ci(this.#wz(H), zmin, nz); j++) {
+      for (let i = ci(this.#wx(0), xmin, nx); i <= ci(this.#wx(W), xmin, nx); i++) {
+        for (const id of cells[j * nx + i]) {
+          if (seen[id] === frame) continue;
+          seen[id] = frame;
+          const it = items[id];
+          if (it.name) roads.push(it);
+          else if (it.a && this.zoom >= NUMBERS_ZOOM) houses.push(it);
+        }
+      }
+    }
+    // Занятое место — сетка по 64 px с прямоугольниками [x0, y0, x1, y1].
+    const occ = new Map(), Q = 64;
+    const span = (r, f) => { for (let y = Math.floor(r[1] / Q); y <= Math.floor(r[3] / Q); y++) for (let x = Math.floor(r[0] / Q); x <= Math.floor(r[2] / Q); x++) f(`${x},${y}`); };
+    const fits = (r) => {
+      if (r[0] < 0 || r[1] < 0 || r[2] > W || r[3] > H) return false;
+      let ok = true;
+      span(r, (k) => { for (const o of occ.get(k) ?? []) if (o[0] < r[2] && r[0] < o[2] && o[1] < r[3] && r[1] < o[3]) ok = false; });
+      return ok;
+    };
+    const take = (r) => span(r, (k) => (occ.get(k) ?? occ.set(k, []).get(k)).push(r));
+    // Не под плашками карты и не под подписями значков (их пишем позже, поверх).
+    for (const el of this.el.querySelectorAll('.bar, .zoom, .legend')) { const b = el.getBoundingClientRect(); take([b.left, b.top, b.right, b.bottom]); }
+    for (const p of this.poi()) {
+      const dy = p.kind === 'landmark' && this.zoom > 0.3 ? 15 : p.kind === 'fuel' && this.zoom > 0.5 ? 16 : 0;
+      const x = this.#sx(p.x), y = this.#sz(p.z);
+      take([x - 10, y - 10, x + 10, y + 10]);
+      if (dy) { const w = this.#textW(p.name, '600 12px system-ui, sans-serif') / 2 + 5; take([x - w, y + dy - 8, x + w, y + dy + 8]); }
+    }
+
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.font = NAME_FONT;
+    const cand = [];
+    for (const it of roads) {
+      // Самый длинный почти прямой кусок улицы (поворот от начала куска ≤ BEND): подпись — по его хорде.
+      let best = 0, bx, by, ba, run = 0, a0 = 0, rx = 0, ry = 0;
+      for (let i = 1; i < it.p.length; i++) {
+        const x0 = this.#sx(it.p[i - 1][0]), y0 = this.#sz(it.p[i - 1][1]), x1 = this.#sx(it.p[i][0]), y1 = this.#sz(it.p[i][1]);
+        const a = Math.atan2(y1 - y0, x1 - x0), d = Math.abs(((a - a0 + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+        if (!run || d > BEND) { run = 0; a0 = a; rx = x0; ry = y0; }
+        run += Math.hypot(x1 - x0, y1 - y0);
+        if (run > best) { best = run; bx = (rx + x1) / 2; by = (ry + y1) / 2; ba = Math.atan2(y1 - ry, x1 - rx); }
+      }
+      const w = this.#textW(it.name, NAME_FONT);
+      if (best < w + 16) continue;
+      if (ba > Math.PI / 2) ba -= Math.PI; else if (ba < -Math.PI / 2) ba += Math.PI;
+      cand.push({ it, x: bx, y: by, a: ba, w, len: best });
+    }
+    cand.sort((a, b) => a.it.rank - b.it.rank || b.len - a.len);
+    const placed = new Map(); // название → [[x, y]]
+    for (const c of cand) {
+      const same = placed.get(c.it.name) ?? [];
+      if (same.some(([x, y]) => Math.hypot(x - c.x, y - c.y) < NAME_GAP)) continue;
+      const hw = (Math.abs(Math.cos(c.a)) * c.w + Math.abs(Math.sin(c.a)) * 14) / 2;
+      const hh = (Math.abs(Math.sin(c.a)) * c.w + Math.abs(Math.cos(c.a)) * 14) / 2;
+      const r = [c.x - hw, c.y - hh, c.x + hw, c.y + hh];
+      if (!fits(r)) continue;
+      take(r);
+      placed.set(c.it.name, [...same, [c.x, c.y]]);
+      g.save();
+      g.translate(c.x, c.y);
+      g.rotate(c.a);
+      g.strokeStyle = 'rgba(12,14,16,.85)';
+      g.lineWidth = 3;
+      g.strokeText(c.it.name, 0, 0.5);
+      g.fillStyle = '#ece6d6';
+      g.fillText(c.it.name, 0, 0.5);
+      g.restore();
+    }
+
+    g.font = NUMBER_FONT;
+    g.fillStyle = '#9aa1aa';
+    for (const it of houses) {
+      const [x0, z0, x1, z1] = it.bb, w = this.#textW(it.a, NUMBER_FONT);
+      if ((x1 - x0) * this.zoom < w + 4 || (z1 - z0) * this.zoom < 14) continue;
+      const x = this.#sx((x0 + x1) / 2), y = this.#sz((z0 + z1) / 2);
+      const r = [x - w / 2 - 2, y - 7, x + w / 2 + 2, y + 7];
+      if (!fits(r)) continue;
+      take(r);
+      g.fillText(it.a, x, y + 0.5);
+    }
+  }
+
+  #textW(text, font) {
+    const key = font + text;
+    let w = this.widths.get(key);
+    if (w === undefined) { this.g.font = font; this.widths.set(key, (w = this.g.measureText(text).width)); }
+    return w;
   }
 
   #tile(S, x0, z0) {
@@ -346,6 +457,7 @@ export class CityMap {
     g.imageSmoothingEnabled = true;
     g.drawImage(base, this.#sx(xmin), this.#sz(zmin), base.width / this.B * this.zoom, base.height / this.B * this.zoom);
     this.#tiles(g, dpr, W, H);
+    this.#names(g, W, H);
 
     const line = (route, color, width) => {
       g.beginPath();
@@ -456,6 +568,10 @@ export class CityMap {
 
   toggle() { this.isOpen ? this.close() : this.open(); }
 }
+
+// «улица Пушкинская» → «ул. Пушкинская»: подпись короче, на улице помещается чаще.
+const SHORT = { улица: 'ул.', проспект: 'пр.', переулок: 'пер.', проезд: 'пр-д', бульвар: 'б-р', площадь: 'пл.', шоссе: 'ш.', набережная: 'наб.', тракт: 'тр.' };
+const short = (name) => name.replace(/[а-яё]+/gi, (w) => SHORT[w.toLowerCase()] ?? w);
 
 export const routeLen = (r) => r.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - r[i - 1][0], p[1] - r[i - 1][1]) : 0), 0);
 const fmtDist = (d) => (d < 1000 ? `${Math.round(d / 10) * 10} м` : `${(d / 1000).toFixed(1)} км`);

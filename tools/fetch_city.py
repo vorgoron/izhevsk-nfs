@@ -429,6 +429,7 @@ def building_entry(pts, tags, eid, lm, holes=()):
         **({"holes": [[(round(x, 2), round(z, 2)) for x, z in hole] for hole in holes]} if holes else {}),
         **({"mh": mh} if mh else {}),
         **({"name": osm_name(tags)} if osm_name(tags) else {}),
+        **({"a": tags["addr:housenumber"]} if tags.get("addr:housenumber") else {}),  # номер дома — на карте
         **({"lm": lm} if lm else {}),
         # Православный/христианский храм без своей модели — в браузере главка на крыше.
         **({"pw": 1} if not lm and tags.get("amenity") == "place_of_worship"
