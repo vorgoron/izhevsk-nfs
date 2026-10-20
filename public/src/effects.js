@@ -1,5 +1,5 @@
 // Нитро: пламя из выхлопной трубы, искры (летят назад, падают, гаснут) и «линии скорости»
-// по краям экрана. Пыль из-под колёс вне дороги.
+// по краям экрана. Пыль из-под колёс вне дороги, следы колёс и дым шин от заноса.
 import * as THREE from 'three';
 
 const SPARKS = 400, SPARK_LIFE = 0.45, SPARK_RATE = 260; // шт, с, шт/с
@@ -162,13 +162,7 @@ export class JetFX {
     geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
-    const pm = new THREE.PointsMaterial({ size: 1, map: glowDot(), vertexColors: true, transparent: true, depthWrite: false });
-    pm.onBeforeCompile = (sh) => {
-      sh.vertexShader = sh.vertexShader
-        .replace('void main() {', 'attribute float aSize;\nvoid main() {')
-        .replace('gl_PointSize = size;', 'gl_PointSize = size * aSize;');
-    };
-    this.points = new THREE.Points(geo, pm);
+    this.points = new THREE.Points(geo, sizedPointsMaterial());
     this.points.frustumCulled = false;
     scene.add(this.points);
     this.next = 0;
@@ -374,7 +368,8 @@ export class DustFX {
 
   update(dt, car) {
     const speed = Math.abs(car.speed);
-    const rate = (car.offroad ?? 0) > 0.5 && speed > 3 && car.sink === 0 ? 25 + speed * 2.5 : 0;
+    // В заносе пыли втрое больше — грунтовый «дым» (на асфальте — TireSmokeFX).
+    const rate = (car.offroad ?? 0) > 0.5 && speed > 3 && car.sink === 0 ? (25 + speed * 2.5) * (1 + 2 * slipAmount(car)) : 0;
     this.carry += rate * dt;
     const m = car.model.matrixWorld, p = new THREE.Vector3();
     while (this.carry >= 1) {
@@ -402,6 +397,89 @@ export class DustFX {
     }
     this.points.geometry.attributes.position.needsUpdate = true;
     this.points.geometry.attributes.color.needsUpdate = true;
+  }
+}
+
+// Следы задних колёс: на асфальте — чёрные полосы от заноса и ручника, на грунте — бурые колеи.
+// Лента из четырёхугольников по SKID_STEP м, общий кольцевой буфер на SKIDS кусков: новые затирают
+// самые старые; за четверть буфера до того, как затереться, кусок тускнеет вдвое. Лежат на 4 см над поверхностью и
+// сдвинуты к камере, чтобы не мерцать с асфальтом.
+const SKIDS = 3000, SKID_STEP = 0.4, SKID_W = 0.3, SKID_LIFT = 0.04;
+const SKID_COLOR = { road: [0.02, 0.02, 0.025, 0.75], ground: [0.24, 0.18, 0.11, 0.6] };
+
+// Насколько скользят задние колёса, 0..1: занос, ручник на ходу, срыв после удара; на грунте — уже при
+// слабом скольжении. Общее для следов и дыма.
+function slipAmount(car) {
+  if (car.air || car.onTop || car.sink > 0) return 0;
+  const vf = car.vel.dot(car.forward), vr = Math.abs(car.vel.dot(car.right));
+  if (Math.abs(vf) <= 2) return 0;
+  const k = (car.offroad ?? 0) > 0.5 ? (vr - 0.8) / 3 : (vr - 1.5) / 5;
+  return Math.max(car.handbrake ? 0.7 : 0, Math.min(1, Math.max(0, k)));
+}
+
+export class SkidMarksFX {
+  constructor(scene, world) {
+    this.world = world;
+    this.pos = new Float32Array(SKIDS * 4 * 3);
+    this.col = new Float32Array(SKIDS * 4 * 4);
+    const idx = new Uint32Array(SKIDS * 6);
+    for (let i = 0; i < SKIDS; i++) idx.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 2, i * 4 + 1, i * 4 + 3], i * 6);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    this.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
+    }));
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 1;
+    scene.add(this.mesh);
+    this.next = 0;
+    this.count = 0;
+    this.wheels = [null, null]; // последняя точка каждого колеса: { x, z, l: [x, y, z], r: [x, y, z] }
+  }
+
+  update(dt, car) {
+    const f = car.forward, r = car.right;
+    const k = slipAmount(car);
+    // Цвет — по покрытию прямо под машиной (offroad сглажен и отстаёт на съезде с дороги).
+    const color = SKID_COLOR[car.surface === 'ground' ? 'ground' : 'road'];
+    for (let w = 0; w < 2; w++) {
+      const side = w ? 0.75 : -0.75;
+      const x = car.pos.x - f.x * 1.3 + r.x * side, z = car.pos.y - f.y * 1.3 + r.y * side;
+      const last = this.wheels[w];
+      if (k <= 0) { this.wheels[w] = null; continue; }
+      if (last && Math.hypot(x - last.x, z - last.z) < SKID_STEP) continue;
+      // Поперёк хода колеса; первая точка — поперёк кузова.
+      let dx = last ? x - last.x : f.x, dz = last ? z - last.z : f.y;
+      const d = Math.hypot(dx, dz) || 1;
+      if (last && d > 3) { this.wheels[w] = null; continue; } // респаун, переброска — не тянем ленту
+      const nx = -dz / d * SKID_W / 2, nz = dx / d * SKID_W / 2;
+      const y = this.world.ground(x, z, car.y) + SKID_LIFT;
+      const cur = { x, z, l: [x + nx, y, z + nz], r: [x - nx, y, z - nz] };
+      if (last) this.#quad(last, cur, color, k);
+      this.wheels[w] = cur;
+    }
+  }
+
+  #quad(a, b, color, k) {
+    const i = this.next;
+    this.next = (this.next + 1) % SKIDS;
+    this.count = Math.min(SKIDS, this.count + 1);
+    this.pos.set([...a.l, ...a.r, ...b.l, ...b.r], i * 12);
+    const alpha = color[3] * k;
+    for (let v = 0; v < 4; v++) this.col.set([color[0], color[1], color[2], alpha], i * 16 + v * 4);
+    // В видеокарту грузятся только изменённые куски, а не весь буфер.
+    const { position, color: col } = this.mesh.geometry.attributes;
+    position.addUpdateRange(i * 12, 12);
+    col.addUpdateRange(i * 16, 16);
+    if (this.count === SKIDS) {
+      const j = (i + SKIDS / 4) % SKIDS;
+      for (let v = 0; v < 4; v++) this.col[j * 16 + v * 4 + 3] *= 0.5;
+      col.addUpdateRange(j * 16, 16);
+    }
+    position.needsUpdate = col.needsUpdate = true;
   }
 }
 
@@ -475,6 +553,83 @@ export class HitFX {
   }
 }
 
+// Точки с размером на каждую (атрибут aSize, м); туман и прозрачность — от штатного PointsMaterial.
+function sizedPointsMaterial() {
+  const mat = new THREE.PointsMaterial({ size: 1, map: glowDot(), vertexColors: true, transparent: true, depthWrite: false });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('void main() {', 'attribute float aSize;\nvoid main() {')
+      .replace('gl_PointSize = size;', 'gl_PointSize = size * aSize;');
+  };
+  return mat;
+}
+
+// Дым из-под задних колёс в заносе на асфальте: клубы рождаются у колёс, чуть увлекаются машиной,
+// растут до TIRE_SIZE м, поднимаются и тают за TIRE_LIFE с. Чем сильнее скольжение, тем чаще и гуще.
+const TIRE_N = 320, TIRE_LIFE = 2.2, TIRE_RATE = 70, TIRE_SIZE = 4.5; // шт, с, шт/с на оба колеса, м
+
+export class TireSmokeFX {
+  constructor(scene) {
+    this.pos = new Float32Array(TIRE_N * 3);
+    this.col = new Float32Array(TIRE_N * 4);
+    this.size = new Float32Array(TIRE_N);
+    this.vel = new Float32Array(TIRE_N * 3);
+    this.life = new Float32Array(TIRE_N);
+    this.max = new Float32Array(TIRE_N);
+    this.k = new Float32Array(TIRE_N); // густота клуба — по скольжению при рождении
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
+    this.points = new THREE.Points(geo, sizedPointsMaterial());
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+    this.next = 0;
+    this.carry = 0;
+    this.alive = 0; // сколько ещё живут клубы — потом кадр не считаем
+  }
+
+  update(dt, car) {
+    const k = car.surface === 'ground' ? 0 : slipAmount(car);
+    this.carry += TIRE_RATE * k * dt;
+    if (this.carry >= 1) this.alive = TIRE_LIFE * 1.3;
+    const f = car.forward, r = car.right;
+    while (this.carry >= 1) {
+      this.carry--;
+      const i = this.next;
+      this.next = (this.next + 1) % TIRE_N;
+      const side = Math.random() < 0.5 ? -0.75 : 0.75, back = Math.random() * dt;
+      const x = car.pos.x - f.x * 1.3 + r.x * side - car.vel.x * back, z = car.pos.y - f.y * 1.3 + r.y * side - car.vel.y * back;
+      this.pos.set([x, car.y + 0.3, z], i * 3);
+      this.vel.set([car.vel.x * 0.3 + (Math.random() - 0.5) * 2, 0.4 + Math.random() * 0.8, car.vel.y * 0.3 + (Math.random() - 0.5) * 2], i * 3);
+      this.max[i] = this.life[i] = TIRE_LIFE * (0.7 + Math.random() * 0.6);
+      this.k[i] = k;
+    }
+    if (this.alive <= 0) return;
+    this.alive -= dt;
+    for (let i = 0; i < TIRE_N; i++) {
+      const j = i * 3, c = i * 4;
+      if (this.life[i] <= 0) { this.col[c + 3] = 0; this.size[i] = 0; continue; }
+      this.life[i] -= dt;
+      const drag = Math.exp(-1.6 * dt);
+      this.vel[j] *= drag;
+      this.vel[j + 1] *= Math.exp(-0.6 * dt);
+      this.vel[j + 2] *= drag;
+      this.pos[j] += this.vel[j] * dt;
+      this.pos[j + 1] += this.vel[j + 1] * dt;
+      this.pos[j + 2] += this.vel[j + 2] * dt;
+      const age = 1 - Math.max(0, this.life[i] / this.max[i]); // 0 → 1
+      this.size[i] = 0.8 + (TIRE_SIZE - 0.8) * Math.sqrt(age);
+      // Быстро густеет у колеса, долго тает.
+      this.col.set([0.86, 0.86, 0.88, 0.4 * (0.4 + 0.6 * this.k[i]) * Math.min(1, age * 6) * (1 - age) ** 1.5], c);
+    }
+    const geo = this.points.geometry;
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+    geo.attributes.aSize.needsUpdate = true;
+  }
+}
+
 // Выхлоп из трубы: клубы растут, поднимаются, сносятся назад и тают. На холостых — редкие светлые
 // облачка, под газом — чаще и гуще; заглох (пустой бак, вода) — нет. Точки разного размера:
 // PointsMaterial с атрибутом aSize (туман и прозрачность остаются от штатного материала).
@@ -497,13 +652,7 @@ export class ExhaustFX {
     geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('color', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
-    const mat = new THREE.PointsMaterial({ size: 1, map: glowDot(), vertexColors: true, transparent: true, depthWrite: false });
-    mat.onBeforeCompile = (sh) => {
-      sh.vertexShader = sh.vertexShader
-        .replace('void main() {', 'attribute float aSize;\nvoid main() {')
-        .replace('gl_PointSize = size;', 'gl_PointSize = size * aSize;');
-    };
-    this.points = new THREE.Points(geo, mat);
+    this.points = new THREE.Points(geo, sizedPointsMaterial());
     this.points.frustumCulled = false;
     scene.add(this.points);
     this.next = 0;

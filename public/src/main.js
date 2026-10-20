@@ -19,7 +19,7 @@ import { DayNight } from './night.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
 import { Trams } from './trams.js';
-import { NitroFX, JetFX, DustFX, ExhaustFX } from './effects.js';
+import { NitroFX, JetFX, DustFX, ExhaustFX, SkidMarksFX, TireSmokeFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
@@ -168,6 +168,8 @@ async function main() {
   const nitroFx = owned('эффекты', () => new NitroFX(scene));
   const jetFx = owned('эффекты', () => new JetFX(scene));
   const dustFx = owned('эффекты', () => new DustFX(scene));
+  const skidFx = owned('эффекты', () => new SkidMarksFX(scene, world));
+  const tireSmokeFx = owned('эффекты', () => new TireSmokeFX(scene));
   const exhaustFx = owned('эффекты', () => new ExhaustFX(scene));
   exhaustFx.attach(car.model);
   nitroFx.attach(car.model);
@@ -276,7 +278,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras }; // для отладки из консоли
+  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -1206,6 +1208,8 @@ async function main() {
     nitroFx.update(dt, car);
     jetFx.update(dt, car);
     dustFx.update(dt, car);
+    skidFx.update(dt, car);
+    tireSmokeFx.update(dt, car);
     exhaustFx.update(dt, car);
     sound.update(dt, car, inp, race);
     sound.traffic(dt, traffic, car);
