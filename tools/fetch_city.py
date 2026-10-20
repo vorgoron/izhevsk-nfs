@@ -191,9 +191,10 @@ def area_kind(tags):
     if tags.get("landuse") in ("grass", "meadow") or tags.get("natural") in ("grassland", "heath") \
             or tags.get("leisure") in ("pitch", "stadium"):
         return "grass"
-    if tags.get("natural") in ("sand", "beach"):
+    if tags.get("natural") in ("sand", "beach") or tags.get("leisure") == "playground":
         return "sand"
-    if tags.get("landuse") in ("industrial", "railway", "garages", "construction"):
+    if tags.get("landuse") in ("industrial", "railway", "garages", "construction") \
+            or tags.get("power") in ("substation", "plant"):
         return "industrial"
     if tags.get("place") == "square" or (tags.get("highway") == "pedestrian" and tags.get("area") == "yes") \
             or tags.get("amenity") in ("parking", "fuel"):
@@ -420,6 +421,14 @@ def poly_area(pts):
     return abs(a) / 2
 
 
+COLOUR = re.compile(r"^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|[a-z]+)$")
+
+
+def osm_colour(v):
+    v = (v or "").strip().lower()
+    return v if COLOUR.match(v) else None
+
+
 def building_entry(pts, tags, eid, lm, holes=()):
     area = poly_area(pts) - sum(poly_area(h) for h in holes)
     h = round(building_height(tags, eid, area), 1)
@@ -432,6 +441,9 @@ def building_entry(pts, tags, eid, lm, holes=()):
         **({"a": tags["addr:housenumber"]} if tags.get("addr:housenumber") else {}),  # номер дома — на карте
         **({"st": tags["addr:street"]} if tags.get("addr:housenumber") and tags.get("addr:street") else {}),  # улица адреса
         **({"lm": lm} if lm else {}),
+        # Цвет стен и крыши, если размечен (building:colour, roof:colour): #rrggbb или имя цвета CSS.
+        **({"bc": c} if (c := osm_colour(tags.get("building:colour"))) else {}),
+        **({"rc": c} if (c := osm_colour(tags.get("roof:colour"))) else {}),
         # Православный/христианский храм без своей модели — в браузере главка на крыше.
         **({"pw": 1} if not lm and tags.get("amenity") == "place_of_worship"
            and tags.get("religion", "christian") == "christian" else {}),
@@ -1373,6 +1385,189 @@ def gibdd_cams(inside):
     return out
 
 
+# ---------------------------------------------------------------- мелочи у дорог и высокие ориентиры
+
+UNPAVED = {"unpaved", "ground", "gravel", "dirt", "compacted", "sand", "grass", "fine_gravel", "pebblestone",
+           "clay", "mud", "earth", "grass/trees", "concrete:plates"}  # плиты — тоже не асфальт: тряско
+TREE_ROW_STEP = 7  # м между деревьями ряда
+BUMP_KIND = {"bump": 0, "hump": 1, "cushion": 1, "table": 2}
+
+
+def along(pts, step):
+    """Точки ломаной через step м (начиная с половины шага)."""
+    out, s = [], step / 2
+    for i in range(1, len(pts)):
+        (ax, az), (bx, bz) = pts[i - 1], pts[i]
+        L = math.dist(pts[i - 1], pts[i])
+        while s <= L:
+            out.append((ax + (bx - ax) * s / L, az + (bz - az) * s / L))
+            s += step
+        s -= L
+    return out
+
+
+def road_points(road_node_index):
+    """Точки на дорогах — индексы в roadNodes (в браузере по ним ищется улица и направление):
+    bumps [узел, вид: 0 — лежачий полицейский, 1 — длинная неровность, 2 — приподнятый переход],
+    zebras — размеченные пешеходные переходы, signs [узел, 'g' — «Уступи дорогу» / 's' — STOP,
+    1 — для едущих по ходу линии, -1 — против, 0 — не размечено], rxings — ж/д переезды, gates — шлагбаумы."""
+    out = {"bumps": [], "zebras": [], "signs": [], "rxings": [], "gates": []}
+    for nid, t in node_tags.items():
+        ri = road_node_index.get(nid)
+        if ri is None:
+            continue
+        tc = t.get("traffic_calming")
+        if tc in BUMP_KIND:
+            out["bumps"].append([ri, BUMP_KIND[tc]])
+        if t.get("highway") == "crossing" and t.get("crossing") not in ("unmarked", "no") \
+                and t.get("crossing:markings") != "no" and tc != "table":
+            out["zebras"].append(ri)
+        if t.get("highway") in ("give_way", "stop"):
+            out["signs"].append([ri, "g" if t["highway"] == "give_way" else "s",
+                                 {"forward": 1, "backward": -1}.get(t.get("direction"), 0)])
+        if t.get("railway") == "level_crossing":
+            out["rxings"].append(ri)
+        if t.get("barrier") == "lift_gate":
+            out["gates"].append(ri)
+    for k in out:
+        out[k].sort()
+    print(", ".join(f"{k} {len(v)}" for k, v in out.items()))
+    return out
+
+
+# Высокое по точкам: [x, z, вид, поворот, высота]. ch — труба, ms — мачта связи, ml — мачта освещения,
+# wt — водонапорная башня, tw — башня, cr — башенный кран, pt — опора ЛЭП, pp — столб ЛЭП.
+# Высота в OSM почти не размечена — тогда своя по виду (с разбросом по id, чтобы не стояли одинаковые).
+TALL_H = {"ch": (35, 70), "ms": (30, 45), "ml": (20, 28), "wt": (22, 30), "tw": (25, 40), "cr": (35, 50),
+          "pt": (24, 30), "pp": (9, 11)}
+
+
+def tall_kind(t):
+    mm, pw = t.get("man_made"), t.get("power")
+    if mm == "chimney":
+        return "ch"
+    if mm == "mast":
+        return "ml" if t.get("tower:type") == "lighting" else "ms"
+    if mm == "water_tower":
+        return "wt"
+    if mm == "tower":
+        return "ms" if t.get("tower:type") == "communication" else "tw"
+    if mm == "crane":
+        return "cr"
+    if pw in ("tower", "portal"):
+        return "pt"
+    if pw == "pole":
+        return "pp"
+    return None
+
+
+def tall_things(inside):
+    """Высокие ориентиры и ЛЭП: towers (см. TALL_H) и power — провода [[точки опор], напряжение кВ]."""
+    heading = {}  # опора → направление линии (траверса поперёк)
+    power = []
+    for nds, t in ways.values():
+        if t.get("power") not in ("line", "minor_line"):
+            continue
+        nds = [n for n in nds if n in nodes]
+        pts = [project(*nodes[n]) for n in nds]
+        if len(pts) < 2 or not inside(pts):
+            continue
+        for i, n in enumerate(nds):
+            a, b = pts[max(0, i - 1)], pts[min(len(pts) - 1, i + 1)]
+            heading[n] = round(math.atan2(b[0] - a[0], b[1] - a[1]), 2)
+        kv = int((parse_num(t.get("voltage")) or (10000 if t["power"] == "minor_line" else 110000)) // 1000)
+        power.append([[[round(x, 1), round(z, 1)] for x, z in pts], kv])
+    towers = []
+    for nid, t in node_tags.items():
+        k = tall_kind(t)
+        if not k:
+            continue
+        x, z = project(*nodes[nid])
+        if not inside([(x, z)]):
+            continue
+        lo, hi = TALL_H[k]
+        h = parse_num(t.get("height")) or lo + (nid * 2654435761 % 1000) / 1000 * (hi - lo)
+        a = heading.get(nid, round((nid % 628) / 100, 2))
+        towers.append([round(x, 1), round(z, 1), k, a, round(h, 1)])
+    # Водонапорные башни и трубы контуром без building=* — домом не стали: ставим по центру.
+    for nds, t in ways.values():
+        k = tall_kind(t)
+        if k not in ("ch", "wt", "tw") or "building" in t or nds[0] != nds[-1]:
+            continue
+        pts = [project(*nodes[n]) for n in nds[:-1] if n in nodes]
+        if len(pts) < 3 or not inside(pts):
+            continue
+        x, z = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+        lo, hi = TALL_H[k]
+        towers.append([round(x, 1), round(z, 1), k, 0, parse_num(t.get("height")) or (lo + hi) / 2])
+    # Столбики и бетонные блоки (barrier=bollard/block): [x, z, 'b' — столбик / 'k' — блок].
+    posts = []
+    for nid, t in node_tags.items():
+        if t.get("barrier") in ("bollard", "block"):
+            x, z = project(*nodes[nid])
+            if inside([(x, z)]):
+                posts.append([round(x, 2), round(z, 2), "b" if t["barrier"] == "bollard" else "k"])
+    print(f"towers {len(towers)}, power lines {len(power)}, posts {len(posts)}")
+    return {"towers": towers, "power": power, "posts": posts}
+
+
+def playgrounds(inside):
+    """Детские площадки: [x, z] — центр (контур) или точка; рядом ближе 20 м — одна."""
+    out = []
+    pts_of = []
+    for nds, t in ways.values():
+        if t.get("leisure") == "playground" and nds[0] == nds[-1]:
+            pts = [project(*nodes[n]) for n in nds[:-1] if n in nodes]
+            if len(pts) >= 3:
+                pts_of.append((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)))
+    for nid, t in node_tags.items():
+        if t.get("leisure") == "playground":
+            pts_of.append(project(*nodes[nid]))
+    for x, z in pts_of:
+        if inside([(x, z)]) and not any(math.dist((x, z), o) < 20 for o in out):
+            out.append([round(x, 1), round(z, 1)])
+    print(f"playgrounds {len(out)}")
+    return out
+
+
+def place_labels(inside):
+    """Подписи на большой карте: [x, z, название, вид] — p парк/сквер, s площадь, w пруд/озеро.
+    Точка — центр самого большого кольца (у мультиполигона — внешнего)."""
+    def kind(t):
+        if t.get("place") == "square" or t.get("highway") == "pedestrian" and t.get("area") == "yes":
+            return "s"
+        if t.get("leisure") in ("park", "garden") or t.get("landuse") == "cemetery":
+            return "p"
+        if t.get("natural") == "water" and t.get("water") in (None, "pond", "lake", "reservoir"):
+            return "w"
+        return None
+
+    best = {}  # название → (площадь, x, z, вид)
+
+    def add(name, k, ring):
+        pts = ring_xy(ring)
+        if len(pts) < 3 or not inside(pts):
+            return
+        a = poly_area(pts)
+        if (k == "w" and a < 20000) or a < 2000 or best.get(name, (0,))[0] >= a:
+            return
+        cx, cz = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+        best[name] = (a, cx, cz, k)
+
+    for nds, t in ways.values():
+        k, name = kind(t), osm_name(t)
+        if k and name and nds[0] == nds[-1]:
+            add(name, k, [n for n in nds if n in nodes])
+    for members, t in relations.values():
+        k, name = kind(t), osm_name(t)
+        if k and name and t.get("type") == "multipolygon":
+            for ring in stitch([ways[ref][0] for typ, ref, role in members if typ == "way" and ref in ways and role in ("outer", "")]):
+                add(name, k, ring)
+    out = [[round(x, 1), round(z, 1), name, k] for name, (_, x, z, k) in sorted(best.items())]
+    print(f"labels {len(out)}")
+    return out
+
+
 def build_city():
     xmin, zmax = project(SOUTH, WEST)
     xmax, zmin = project(NORTH, EAST)
@@ -1431,6 +1626,7 @@ def build_city():
                 **({"lb": int(parse_num(tags["lanes:backward"]))} if parse_num(tags.get("lanes:backward")) else {}),
                 "ow": 1 if tags.get("oneway") == "yes" else 0,
                 **({"ms": ms} if (ms := maxspeed_kmh(tags)) else {}),
+                **({"sf": 1} if tags.get("surface") in UNPAVED else {}),
             })
             continue
         if tags.get("waterway") in WATERWAY_W and tags.get("tunnel") in (None, "no"):
@@ -1491,6 +1687,14 @@ def build_city():
             x, z = project(*nodes[nid])
             if xmin < x < xmax and zmin < z < zmax:
                 trees.append([x, z])
+    # Ряды деревьев (natural=tree_row, аллеи вдоль улиц) — деревья через TREE_ROW_STEP м по линии.
+    for nds, tags in ways.values():
+        if tags.get("natural") != "tree_row":
+            continue
+        pts = [project(*nodes[n]) for n in nds if n in nodes]
+        for x, z in along(pts, TREE_ROW_STEP):
+            if xmin < x < xmax and zmin < z < zmax:
+                trees.append([round(x, 2), round(z, 2)])
 
     add_point_fuel_stations(fuel, areas, buildings, roads, road_nodes, inside)
     # Здания на АЗС без этажности — магазин и навес в один этаж, а не выдуманные 6 этажей.
@@ -1545,6 +1749,10 @@ def build_city():
                           if t.get("highway") == "traffic_signals" and n in road_node_index),
         # Камеры скорости и перекрёстков — из перечня Госавтоинспекции (gibdd_cams), OSM их знает мало.
         "cams": gibdd_cams(lambda x, z: inside([(x, z)])),
+        **road_points(road_node_index),
+        **tall_things(inside),
+        "play": playgrounds(inside),
+        "labels": place_labels(inside),
     }
 
 

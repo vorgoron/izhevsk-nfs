@@ -6,6 +6,7 @@ import {
   buildStopChunk, stopMaterials, buildFenceChunk, fenceMaterials,
   drawMinimapTile, MINIMAP_SCALE, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
+import { buildPropChunk, propMaterials } from './props.js';
 
 const TREE_NEAR = 450; // м до квадрата: ближе — подробные деревья
 
@@ -19,7 +20,7 @@ export class ChunkManager {
     this.loaded = new Map(); // ключ → { group, terrain }
     this.breakables = null;  // выставляет main.js: столбы и щиты квадратов ломаются
     this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials(),
-      ads: billboardMaterials(renderer), stops: stopMaterials(renderer), fences: fenceMaterials(renderer) };
+      ads: billboardMaterials(renderer), stops: stopMaterials(renderer), fences: fenceMaterials(renderer), props: propMaterials(renderer) };
   }
 
   #key(ci, cj) { return ci * 10000 + cj; }
@@ -72,6 +73,12 @@ export class ChunkManager {
     const fences = buildFenceChunk(w, info, this.mats.fences);
     if (fences) group.add(...fences.map((o) => tag(o, 'заборы')));
     for (const o of fences || []) if (o.userData.pieces) this.breakables?.addFences(o);
+    const props = buildPropChunk(w, info, this.mats.props);
+    if (props) group.add(...props.map((o) => tag(o, 'мелочи')));
+    for (const o of props || []) {
+      if (o.userData.breakKind) this.breakables?.addProps(o);
+      if (o.userData.arms) this.breakables?.addGates(o);
+    }
     this.scene.add(group);
     this.loaded.set(this.#key(ci, cj), group);
   }
@@ -79,6 +86,7 @@ export class ChunkManager {
   #unload(key, group) {
     this.scene.remove(group);
     group.traverse((o) => {
+      if (o.isLineSegments) o.geometry.dispose(); // провода ЛЭП
       if (!o.isMesh) return;
       if (o.isInstancedMesh || o.userData.pieces) this.breakables?.remove(o);
       // Общие материалы и геометрии деревьев не трогаем; своё — геометрии и текстура земли.
@@ -86,7 +94,7 @@ export class ChunkManager {
       if (!o.isInstancedMesh) o.geometry.dispose();
       else o.dispose();
       if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls
-        && o.material !== this.mats.stops.sign && !this.mats.fences.owns(o.material)) {
+        && o.material !== this.mats.stops.sign && !this.mats.fences.owns(o.material) && !this.mats.props.owns(o.material)) {
         o.material.map.dispose();
         o.material.dispose();
       }

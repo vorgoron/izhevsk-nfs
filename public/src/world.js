@@ -48,6 +48,15 @@ const UTURN_R = 4;    // м: радиус дуги разворота, если 
 // Тротуары вдоль городских улиц (в OSM их редко рисуют отдельно): [газон между проезжей частью и тротуаром,
 // ширина тротуара], м. Рисуются на земле (build.js), по ним едут как по асфальту (surfaceAt). На мостах и в тоннелях — нет.
 export const SIDEWALK = { primary: [2, 3], secondary: [1.5, 3], tertiary: [1, 2.5], residential: [0, 2], unclassified: [0, 2] };
+// Лежачие полицейские (bumps в city.json): вид → [длина вдоль дороги, высота], м. Приподнятый переход (2) —
+// ровная площадка с пандусами BUMP_RAMP м.
+export const BUMP = [[0.6, 0.06], [3.5, 0.08], [7, 0.1]];
+export const BUMP_RAMP = 1.5;
+const BUMP_CELL = 25;
+// Где ставить знаки у точек на дорогах: м до точки по ходу и от края полотна.
+const SIGN_BACK = { z: 1.5, b: 2, r: 12, g: 0.5, s: 0.5 }, SIGN_SIDE = 0.8;
+// Стены у высокого (towers): полуширина основания по виду, м (у ЛЭП и мачт — по высоте).
+const TOWER_BASE = { ch: 2.6, ms: 1.6, ml: 0.5, wt: 2, tw: 2.2, cr: 1, pt: 0.09, pp: 0.18 };
 
 export class World {
   constructor(city) {
@@ -66,6 +75,7 @@ export class World {
     this.#initRoadIndex();
     this.#initBuildingIndex();
     this.#initRailIndex();
+    this.#initPoints();
     this.#initChunks();
   }
 
@@ -82,7 +92,7 @@ export class World {
     const at = (ci, cj) => {
       const k = ci * 10000 + cj;
       let d = this.chunkData.get(k);
-      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], fences: [], water: null }));
+      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], fences: [], pts: [], water: null }));
       return d;
     };
     const cell = (x, z) => [Math.floor((x - xmin) / this.chunk.sx), Math.floor((z - zmin) / this.chunk.sz)];
@@ -107,6 +117,7 @@ export class World {
     for (const t of c.trees) at(...cell(t[0], t[1])).trees.push(t);
     for (const t of c.stops || []) at(...cell(t[0], t[1])).stops.push(t);
     for (const f of c.fences || []) overlap(f.p, 0, (d) => d.fences.push(f)); // рисует квадрат середины куска
+    for (const p of this.points) at(...cell(p.x, p.z)).pts.push(p); // мелочи из OSM (#initPoints) — по своей точке
     for (const r of this.roads) {
       const pts = r.n.map((i) => this.nodes[i]);
       overlap(pts, r.w, (d) => d.lines.push(r));
@@ -129,7 +140,7 @@ export class World {
   chunkInfo(ci, cj) {
     const C = CHUNK_CELLS, { nx, nz, dx, dz, xmin, zmin } = this.mesh;
     const i0 = ci * C, j0 = cj * C, i1 = Math.min(nx, i0 + C), j1 = Math.min(nz, j0 + C);
-    const empty = { areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], fences: [] };
+    const empty = { areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], fences: [], pts: [] };
     return { ci, cj, i0, j0, i1, j1, x0: xmin + i0 * dx, z0: zmin + j0 * dz, x1: xmin + i1 * dx, z1: zmin + j1 * dz,
       data: this.chunkData.get(ci * 10000 + cj) || empty };
   }
@@ -723,16 +734,21 @@ export class World {
     return this.roadGrid.get(Math.floor(x / this.roadCell) * 100003 + Math.floor(z / this.roadCell)) || [];
   }
 
-  // Покрытие под точкой: 'road' — полотно дороги, 'paved' — площадь, парковка, промзона,
-  // беговая дорожка; иначе 'ground' (трава, парк, лес, пустырь) — там едется тяжело.
+  // Покрытие под точкой: 'road' — полотно дороги, 'dirt' — грунтовка (surface=unpaved… в OSM, sf у дороги),
+  // 'paved' — площадь, парковка, промзона, беговая дорожка; иначе 'ground' (трава, парк, лес, пустырь) — там едется тяжело.
   surfaceAt(x, z) {
-    let walk = false;
+    let walk = false, dirt = false;
     for (const s of this.nearbyRoadSegments(x, z)) {
       const d = World.closest(s, x, z).d;
-      if (d < s.w / 2 + 0.4) return 'road';
+      if (d < s.w / 2 + 0.4) {
+        if (!s.road.sf) return 'road';
+        dirt = true; // грунтовка; асфальт поверх (перекрёсток с улицей) — всё же дорога
+        continue;
+      }
       const sw = !s.road.br && !s.road.tu && SIDEWALK[s.road.k];
       if (sw && d > s.w / 2 + sw[0] && d < s.w / 2 + sw[0] + sw[1]) walk = true;
     }
+    if (dirt) return 'dirt';
     if (walk) return 'paved';
     const [ci, cj] = this.chunkAt(x, z);
     const d = this.chunkData.get(ci * 10000 + cj);
@@ -800,7 +816,47 @@ export class World {
       const ly = a > W ? l.y - (TRAM_DROP * (a - W)) / (w + TRAM_TUCK - W) : l.y;
       if (l.bed && ly <= lim) y = Math.max(y, ly);
     }
-    return y;
+    return y > t ? y + this.bumpAt(x, z) : y;
+  }
+
+  // Лежачие полицейские рядом: клетка сетки BUMP_CELL.
+  #bumpsNear(x, z) {
+    return this.bumpGrid.get(Math.floor(x / BUMP_CELL) * 100003 + Math.floor(z / BUMP_CELL)) || [];
+  }
+
+  // Высота лежачего полицейского над полотном в точке (0 — не на нём). Профиль — полусинус, у площадки — пандусы.
+  bumpAt(x, z) {
+    let best = 0;
+    for (const b of this.#bumpsNear(x, z)) {
+      const rx = x - b.x, rz = z - b.z, s = Math.abs(rx * b.dx + rz * b.dz), lat = Math.abs(rx * b.dz - rz * b.dx);
+      const [L, h] = BUMP[b.k];
+      if (s >= L / 2 || lat > b.w / 2) continue;
+      const v = b.k === 2 ? h * Math.min(1, (L / 2 - s) / BUMP_RAMP) : h * Math.cos((Math.PI * s) / L);
+      best = Math.max(best, v);
+    }
+    return best;
+  }
+
+  // Переехал ли отрезок (x0, z0) → (x1, z1) лежачий полицейский: вид или -1.
+  bumpCross(x0, z0, x1, z1) {
+    for (const b of this.#bumpsNear(x1, z1)) {
+      const s0 = (x0 - b.x) * b.dx + (z0 - b.z) * b.dz, s1 = (x1 - b.x) * b.dx + (z1 - b.z) * b.dz;
+      if (Math.sign(s0) === Math.sign(s1) || Math.abs(s0 - s1) > 5) continue;
+      if (Math.abs((x1 - b.x) * b.dz - (z1 - b.z) * b.dx) <= b.w / 2 + 0.5) return b.k;
+    }
+    return -1;
+  }
+
+  // Расстояние до лежачего полицейского впереди по курсу (dx, dz) не дальше look м, иначе Infinity (для трафика).
+  bumpAhead(x, z, dx, dz, look) {
+    let best = Infinity;
+    for (const [px, pz] of [[x, z], [x + dx * look, z + dz * look]]) {
+      for (const b of this.#bumpsNear(px, pz)) {
+        const rx = b.x - x, rz = b.z - z, ahead = rx * dx + rz * dz;
+        if (ahead > -1 && ahead < look && Math.abs(rx * dz - rz * dx) < b.w / 2 + 1) best = Math.min(best, Math.max(0, ahead));
+      }
+    }
+    return best;
   }
 
   // Высота общего настила между парными мостами в точке или null (точка не между ними).
@@ -1129,6 +1185,109 @@ export class World {
         const a = f.p[i - 1], c = f.p[i];
         const top = Math.max(this.terrain(a[0], a[1]), this.terrain(c[0], c[1])) + f.h;
         this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1], soft, top, fence: true }, 0);
+      }
+    }
+  }
+
+  // Мелочи из OSM на дорогах и рядом — точки для квадратов (props.js): лежачие полицейские, переходы, знаки,
+  // шлагбаумы, ж/д переезды; высокое (трубы, мачты, опоры ЛЭП, краны), провода, столбики, детские площадки.
+  // Точку на дороге (индекс узла) — на самую широкую дорогу через узел: направление — по соседним узлам.
+  #initPoints() {
+    const c = this.city, at = new Map(); // узел → [[дорога, номер узла в ней]]
+    for (const r of this.roads) r.n.forEach((n, i) => (at.get(n) || at.set(n, []).get(n)).push([r, i]));
+    const degree = (n) => (at.get(n) || []).reduce((k, [r, i]) => k + (i === 0 || i === r.n.length - 1 ? 1 : 2), 0);
+    const onRoad = (n) => {
+      const list = at.get(n);
+      if (!list) return null;
+      const [r, i] = list.reduce((a, b) => (b[0].w > a[0].w ? b : a));
+      const [ax, az] = this.nodes[r.n[Math.max(0, i - 1)]], [bx, bz] = this.nodes[r.n[Math.min(r.n.length - 1, i + 1)]];
+      const L = Math.hypot(bx - ax, bz - az) || 1;
+      const [x, z] = this.nodes[n];
+      return { x, z, dx: (bx - ax) / L, dz: (bz - az) / L, w: r.w, road: r, i };
+    };
+    // Знак справа по ходу (dir — вдоль линии или против), за back м до точки, лицом к едущему.
+    const signs = [];
+    const sign = (p, s, dir) => {
+      const ux = p.dx * dir, uz = p.dz * dir, back = SIGN_BACK[s], off = p.w / 2 + SIGN_SIDE;
+      signs.push({ t: 'sign', s, x: p.x - ux * back - uz * off, z: p.z - uz * back + ux * off, a: Math.atan2(-ux, -uz) });
+    };
+    const both = (p, s) => { sign(p, s, 1); if (!p.road.ow) sign(p, s, -1); };
+    // До ближайшего перекрёстка вдоль дороги в сторону dir, м (дальше 300 — не ищем).
+    const toJunction = (p, dir) => {
+      const r = p.road;
+      let d = 0;
+      for (let i = p.i + dir; i >= 0 && i < r.n.length && d < 300; i += dir) {
+        const [ax, az] = this.nodes[r.n[i - dir]], [bx, bz] = this.nodes[r.n[i]];
+        d += Math.hypot(bx - ax, bz - az);
+        if (degree(r.n[i]) >= 3) return d;
+      }
+      return Infinity;
+    };
+    this.points = [];
+    this.bumpGrid = new Map();
+    for (const [n, k] of c.bumps || []) {
+      const p = onRoad(n);
+      if (!p) continue;
+      const b = { t: 'bump', k, ...p };
+      this.points.push(b);
+      both(p, 'b');
+      const pad = BUMP[k][0] / 2 + b.w / 2;
+      for (let i = Math.floor((b.x - pad) / BUMP_CELL); i <= Math.floor((b.x + pad) / BUMP_CELL); i++) {
+        for (let j = Math.floor((b.z - pad) / BUMP_CELL); j <= Math.floor((b.z + pad) / BUMP_CELL); j++) {
+          const key = i * 100003 + j;
+          (this.bumpGrid.get(key) || this.bumpGrid.set(key, []).get(key)).push(b);
+        }
+      }
+    }
+    for (const n of c.zebras || []) {
+      const p = onRoad(n);
+      if (!p || p.road.br) continue;
+      this.points.push({ t: 'zebra', ...p });
+      both(p, 'z');
+    }
+    for (const n of c.rxings || []) {
+      const p = onRoad(n);
+      if (p) both(p, 'r');
+    }
+    for (const [n, s, dir] of c.signs || []) {
+      const p = onRoad(n);
+      if (!p) continue;
+      // Направление не размечено — знак для тех, кто едет к ближайшему перекрёстку.
+      sign(p, s, dir || (toJunction(p, 1) <= toJunction(p, -1) ? 1 : -1));
+    }
+    for (const n of c.gates || []) {
+      const p = onRoad(n);
+      if (p && !p.road.br) this.points.push({ t: 'gate', ...p });
+    }
+    this.points.push(...signs);
+    const towerAt = new Map();
+    for (const [x, z, k, a, h] of c.towers || []) {
+      const t = { t: 'tower', x, z, k, a, h };
+      this.points.push(t);
+      towerAt.set(`${x},${z}`, t);
+    }
+    // Провода: пролёт между соседними опорами линии — точка в середине пролёта, концы — опоры (если они в данных).
+    for (const [pts, kv] of c.power || []) {
+      for (let i = 1; i < pts.length; i++) {
+        const [ax, az] = pts[i - 1], [bx, bz] = pts[i];
+        if (Math.hypot(bx - ax, bz - az) > 600) continue;
+        this.points.push({ t: 'wire', x: (ax + bx) / 2, z: (az + bz) / 2, kv,
+          a: towerAt.get(`${ax},${az}`) ?? { x: ax, z: az, k: kv > 20 ? 'pt' : 'pp', a: Math.atan2(bx - ax, bz - az), h: kv > 20 ? 26 : 10 },
+          b: towerAt.get(`${bx},${bz}`) ?? { x: bx, z: bz, k: kv > 20 ? 'pt' : 'pp', a: Math.atan2(bx - ax, bz - az), h: kv > 20 ? 26 : 10 } });
+      }
+    }
+    for (const [x, z, k] of c.posts || []) this.points.push({ t: 'post', x, z, k });
+    for (const [x, z] of c.play || []) this.points.push({ t: 'play', x, z, a: ((x * 7.1 + z * 3.3) % 6.28 + 6.28) % 6.28 });
+    // Стены у высокого: трубы, башни, ноги опор ЛЭП и кранов; бетонные блоки. Верх — по высоте.
+    for (const p of this.points) {
+      if (p.t !== 'tower' && !(p.t === 'post' && p.k === 'k')) continue;
+      const top = this.terrain(p.x, p.z) + (p.h ?? 0.8);
+      const legs = p.k === 'pt' ? [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => [u * p.h * 0.075, v * p.h * 0.075]) : [[0, 0]];
+      const r = p.t === 'post' ? 0.35 : TOWER_BASE[p.k] * (p.k === 'ms' ? p.h / 40 : 1);
+      const ca = Math.cos(p.a ?? 0), sa = Math.sin(p.a ?? 0);
+      for (const [u, v] of legs) {
+        const cx = p.x + u * ca + v * sa, cz = p.z - u * sa + v * ca;
+        this.addCollider([[cx - r, cz - r], [cx + r, cz - r], [cx + r, cz + r], [cx - r, cz + r]], [], top);
       }
     }
   }

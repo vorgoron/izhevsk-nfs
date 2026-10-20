@@ -21,6 +21,10 @@ const NUMBERS_ZOOM = 1.3;  // крупнее — номера домов
 const BEND = 0.3;          // рад: насколько может повернуть улица под одной подписью
 const NAME_GAP = 320;      // px: одна и та же улица подписана не чаще
 const NAME_FONT = '600 11px system-ui, sans-serif';
+// Подписи мест (labels): с какого увеличения и каким цветом — p парк, s площадь, w пруд/озеро.
+const PLACE_FONT = 'italic 600 12px system-ui, sans-serif';
+const PLACE_ZOOM = { w: 0.08, p: 0.2, s: 0.35 };
+const PLACE_COLOR = { w: '#8cc4e8', p: '#a9d18e', s: '#e6dcc0' };
 const NUMBER_FONT = '10px system-ui, sans-serif';
 
 const ROAD_COLOR = { trunk: '#e8b44a', primary: '#e8c46a', secondary: '#d9d2bd', tertiary: '#c9c4b5' };
@@ -225,11 +229,12 @@ export class CityMap {
   // не чаще раза в NAME_GAP px, крупные — первыми. Номера домов (крупнее NUMBERS_ZOOM) — в середине дома, если
   // помещаются. Налезающее на уже написанное не пишем. Каждый кадр поверх подложки: текст не режется плитками.
   #names(g, W, H) {
-    if (this.zoom < NAMES_ZOOM) return;
+    const streets = this.zoom >= NAMES_ZOOM;
+    if (!streets && this.zoom < Math.min(...Object.values(PLACE_ZOOM))) return;
     const { items, cells, nx, nz, seen } = this.idx, [xmin, zmin] = this.world.bounds, frame = ++this.idx.frame;
     const ci = (v, lo, n) => Math.max(0, Math.min(n - 1, Math.floor((v - lo) / CELL)));
     const roads = [], houses = [];
-    for (let j = ci(this.#wz(0), zmin, nz); j <= ci(this.#wz(H), zmin, nz); j++) {
+    if (streets) for (let j = ci(this.#wz(0), zmin, nz); j <= ci(this.#wz(H), zmin, nz); j++) {
       for (let i = ci(this.#wx(0), xmin, nx); i <= ci(this.#wx(W), xmin, nx); i++) {
         for (const id of cells[j * nx + i]) {
           if (seen[id] === frame) continue;
@@ -262,6 +267,21 @@ export class CityMap {
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.lineJoin = 'round';
+    // Парки, площади, пруды (labels в city.json) — раньше улиц: их мало, и они видны с меньшего увеличения.
+    g.font = PLACE_FONT;
+    for (const [px, pz, name, k] of this.world.city.labels ?? []) {
+      if (this.zoom < PLACE_ZOOM[k]) continue;
+      const x = this.#sx(px), y = this.#sz(pz), w = this.#textW(name, PLACE_FONT) / 2 + 3;
+      const r = [x - w, y - 8, x + w, y + 8];
+      if (!fits(r)) continue;
+      take(r);
+      g.strokeStyle = 'rgba(12,14,16,.85)';
+      g.lineWidth = 3;
+      g.strokeText(name, x, y + 0.5);
+      g.fillStyle = PLACE_COLOR[k];
+      g.fillText(name, x, y + 0.5);
+    }
+    if (!streets) return;
     g.font = NAME_FONT;
     const cand = [];
     for (const it of roads) {
