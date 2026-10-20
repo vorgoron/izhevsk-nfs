@@ -217,11 +217,10 @@ export class CityMap {
     return true;
   }
 
-  // Путь от машины до узла to — массив точек [x, z], первая — где машина.
+  // Путь от машины до узла to — массив точек [x, z], первая — где машина (world.navRoute: по своей
+  // стороне, без встречки, назад — через разворот).
   route(to) {
-    const w = this.world, from = w.nearestGraphNode(this.car.pos.x, this.car.pos.y);
-    const path = from === to ? [to] : w.shortestPath(from, to);
-    return path && [[this.car.pos.x, this.car.pos.y], ...path.map((id) => w.nodes[id])];
+    return this.world.navRoute(this.car.pos.x, this.car.pos.y, this.car.heading, to);
   }
 
   // Перестроить маршрут от текущего места (съехал с маршрута).

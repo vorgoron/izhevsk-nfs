@@ -42,6 +42,8 @@ function pointInRing(x, z, p) {
 }
 
 const ROOF_CELL = 40; // м: клетка сетки зданий для roofAt
+const UTURN = 60;     // м: во столько обходится разворот в начале маршрута навигатора
+const UTURN_R = 4;    // м: радиус дуги разворота, если улица позволяет (не меньше четверти ширины)
 // Тротуары вдоль городских улиц (в OSM их редко рисуют отдельно): [газон между проезжей частью и тротуаром,
 // ширина тротуара], м. Рисуются на земле (build.js), по ним едут как по асфальту (surfaceAt). На мостах и в тоннелях — нет.
 export const SIDEWALK = { primary: [2, 3], secondary: [1.5, 3], tertiary: [1, 2.5], residential: [0, 2], unclassified: [0, 2] };
@@ -616,7 +618,7 @@ export class World {
         const L = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
         const seg = {
           ax: pts[i - 1][0], az: pts[i - 1][1], bx: pts[i][0], bz: pts[i][1],
-          ya: road.y?.[i - 1], yb: road.y?.[i], w: road.w, road, s0: acc, len: L,
+          ya: road.y?.[i - 1], yb: road.y?.[i], w: road.w, road, i, s0: acc, len: L,
         };
         acc += L;
         this.segments.push(seg);
@@ -1183,8 +1185,12 @@ export class World {
 
   // ---------------------------------------------------------------- граф для гонок
 
+  // graph — для гонок, в обе стороны по любой улице; nav — для навигатора по карте, направленный:
+  // односторонняя улица (и каждая половина проспекта с разделителем) — только по ходу движения.
+  // Ребро — [узел, цена, улица].
   buildGraph() {
-    const adj = new Map();
+    const adj = new Map(), nav = new Map();
+    const link = (m, a, b, cost, r) => (m.get(a) || m.set(a, []).get(a)).push([b, cost, r]);
     const raceClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'trunk',
       'primary_link', 'secondary_link', 'tertiary_link', 'living_street']);
     for (const r of this.roads) {
@@ -1194,13 +1200,14 @@ export class World {
         const pa = this.nodes[a], pb = this.nodes[b];
         // Главные улицы «дешевле» — маршрут тянется по проспектам, а не по дворам.
         const cost = Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) * (MARKED_CLASSES.has(r.k) ? 1 : 1.6);
-        if (!adj.has(a)) adj.set(a, []);
-        if (!adj.has(b)) adj.set(b, []);
-        adj.get(a).push([b, cost]);
-        adj.get(b).push([a, cost]);
+        link(adj, a, b, cost, r);
+        link(adj, b, a, cost, r);
+        link(nav, a, b, cost, r);
+        if (r.ow) { if (!nav.has(b)) nav.set(b, []); } else link(nav, b, a, cost, r);
       }
     }
     this.graph = adj;
+    this.nav = nav;
     return adj;
   }
 
@@ -1214,11 +1221,98 @@ export class World {
     return best;
   }
 
-  shortestPath(from, to) {
-    const dist = new Map([[from, 0]]);
+  // Маршрут навигатора от машины (x, z, курс heading) до узла to — точки [x, z], первая — где машина.
+  // Едет по своей стороне, посередине крайней правой полосы (не по пунктиру между полосами).
+  // Старт — концы ближайшего к машине отрезка улицы, куда по нему можно ехать; назад — через разворот
+  // (дуга налево), он дороже на UTURN. Против односторонней — только если иначе туда не попасть
+  // (OSM: тупик односторонних). null — не доехать.
+  navRoute(x, z, heading, to) {
+    const nav = this.nav, fx = Math.sin(heading), fz = Math.cos(heading);
+    // Сдвиг вправо от оси — до середины крайней правой полосы (полосы — как у трафика: из OSM или по ширине).
+    const side = (r) => {
+      const total = r.ln ?? Math.max(1, Math.round((r.w - 1) / 3.3));
+      const lanes = r.ow ? total : Math.max(1, Math.floor(total / 2));
+      return r.w / 2 - (r.ow ? r.w : r.w / 2) / lanes / 2;
+    };
+    let seg = null, c = null;
+    for (const s of this.segmentsNear(x, z, 60)) {
+      if (!nav.get(s.road.n[s.i - 1])?.some((e) => e[2] === s.road)) continue; // двор, проезд — не в графе
+      const k = World.closest(s, x, z);
+      if (!c || k.d < c.d) { seg = s; c = k; }
+    }
+    let starts, path;
+    if (seg) {
+      const r = seg.road, a = r.n[seg.i - 1], b = r.n[seg.i];
+      const ahead = (seg.bx - seg.ax) * fx + (seg.bz - seg.az) * fz >= 0; // машина смотрит от a к b
+      starts = [[b, (1 - c.t) * seg.len + (ahead ? 0 : UTURN)]];
+      if (!r.ow) starts.push([a, c.t * seg.len + (ahead ? UTURN : 0)]);
+      path = to === a || to === b ? [to] : this.shortestPath(starts, to, nav) ?? this.shortestPath(starts, to);
+    } else {
+      const from = this.nearestGraphNode(x, z);
+      path = from === to ? [to] : this.shortestPath(from, to, nav) ?? this.shortestPath(from, to);
+    }
+    if (!path) return null;
+
+    // Рёбра маршрута: направление и сдвиг вправо. Первое — от машины по её отрезку до первого узла.
+    const road = (u, v) => nav.get(u)?.find((e) => e[0] === v)?.[2];
+    const edges = [];
+    const edge = (ax, az, bx, bz, off) => {
+      const L = Math.hypot(bx - ax, bz - az);
+      if (L > 0.5) edges.push({ ax, az, bx, bz, dx: (bx - ax) / L, dz: (bz - az) / L, off });
+    };
+    const out = [[x, z]];
+    if (seg) {
+      const [nx, nz] = this.nodes[path[0]];
+      let dx = nx - c.px, dz = nz - c.pz, sx = c.px, sz = c.pz, off = side(seg.road);
+      const L = Math.hypot(dx, dz) || 1;
+      dx /= L; dz /= L;
+      if (dx * fx + dz * fz < 0) { // узел позади — разворот: дуга налево вокруг точки чуть впереди, обратно — от неё
+        // Правая сторона по ходу машины — (dz, −dx); дуга начинается сбоку там же, где машина, но
+        // не выходит за края полотна (на 0,5 м). q — сдвиг центра дуги вправо от оси.
+        const h = seg.w / 2 - 0.5, R = Math.max(seg.w / 4, Math.min(UTURN_R, h));
+        const q = Math.max(R - h, Math.min(h - R, (x - c.px) * dz - (z - c.pz) * dx - R));
+        sx -= dx * 3; sz -= dz * 3;
+        for (let k = 0; k <= 8; k++) {
+          const a = (k / 8) * Math.PI, u = q + R * Math.cos(a); // от правой стороны через перёд к левой
+          out.push([sx + dz * u - dx * R * Math.sin(a), sz - dx * u - dz * R * Math.sin(a)]);
+        }
+        off = R - q; // обратно — от конца дуги параллельно оси
+      }
+      edge(sx, sz, nx, nz, off);
+    }
+    for (let i = 1; i < path.length; i++) {
+      const [ax, az] = this.nodes[path[i - 1]], [bx, bz] = this.nodes[path[i]];
+      const r = road(path[i - 1], path[i]);
+      edge(ax, az, bx, bz, r ? side(r) : 0);
+    }
+    if (!edges.length) return [...out, this.nodes[to]];
+
+    // Ломаная со сдвигом: в узле — пересечение сдвинутых линий соседних рёбер; почти прямо, слишком
+    // далеко (острый угол) — концы обоих рёбер.
+    const right = (e, t) => [e.ax + (e.bx - e.ax) * t - e.dz * e.off, e.az + (e.bz - e.az) * t + e.dx * e.off];
+    out.push(right(edges[0], 0));
+    for (let i = 1; i < edges.length; i++) {
+      const e = edges[i - 1], f = edges[i];
+      const [px, pz] = right(e, 1), [qx, qz] = right(f, 0);
+      const cr = e.dx * f.dz - e.dz * f.dx;
+      if (Math.abs(cr) < 0.05) { out.push([(px + qx) / 2, (pz + qz) / 2]); continue; }
+      const t = ((qx - px) * f.dz - (qz - pz) * f.dx) / cr; // вдоль e от её сдвинутого конца
+      const mx = px + e.dx * t, mz = pz + e.dz * t;
+      if (Math.hypot(mx - e.bx, mz - e.bz) < 3 * Math.max(e.off, f.off, 1)) out.push([mx, mz]);
+      else out.push([px, pz], [qx, qz]);
+    }
+    out.push(right(edges[edges.length - 1], 1));
+    return out;
+  }
+
+  // Путь по графу (по умолчанию гоночному) — узлы от from до to, null — не доехать.
+  // from — узел или несколько стартов [[узел, начальная цена], …]: путь начнётся с выгодного.
+  shortestPath(from, to, graph = this.graph) {
+    const starts = Array.isArray(from) ? from : [[from, 0]];
+    const dist = new Map(starts.map(([n, d]) => [n, d]));
     const prev = new Map();
     // Бинарная куча на массиве.
-    const heap = [[0, from]];
+    const heap = starts.map(([n, d]) => [d, n]).sort((a, b) => a[0] - b[0]);
     const push = (it) => {
       heap.push(it);
       let i = heap.length - 1;
@@ -1250,7 +1344,7 @@ export class World {
       const [d, u] = pop();
       if (u === to) break;
       if (d > dist.get(u)) continue;
-      for (const [v, w] of this.graph.get(u) || []) {
+      for (const [v, w] of graph.get(u) || []) {
         const nd = d + w;
         if (nd < (dist.get(v) ?? Infinity)) {
           dist.set(v, nd);
@@ -1259,9 +1353,9 @@ export class World {
         }
       }
     }
-    if (!prev.has(to)) return null;
+    if (!dist.has(to)) return null;
     const path = [to];
-    while (path[path.length - 1] !== from) path.push(prev.get(path[path.length - 1]));
+    while (prev.has(path[path.length - 1])) path.push(prev.get(path[path.length - 1]));
     return path.reverse();
   }
 }
