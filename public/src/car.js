@@ -343,8 +343,9 @@ export class Car {
     for (const s of [AXLE, -AXLE]) {
       const c = new THREE.Vector2(this.pos.x + f.x * s, this.pos.y + f.y * s);
       const before = c.clone();
-      // В прыжке и на крыше стены ниже машины не мешают; на земле — все (дом на склоне ниже дороги — всё равно стена).
-      const n = this.world.collide(c, RADIUS, false, this.air || this.onTop ? this.y : -Infinity);
+      // В прыжке и на крыше стены ниже машины не мешают; на земле — все (дом на склоне ниже дороги — всё равно стена),
+      // кроме заборов заметно ниже машины (забор под мостом, по которому едем).
+      const n = this.world.collide(c, RADIUS, false, this.y, !(this.air || this.onTop));
       if (!n) continue;
       this.pos.add(c.sub(before));
       const vn = this.vel.x * n.x + this.vel.y * n.z;

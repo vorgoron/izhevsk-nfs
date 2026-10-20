@@ -28,6 +28,7 @@ export const TRAM_GRASS = 1; // м: газон между полотном и д
 // Газон снаружи пути уходит вниз от края щебня: на TRAM_DROP м к краю газона плюс TRAM_TUCK м под асфальт.
 export const TRAM_DROP = 0.35, TRAM_TUCK = 0.5;
 const TRAM_GRASS_WIN = 8; // м: газон только где соседнего пути с этой стороны нет на столько вперёд и назад
+const WALL_CLEAR = 0.5; // м: забор ниже машины на столько не замечаем (низкий забор у дороги на подъёме — держит)
 const STEP = 2; // м: на сколько выше машины поверхность ещё «под колёсами» (ground)
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
 export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
@@ -1123,7 +1124,8 @@ export class World {
       const soft = SOFT_FENCES.has(f.k);
       for (let i = 1; i < f.p.length; i++) {
         const a = f.p[i - 1], c = f.p[i];
-        this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1], soft }, 0);
+        const top = Math.max(this.terrain(a[0], a[1]), this.terrain(c[0], c[1])) + f.h;
+        this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1], soft, top, fence: true }, 0);
       }
     }
   }
@@ -1149,8 +1151,9 @@ export class World {
   }
 
   // Выталкивает круг (x, z, r) из стен. Возвращает нормаль удара или null. soft — и из лёгких заборов.
-  // y — высота низа машины: стены ниже неё (машина на крыше) не мешают.
-  collide(pos, r, soft = false, y = -Infinity) {
+  // y — высота низа машины: в прыжке и на крыше (ground = false) стены ниже неё не мешают; на земле — держат
+  // все, кроме заборов ниже машины больше чем на WALL_CLEAR (забор под мостом, по которому едем).
+  collide(pos, r, soft = false, y = -Infinity, ground = false) {
     let hit = null;
     for (let iter = 0; iter < 3; iter++) {
       const key = Math.floor(pos.x / this.bCell) * 100003 + Math.floor(pos.y / this.bCell);
@@ -1159,7 +1162,8 @@ export class World {
       for (let di = -1; di <= 1; di++) {
         for (let dj = -1; dj <= 1; dj++) {
           for (const s of this.bGrid.get(key + di * 100003 + dj) || []) {
-            if (seen.has(s) || (s.soft && !soft) || y > (s.top ?? Infinity) - 0.5) continue;
+            if (seen.has(s) || (s.soft && !soft)) continue;
+            if (ground ? s.fence && y > s.top + WALL_CLEAR : y > (s.top ?? Infinity) - 0.5) continue;
             seen.add(s);
             const c = World.closest(s, pos.x, pos.y);
             if (c.d < r && c.d > 1e-6) {
