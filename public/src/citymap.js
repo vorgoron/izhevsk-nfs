@@ -41,7 +41,7 @@ export class CityMap {
     this.onRoute = onRoute;
     this.extra = extra; // () => [{ route, color }] — маршрут гонки и т. п.
     this.isOpen = false;
-    this.target = null; // { x, z, name, route }
+    this.target = null; // { x, z — конец маршрута, place — выбранное место [x, z], name, end, route }
     this.zoom = 0.25;
     this.cx = 0; this.cz = 0;
 
@@ -135,7 +135,7 @@ export class CityMap {
     }
     for (const r of w.city.waterways) add({ k: 'l', p: r.p, w: r.w, min: 0.8, c: '#24465c' }, r.w);
     yield;
-    for (const b of w.city.buildings) add({ k: 'b', p: b.p, a: b.a });
+    for (const b of w.city.buildings) add({ k: 'b', p: b.p, a: b.a, st: b.st });
     yield;
     const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
     for (const r of [...w.roads].sort((a, b) => order(a.k) - order(b.k))) {
@@ -398,25 +398,54 @@ export class CityMap {
     }
     if (hit) return this.go(hit.x, hit.z, hit.kind === 'fuel' ? `АЗС ${hit.name}` : hit.name);
     const x = this.#wx(sx), z = this.#wz(sy);
+    const house = this.#houseAt(x, z);
+    if (house) {
+      const street = this.world.city.streets?.[house.st];
+      const [x0, z0, x1, z1] = house.bb;
+      return this.go((x0 + x1) / 2, (z0 + z1) / 2, address(street, house.a) ?? this.world.nearestRoad(x, z, 60)?.seg.road.name, street);
+    }
     const name = this.world.nearestRoad(x, z, 60)?.seg.road.name;
     this.go(x, z, name || null);
   }
 
-  // Маршрут от машины до точки по графу улиц. false — туда не проехать.
-  go(x, z, name) {
-    const w = this.world;
-    const to = w.nearestGraphNode(x, z), [nx, nz] = w.nodes[to];
-    if (Math.hypot(nx - x, nz - z) > SNAP) return this.#info('Туда не проехать — выберите место у дороги'), false;
-    const route = this.route(to);
+  // Дом под точкой (x, z) — из индекса подложки.
+  #houseAt(x, z) {
+    const { items, cells, nx, nz } = this.#idxNow(), [xmin, zmin] = this.world.bounds;
+    const i = Math.floor((x - xmin) / CELL), j = Math.floor((z - zmin) / CELL);
+    if (i < 0 || j < 0 || i >= nx || j >= nz) return null;
+    for (const id of cells[j * nx + i]) {
+      const it = items[id];
+      if (it.k !== 'b' || x < it.bb[0] || x > it.bb[2] || z < it.bb[1] || z > it.bb[3]) continue;
+      let inside = false;
+      for (let k = 0, p = it.p, m = p.length - 1; k < p.length; m = k++) {
+        if ((p[k][1] > z) !== (p[m][1] > z) && x < ((p[m][0] - p[k][0]) * (z - p[k][1])) / (p[m][1] - p[k][1]) + p[k][0]) inside = !inside;
+      }
+      if (inside) return it;
+    }
+    return null;
+  }
+
+  #idxNow() {
+    if (!this.idx) this.#base();
+    return this.idx;
+  }
+
+  // Маршрут от машины до места (x, z): до ближайшего к нему места на улице (у дома — лучше на улице
+  // его адреса), на своей полосе; дальше до самого места — пунктиром на карте. false — туда не проехать.
+  go(x, z, name, street = null) {
+    const end = this.world.navEnd(x, z, street, SNAP);
+    if (!end) return this.#info('Туда не проехать — выберите место у дороги'), false;
+    const route = this.route(end);
     if (!route) return this.#info('Маршрут не найден'), false;
-    this.target = { x: nx, z: nz, name, node: to, route };
+    const [ex, ez] = route[route.length - 1];
+    this.target = { x: ex, z: ez, place: [x, z], name, end, route };
     this.onRoute(route, this.target);
     this.draw();
     return true;
   }
 
-  // Путь от машины до узла to — массив точек [x, z], первая — где машина (world.navRoute: по своей
-  // стороне, без встречки, назад — через разворот).
+  // Путь от машины до узла или места на улице to (world.navEnd) — массив точек [x, z], первая — где машина
+  // (world.navRoute: по своей стороне, без встречки, назад — через разворот).
   route(to) {
     return this.world.navRoute(this.car.pos.x, this.car.pos.y, this.car.heading, to);
   }
@@ -424,9 +453,10 @@ export class CityMap {
   // Перестроить маршрут от текущего места (съехал с маршрута).
   reroute() {
     if (!this.target) return;
-    const route = this.route(this.target.node);
+    const route = this.route(this.target.end);
     if (!route) return;
     this.target.route = route;
+    [this.target.x, this.target.z] = route[route.length - 1];
     this.onRoute(route, this.target);
   }
 
@@ -472,8 +502,19 @@ export class CityMap {
     };
     for (const { route, color } of this.extra?.() ?? []) if (route?.length > 1) line(route, color, 4);
     if (this.target) {
-      line(this.target.route, '#4ab3ff', 5);
-      this.#pin(this.#sx(this.target.x), this.#sz(this.target.z));
+      const { route, place: [px, pz], x, z } = this.target;
+      line(route, '#4ab3ff', 5);
+      if (Math.hypot(px - x, pz - z) > 3) { // от улицы до самого места — пешком
+        g.beginPath();
+        g.moveTo(this.#sx(x), this.#sz(z));
+        g.lineTo(this.#sx(px), this.#sz(pz));
+        g.setLineDash([2, 5]);
+        g.strokeStyle = '#4ab3ff';
+        g.lineWidth = 3;
+        g.stroke();
+        g.setLineDash([]);
+      }
+      this.#pin(this.#sx(px), this.#sz(pz));
     }
 
     // Значки: подписи достопримечательностей — когда карта достаточно крупная; налезающая на другую — не пишем.
@@ -572,6 +613,9 @@ export class CityMap {
 // «улица Пушкинская» → «ул. Пушкинская»: подпись короче, на улице помещается чаще.
 const SHORT = { улица: 'ул.', проспект: 'пр.', переулок: 'пер.', проезд: 'пр-д', бульвар: 'б-р', площадь: 'пл.', шоссе: 'ш.', набережная: 'наб.', тракт: 'тр.' };
 const short = (name) => name.replace(/[а-яё]+/gi, (w) => SHORT[w.toLowerCase()] ?? w);
+
+// «Пушкинская улица», «210» → «Пушкинская ул., 210»; без номера — null.
+const address = (street, num) => (num ? (street ? `${short(street)}, ${num}` : `дом ${num}`) : null);
 
 export const routeLen = (r) => r.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - r[i - 1][0], p[1] - r[i - 1][1]) : 0), 0);
 const fmtDist = (d) => (d < 1000 ? `${Math.round(d / 10) * 10} м` : `${(d / 1000).toFixed(1)} км`);

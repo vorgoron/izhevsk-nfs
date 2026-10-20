@@ -43,6 +43,7 @@ function pointInRing(x, z, p) {
 
 const ROOF_CELL = 40; // м: клетка сетки зданий для roofAt
 const UTURN = 60;     // м: во столько обходится разворот в начале маршрута навигатора
+const NAV_STREET = 120; // м: улица из адреса дома не дальше — маршрут к дому подъезжает по ней
 const UTURN_R = 4;    // м: радиус дуги разворота, если улица позволяет (не меньше четверти ширины)
 // Тротуары вдоль городских улиц (в OSM их редко рисуют отдельно): [газон между проезжей частью и тротуаром,
 // ширина тротуара], м. Рисуются на земле (build.js), по ним едут как по асфальту (surfaceAt). На мостах и в тоннелях — нет.
@@ -1221,12 +1222,44 @@ export class World {
     return best;
   }
 
+  // Куда навигатору подъехать к точке (дом, место на карте): ближайшее к ней место на улице из графа
+  // навигатора, не дальше maxD; улица адреса street (если есть рядом) — предпочтительнее. null — нет улиц.
+  navEnd(x, z, street = null, maxD = 300) {
+    let best = null, named = null;
+    for (const s of this.segmentsNear(x, z, maxD)) {
+      if (!this.nav.get(s.road.n[s.i - 1])?.some((e) => e[2] === s.road)) continue;
+      const c = World.closest(s, x, z);
+      if (c.d > maxD) continue;
+      const end = { ...c, seg: s };
+      if (!best || c.d < best.d) best = end;
+      if (street && s.road.name === street && c.d < NAV_STREET && (!named || c.d < named.d)) named = end;
+    }
+    return named ?? best;
+  }
+
   // Маршрут навигатора от машины (x, z, курс heading) до узла to — точки [x, z], первая — где машина.
+  // to — номер узла или место на улице из navEnd: тогда маршрут кончается в нём, на своей полосе.
   // Едет по своей стороне, посередине крайней правой полосы (не по пунктиру между полосами).
   // Старт — концы ближайшего к машине отрезка улицы, куда по нему можно ехать; назад — через разворот
   // (дуга налево), он дороже на UTURN. Против односторонней — только если иначе туда не попасть
   // (OSM: тупик односторонних). null — не доехать.
   navRoute(x, z, heading, to) {
+    if (typeof to !== 'object') return this.#navRoute(x, z, heading, to);
+    // Место на отрезке a–b — временный узел V: в него заезжают с концов отрезка, куда по нему можно ехать.
+    const { seg: s, t } = to, r = s.road, a = r.n[s.i - 1], b = r.n[s.i], V = this.nodes.length;
+    const f = MARKED_CLASSES.has(r.k) ? 1 : 1.6, links = [[this.nav, a, t], [this.graph, a, t], [this.graph, b, 1 - t]];
+    if (!r.ow) links.push([this.nav, b, 1 - t]);
+    this.nodes.push([to.px, to.pz]);
+    for (const [g, n, k] of links) g.get(n).push([V, k * s.len * f, r]);
+    try {
+      return this.#navRoute(x, z, heading, V, to);
+    } finally {
+      for (const [g, n] of links) g.get(n).pop();
+      this.nodes.pop();
+    }
+  }
+
+  #navRoute(x, z, heading, to, end = null) {
     const nav = this.nav, fx = Math.sin(heading), fz = Math.cos(heading);
     // Сдвиг вправо от оси — до середины крайней правой полосы (полосы — как у трафика: из OSM или по ширине).
     const side = (r) => {
@@ -1246,6 +1279,10 @@ export class World {
       const ahead = (seg.bx - seg.ax) * fx + (seg.bz - seg.az) * fz >= 0; // машина смотрит от a к b
       starts = [[b, (1 - c.t) * seg.len + (ahead ? 0 : UTURN)]];
       if (!r.ow) starts.push([a, c.t * seg.len + (ahead ? UTURN : 0)]);
+      if (end?.seg.road === r && end.seg.i === seg.i) { // место на том же отрезке, что и машина — прямо к нему
+        if (end.t >= c.t) starts.push([to, (end.t - c.t) * seg.len + (ahead ? 0 : UTURN)]);
+        else if (!r.ow) starts.push([to, (c.t - end.t) * seg.len + (ahead ? UTURN : 0)]);
+      }
       path = to === a || to === b ? [to] : this.shortestPath(starts, to, nav) ?? this.shortestPath(starts, to);
     } else {
       const from = this.nearestGraphNode(x, z);

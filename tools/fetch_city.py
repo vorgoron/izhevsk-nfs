@@ -430,6 +430,7 @@ def building_entry(pts, tags, eid, lm, holes=()):
         **({"mh": mh} if mh else {}),
         **({"name": osm_name(tags)} if osm_name(tags) else {}),
         **({"a": tags["addr:housenumber"]} if tags.get("addr:housenumber") else {}),  # номер дома — на карте
+        **({"st": tags["addr:street"]} if tags.get("addr:housenumber") and tags.get("addr:street") else {}),  # улица адреса
         **({"lm": lm} if lm else {}),
         # Православный/христианский храм без своей модели — в браузере главка на крыше.
         **({"pw": 1} if not lm and tags.get("amenity") == "place_of_worship"
@@ -1590,11 +1591,22 @@ def download_dem(bounds):
     return {"x0": xmin, "z0": zmin, "step": DEM_STEP, "nx": nx, "nz": nz, "h": heights}
 
 
+def street_table(city):
+    """Улица адреса дома — номером в city["streets"]: одно название на десятки домов."""
+    streets = sorted({b["st"] for b in city["buildings"] if "st" in b})
+    index = {s: i for i, s in enumerate(streets)}
+    for b in city["buildings"]:
+        if "st" in b:
+            b["st"] = index[b["st"]]
+    city["streets"] = streets
+
+
 def main():
     os.makedirs(RAW, exist_ok=True)
     download_osm()
     print(f"parsed: {len(nodes)} nodes, {len(ways)} ways, {len(relations)} relations")
     city = build_city()
+    street_table(city)
     city["dem"] = download_dem(city["bounds"])
     city["origin"] = [LAT0, LON0]
     city["attribution"] = ("© OpenStreetMap contributors (ODbL); рельеф: Terrain Tiles (Mapzen / AWS, SRTM); "
