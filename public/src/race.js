@@ -1,9 +1,19 @@
-// Гонка по чекпоинтам: маршрут — кратчайший путь по графу улиц; куда ехать — стрелки на дороге (guide.js). Общая гонка в комнате: маршрут задают
-// узлы старта и финиша (у всех один граф — один путь), отсчёт и время — по часам сервера (clock).
+// Гонка по чекпоинтам: маршрут — по графу улиц через промежуточные точки (кратчайший путь между соседними);
+// куда ехать — стрелки на дороге (guide.js). Ворота редкие: между ними едешь как хочешь — срезать дворами можно.
+// Общая гонка в комнате: маршрут задают узлы старта, промежуточных точек и финиша (у всех один граф — один путь),
+// отсчёт и время — по часам сервера (clock).
 import * as THREE from 'three';
 
-const CP_SPACING = 230;
-const CP_RADIUS = 13;
+const CP_SPACING = 650;
+const CP_RADIUS = 18;
+// Длина гонки: м по маршруту и сколько промежуточных точек (через районы, а не по прямой).
+export const LENGTHS = {
+  short: { min: 1800, max: 2600, via: 1, name: 'Короткая' },
+  mid: { min: 3500, max: 4800, via: 2, name: 'Средняя' },
+  long: { min: 6000, max: 8000, via: 3, name: 'Длинная' },
+};
+const TURN = 70 * Math.PI / 180; // следующая точка — не дальше этого угла от общего направления
+const OVERLAP = 0.15;            // доля участка по уже пройденным улицам — больше нельзя (туда-обратно)
 const GRID_BACK = 7, GRID_SIDE = 1.6; // м: стартовая сетка общей гонки — по две машины в ряд
 
 export class Race {
@@ -24,31 +34,66 @@ export class Race {
     this.ringGeo = new THREE.TorusGeometry(CP_RADIUS, 0.5, 8, 48).rotateX(Math.PI / 2);
   }
 
-  // Новая гонка от точки (x, z): финиш в 1.3–2.3 км по прямой, маршрут по улицам.
-  start(x, z) {
-    const p = this.pick(x, z);
-    return !!p && this.#begin(p.from, p.to);
+  // Новая гонка от точки (x, z) длины len (LENGTHS); p — уже выбранные узлы (pick).
+  start(x, z, len = 'short', p = this.pick(x, z, len)) {
+    return !!p && this.#begin(p.from, p.to, p.via);
   }
 
-  // Узлы старта и финиша новой гонки от точки (x, z).
-  pick(x, z) {
-    const w = this.world;
+  // Узлы старта, промежуточных точек и финиша новой гонки от точки (x, z): точки — перекрёстки, каждая следующая
+  // примерно в общем направлении; путь не разворачивается на точке и не едет по своим же улицам обратно.
+  // Длина не попала ни разу — ближайший к нужной из найденных.
+  pick(x, z, len = 'short') {
+    const w = this.world, L = LENGTHS[len] ?? LENGTHS.short;
     const from = w.nearestGraphNode(x, z);
-    const ids = [...w.graph.keys()];
-    for (let tries = 0; tries < 60; tries++) {
-      const to = ids[Math.floor(Math.random() * ids.length)];
-      const [px, pz] = w.nodes[to], [fx, fz] = w.nodes[from];
-      const d = Math.hypot(px - fx, pz - fz);
-      if (d < 1300 || d > 2300) continue;
-      const p = w.shortestPath(from, to);
-      if (p && p.length > 5) return { from, to };
+    const want = (L.min + L.max) / 2;
+    const cross = [...w.graph.keys()].filter((id) => w.graph.get(id).length >= 3);
+    const near = (px, pz) => { // ближайший перекрёсток — по выборке, весь список долго
+      let best = -1, bd = Infinity;
+      for (let i = 0; i < 4000; i++) {
+        const id = cross[Math.floor(Math.random() * cross.length)], [nx, nz] = w.nodes[id];
+        const d = (nx - px) ** 2 + (nz - pz) ** 2;
+        if (d < bd) { bd = d; best = id; }
+      }
+      return best;
+    };
+    let best = null, bestErr = Infinity;
+    for (let tries = 0; tries < 40; tries++) {
+      // По прямой между точками — меньше длины по улицам (~1,3 раза).
+      const step = want / (L.via + 1) / 1.3;
+      let dir = Math.random() * 2 * Math.PI, cur = from, total = 0, ok = true;
+      const via = [], used = new Set(), path = [from];
+      for (let k = 0; k <= L.via && ok; k++) {
+        if (k) dir += (Math.random() * 2 - 1) * TURN;
+        const [cx, cz] = w.nodes[cur];
+        const next = near(cx + Math.sin(dir) * step, cz + Math.cos(dir) * step);
+        const p = next !== cur && w.shortestPath(cur, next);
+        if (!p || p.length < 3) { ok = false; break; }
+        if (path.length > 1 && p[1] === path[path.length - 2]) { ok = false; break; } // разворот на точке
+        let seg = 0, again = 0;
+        for (let i = 1; i < p.length; i++) {
+          const [ax, az] = w.nodes[p[i - 1]], [bx, bz] = w.nodes[p[i]], d = Math.hypot(bx - ax, bz - az);
+          const key = p[i - 1] < p[i] ? `${p[i - 1]}-${p[i]}` : `${p[i]}-${p[i - 1]}`;
+          if (used.has(key)) again += d;
+          used.add(key);
+          seg += d;
+        }
+        if (again > seg * OVERLAP) { ok = false; break; }
+        total += seg;
+        path.push(...p.slice(1));
+        if (k < L.via) via.push(next);
+        cur = next;
+      }
+      if (!ok) continue;
+      const err = total < L.min ? L.min - total : total > L.max ? total - L.max : 0;
+      if (err < bestErr) { bestErr = err; best = { from, to: cur, via }; }
+      if (!err) break;
     }
-    return null;
+    return best;
   }
 
   // Общая гонка: старт в момент startAt (мс по clock()), slot — место в стартовой сетке.
-  startShared({ from, to, startAt, slot, clock }) {
-    if (!this.#begin(from, to)) return false;
+  startShared({ from, to, via = [], startAt, slot, clock }) {
+    if (!this.#begin(from, to, via)) return false;
     this.shared = true;
     this.startAt = startAt;
     this.clock = clock;
@@ -59,10 +104,16 @@ export class Race {
     return true;
   }
 
-  #begin(from, to) {
-    const w = this.world;
-    const path = w.graph.has(from) && w.graph.has(to) ? w.shortestPath(from, to) : null;
-    if (!path || path.length < 2) return false;
+  #begin(from, to, via = []) {
+    const w = this.world, pts = [from, ...via, to];
+    if (!pts.every((id) => w.graph.has(id))) return false;
+    const path = [from];
+    for (let k = 1; k < pts.length; k++) {
+      const p = w.shortestPath(pts[k - 1], pts[k]);
+      if (!p) return false;
+      path.push(...p.slice(1));
+    }
+    if (path.length < 2) return false;
     this.shared = false;
     this.startAt = null;
 
@@ -93,6 +144,7 @@ export class Race {
     this.time = 0;
     this.next = 0;
     this.#updateGateLook();
+    this.onBegin?.();
     return true;
   }
 
@@ -106,6 +158,16 @@ export class Race {
     this.next = 0;
     this.#updateGateLook();
     return true;
+  }
+
+  // Точка маршрута в d м от старта и направление там.
+  at(d) {
+    const { route, cum } = this;
+    let i = 1;
+    while (i < route.length - 1 && cum[i] < d) i++;
+    const [ax, az] = route[i - 1], [bx, bz] = route[i], seg = cum[i] - cum[i - 1] || 1;
+    const k = Math.max(0, Math.min(1, (d - cum[i - 1]) / seg));
+    return { x: ax + (bx - ax) * k, z: az + (bz - az) * k, dx: (bx - ax) / seg, dz: (bz - az) / seg };
   }
 
   #total() {

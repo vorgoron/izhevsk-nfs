@@ -69,6 +69,9 @@ export class Wallet {
     this.#save();
   }
 
+  // Плашка без денег (взял бонус на трассе).
+  say(text, why) { this.#note(text, why, 'plus'); }
+
   // Итог серии мелких списаний (заправка) — одной плашкой.
   note(sum, why) { if (sum >= 1) this.#note(`−${fmt(sum)}`, why, 'minus'); }
 

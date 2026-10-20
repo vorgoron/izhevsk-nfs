@@ -2,7 +2,8 @@
 // в комнате — раз в 4 с) пишет её положение в rooms/<комната>/players/<uid>; чужие машины плавно едут между полученными
 // точками. Столкновения каждый считает сам: свою машину отталкивает от того, где видит чужую, — и
 // у того, в кого врезались, его игра так же оттолкнёт его машину от нашей.
-// Общая гонка — rooms/<комната>/race: { a, b — узлы старта и финиша, t — старт по часам сервера,
+// Общая гонка — rooms/<комната>/race: { a, b — узлы старта и финиша, w — промежуточные узлы через запятую,
+// l — длина (race.js LENGTHS), t — старт по часам сервера,
 // o — uid участников через запятую (порядок — места в стартовой сетке), r/<uid> — время финиша, с }.
 // В общем городе пока никого не видно и ничего не шлём (лимиты Firebase): связь — только в своей комнате. Нет связи с Firebase — игра идёт как раньше, одна.
 import * as THREE from 'three';
@@ -90,10 +91,10 @@ export class Net {
   nameOf(uid) { return uid === this.uid ? this.name : this.ghosts.get(uid)?.name ?? 'Гонщик'; }
 
   // Новая общая гонка: участники — все, кого сейчас видно, сам запустивший — первым в сетке.
-  startRace(from, to) {
+  startRace(from, to, via = [], len = 'short') {
     if (!this.shared) return false;
     const o = [this.uid, ...[...this.ghosts].filter(([, g]) => !g.stale).map(([uid]) => uid)].join(',');
-    this.fb.set(this.fb.ref(this.db, `rooms/${this.room}/race`), { a: from, b: to, t: Math.round(this.serverNow() + RACE_DELAY), o })
+    this.fb.set(this.fb.ref(this.db, `rooms/${this.room}/race`), { a: from, b: to, w: via.join(','), l: len, t: Math.round(this.serverNow() + RACE_DELAY), o })
       .catch((e) => console.warn('[net] гонка не записалась:', e));
     return true;
   }

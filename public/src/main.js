@@ -5,7 +5,9 @@ import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
 import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates } from './vehicles.js';
 import { Garage, loadChoice, optionKey } from './garage.js';
-import { Race, formatTime } from './race.js';
+import { Race, formatTime, LENGTHS } from './race.js';
+import { Ramps } from './ramps.js';
+import { Pickups, NITRO_GIVE } from './pickups.js';
 import { buildLandmarks } from './landmarks.js';
 import { planFootbridges, buildFootbridges } from './footbridges.js';
 import { Sound } from './audio.js';
@@ -175,6 +177,12 @@ async function main() {
   nitroFx.attach(car.model);
   jetFx.attach(car.model);
   const race = new Race(world, scene);
+  const ramps = owned('трамплины', () => new Ramps(world, scene));
+  const pickups = owned('бонусы гонки', () => new Pickups(world, scene));
+  car.ramp = (x, z, y, fx, fz) => ramps.at(x, z, y, fx, fz);
+  // Догонялка в общей гонке: отставшему на CATCH_UP м и больше нитро наполняется вдвое быстрее.
+  const CATCH_UP = 300;
+  race.onBegin = () => { ramps.set(race); pickups.set(race, ramps.dists); };
   const guide = owned('стрелки', () => new RouteGuide(world, scene));
   let navRoute = null; // маршрут до точки на большой карте (citymap.js)
 
@@ -229,7 +237,8 @@ async function main() {
     if (race.shared && v.t === race.startAt) return;
     if (v.t <= net.serverNow()) return; // уже стартовала без нас — ждём следующую
     const order = String(v.o).split(','), i = order.indexOf(net.uid);
-    if (race.startShared({ from: v.a, to: v.b, startAt: v.t, slot: i < 0 ? order.length : i, clock: () => net.serverNow() })) {
+    const via = v.w ? String(v.w).split(',').map(Number) : [];
+    if (race.startShared({ from: v.a, to: v.b, via, startAt: v.t, slot: i < 0 ? order.length : i, clock: () => net.serverNow() })) {
       if (menu.isOpen) actions.menu();
       car.nitro = 1; car.fuel = Math.max(car.fuel, 0.5);
     }
@@ -278,7 +287,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx }; // для отладки из консоли
+  window.game = { world, car, race, ramps, pickups, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -380,6 +389,7 @@ async function main() {
   // гараж) закрывают меню, настройки переключаются на месте.
   const actions = {
     menu: () => {
+      if (!raceLenEl.hidden) { raceLenEl.hidden = true; return; } // Esc закрывает выбор длины гонки
       if (menu.back()) return; // из подменю — на главную страницу меню
       if (garage.isOpen) garage.close();
       menu.toggle();
@@ -399,13 +409,11 @@ async function main() {
       }
       else respawnAt(car.pos.x, car.pos.y);
     },
-    // В своей комнате — общая гонка: старт отсюда, финиш случайный; придёт всем через базу (net.onRace).
+    // Сначала выбор длины; N ещё раз — гонка той же длины, что в прошлый раз.
     race: () => {
       resume();
-      const p = net.shared && race.pick(car.pos.x, car.pos.y);
-      const shared = !!p && net.startRace(p.from, p.to);
-      if (!shared) race.start(car.pos.x, car.pos.y);
-      track('race_start', { shared });
+      if (raceLenEl.hidden) { raceLenEl.hidden = false; markLen(); }
+      else startRace(raceLen);
     },
     camera: () => { camMode = (camMode + 1) % 4; cine.shot = null; cine.left = 0; },
     night: () => dayNight.toggle(),
@@ -450,6 +458,24 @@ async function main() {
   let citymap = null; // большая карта и аккаунт — создаются после меню (меню уже спрашивает их состояние)
   let account = null;
   const resume = () => { menu.close(); sound.setPaused(false); };
+  // Выбор длины гонки (race.js LENGTHS); последняя выбранная — в localStorage.
+  const raceLenEl = $('race-len');
+  let raceLen = 'short';
+  try { const v = localStorage.getItem('raceLen'); if (Object.hasOwn(LENGTHS, v ?? '')) raceLen = v; } catch {}
+  const markLen = () => { for (const b of raceLenEl.querySelectorAll('[data-len]')) b.classList.toggle('last', b.dataset.len === raceLen); };
+  // В своей комнате — общая гонка: старт отсюда, финиш случайный; придёт всем через базу (net.onRace).
+  function startRace(len) {
+    raceLenEl.hidden = true;
+    raceLen = len;
+    try { localStorage.setItem('raceLen', len); } catch {}
+    const p = race.pick(car.pos.x, car.pos.y, len);
+    if (!p) return;
+    const shared = net.shared && net.startRace(p.from, p.to, p.via, len);
+    if (!shared) race.start(car.pos.x, car.pos.y, len, p);
+    track('race_start', { shared, len });
+    menu.sync();
+  }
+  raceLenEl.addEventListener('click', (e) => { const b = e.target.closest('[data-len]'); if (b) startRace(b.dataset.len); });
   // После любого действия (клавишей, кнопкой) меню показывает актуальные значения.
   for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
   const menu = new Menu({
@@ -531,6 +557,7 @@ async function main() {
     sound.unlock();
     if (e.code !== 'KeyB') radio.unlock();
     if (starting) return; // экран «Поехали»: клавиши игры не работают
+    if (!raceLenEl.hidden && /^Digit[123]$/.test(e.code)) return startRace(Object.keys(LENGTHS)[+e.code.slice(5) - 1]);
     if (!e.repeat) press(e.code);
     // Esc в гараже закрывает гараж (garage.js гасит событие), а не открывает меню.
     if (!e.repeat && !e.defaultPrevented && KEY_ACTIONS[e.code]) actions[KEY_ACTIONS[e.code]]();
@@ -999,8 +1026,8 @@ async function main() {
     if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); }
   }
   // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху. Дрифт — drift.js.
-  const TRICK_PAY = { kick: 500, back: 700, roll: 600 }, OVER_PAY = 300;
-  const TRICK_NAME = { kick: 'kickflip', back: 'backflip', roll: 'бочка' };
+  const TRICK_PAY = { kick: 500, back: 700, roll: 600, ramp: 200 }, OVER_PAY = 300;
+  const TRICK_NAME = { kick: 'kickflip', back: 'backflip', roll: 'бочка', ramp: 'трамплин' };
   const ROOF_PAY = { car: 800, bus: 1200, tram: 1500, roof: 1000 };
   const ROOF_NAME = { car: 'на крышу машины', bus: 'на крышу автобуса', tram: 'на крышу трамвая', roof: 'на крышу дома' };
   const jumped = new Set();
@@ -1092,6 +1119,7 @@ async function main() {
     $('time').textContent = formatTime(race.time);
     $('cp').textContent = race.checkpoints.length ? `${Math.min(race.next, race.checkpoints.length)}/${race.checkpoints.length}` : '–';
     $('dist').textContent = `${(race.length / 1000).toFixed(1)} км`;
+    $('ramps-left').textContent = race.state === 'running' && car.nitroBoost > 1.05 ? 'нитро догоняет' : '';
     drawMinimap();
   }
 
@@ -1195,6 +1223,10 @@ async function main() {
       traffic.reset(car.pos.x, car.pos.y);
     }
     if (!garage.isOpen) race.update(dt, car); // в гараже гонка на паузе
+    // Канистры и трамплины на трассе — пока едем гонку; кончилась — убираем.
+    if (race.state === 'running') {
+      for (let n = pickups.update(dt, car); n > 0; n--) { car.nitro = Math.min(1, car.nitro + NITRO_GIVE); wallet.say('🔷 нитро', `+${NITRO_GIVE * 100}%`); }
+    } else if (race.state !== 'countdown' && (pickups.items.length || ramps.list.length)) { pickups.clear(); ramps.clear(); }
     signals.update(dt);
     fines(dt);
     fuel.update(dt, car, wallet);
@@ -1203,6 +1235,12 @@ async function main() {
     tricks(dt);
     car.checkStuck(dt, inp);
     net.progress = race.shared && race.state !== 'countdown' && net.race?.t === race.startAt ? race.progress(car) : null;
+    car.nitroBoost = 1;
+    if (net.progress != null && race.state === 'running') {
+      let lead = net.progress;
+      for (const g of net.ghosts.values()) if (!g.stale && g.p != null) lead = Math.max(lead, g.p);
+      car.nitroBoost = 1 + Math.min(1, (lead - net.progress) / CATCH_UP);
+    }
     net.update(dt, car);
     traffic.update(dt, car);
     breakables.update(dt, car, traffic);

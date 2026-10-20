@@ -77,6 +77,13 @@ const BUMP_HOP = 11, BUMP_HIT = [[0.45, 25], [0.3, 35], [0.25, 40]];
 // Крыши: после трюка можно сесть на машину трафика, трамвай или дом (support — main.js) и ехать по ней;
 // съехал с края, а под колёсами пустота выше FALL м — падаешь.
 const FALL = 1.2;
+// Трамплин-ускоритель (ramps.js, хук ramp — main.js): заехал — разгоняет на RAMP_BOOST м/с, но не быстрее RAMP_TOP × верхней
+// скорости, и RAMP_FX с горит нитро (пламя, камера); на земле лишняя скорость сходит за пару секунд, в воздухе держится.
+// Съехал с кромки быстрее RAMP_MIN м/с — улетаешь, скорость вверх — доля
+// скорости вперёд, в пределах [RAMP_VY_MIN, RAMP_VY_MAX]: на 85 км/ч — ~17 м над трамплином, пятиэтажку перелетаешь
+// или садишься на крышу; 9-этажка выше — в стену.
+const RAMP_MIN = 8, RAMP_VY = 0.9, RAMP_VY_MIN = 6, RAMP_VY_MAX = 24, RAMP_LIP = 0.8;
+const RAMP_BOOST = 12, RAMP_TOP = 1.5, RAMP_FX = 1.2;
 const TANK_M = 9000;      // м на полном баке при обычном газе; нитро — втрое больше расхода
 
 export class Car {
@@ -112,6 +119,11 @@ export class Car {
     // не выше y + 0.5 или null; задаёт main.js. onTop — на чём стоим сейчас (null — на земле).
     this.support = null;
     this.onTop = null;
+    // Трамплин под колёсами: (x, z, y, fx, fz) → { y, k, slope } или null; задаёт main.js. onRamp — на каком стоим.
+    this.ramp = null;
+    this.onRamp = null;
+    this.boostT = 0;     // сколько ещё горит пламя ускорителя, с
+    this.nitroBoost = 1; // во сколько раз быстрее наполняется нитро (отстающему в общей гонке — main.js)
   }
 
   // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы).
@@ -131,6 +143,7 @@ export class Car {
     this.pitch = 0;
     this.bodyRoll = this.bodyRollV = 0;
     this.air = null;
+    this.onRamp = null;
     this.hopV = this.hopH = 0;
     this.flip = this.flipP = this.alt = 0;
     this.yawV = this.skid = this.slide = 0;
@@ -146,6 +159,13 @@ export class Car {
   // Начать трюк: kind 'kick' или 'roll' (dir — в какую сторону крутиться, ±1, 1 — вправо) или 'back'.
   // Только с земли и не в воде.
   #jump(kind, dir = 1) {
+    // С трамплина трюк можно начать в воздухе: оборот успевает за оставшийся полёт.
+    if (this.air?.kind === 'ramp') {
+      const a = this.air;
+      a.kind = kind; a.dir = dir; a.t = 0;
+      a.dur = Math.max(1, (a.vy + Math.sqrt(Math.max(0, a.vy * a.vy + 2 * FLIP_G * this.alt))) / FLIP_G);
+      return true;
+    }
     if (this.air || this.sink > 0 || this.drowned) return false;
     // a, w — угол и угловая скорость оборота; acc — угловое ускорение в долях полной тяги (± — раскрутка/торможение).
     this.air = { kind, t: 0, vy: FLIP_VY, dur: 2 * FLIP_VY / FLIP_G, dir, a: 0, w: 0, acc: 0 };
@@ -186,12 +206,13 @@ export class Car {
     if (this.nitro <= 0) this.nitroLocked = true;
     else if (this.nitro >= NITRO_UNLOCK) this.nitroLocked = false;
     const nitroOn = input.nitro && !this.nitroLocked && vf > 5;
-    this.nitroOn = nitroOn;
+    this.boostT = Math.max(0, (this.boostT ?? 0) - dt);
+    this.nitroOn = nitroOn || this.boostT > 0; // для пламени и камеры: ускоритель — тоже нитро
     const vf0 = vf;
     if (input.up || (input.down && vf <= 0.5)) {
       this.fuel = Math.max(0, this.fuel - (Math.abs(vf) * dt + 0.3 * dt) / TANK_M * this.eco * (nitroOn ? 3 : 1));
     }
-    this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -0.35 : NITRO_REFILL) * dt));
+    this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -0.35 : NITRO_REFILL * this.nitroBoost) * dt));
     const top = (nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed) * (1 - (1 - OFF_SPEED) * off);
     const accel = this.accel * (1 - (1 - OFF_ACCEL) * off);
 
@@ -209,7 +230,7 @@ export class Car {
     }
     vf -= vf * Math.abs(vf) * 0.0004 * dt; // сопротивление воздуха
     vf -= vf * OFF_DRAG * off * dt;        // грунт тормозит
-    if (vf > top + 1) vf -= Math.min(vf - top, 14 * dt); // съехал с дороги на скорости — сбрасываем до предела грунта
+    if (vf > top + 1 && !air) vf -= Math.min(vf - top, 14 * dt); // съехал с дороги на скорости (или после ускорителя) — сбрасываем до предела
     if (input.brake && !air) vf -= Math.sign(vf) * Math.min(Math.abs(vf), HANDBRAKE * dt);
 
     // Руль: плавно к цели, на скорости — меньше угол.
@@ -279,10 +300,25 @@ export class Car {
     this.#bump(vf, air);
     // Крыша под машиной — только в прыжке и пока на ней стоим (с земли на крышу не заехать).
     const sup = (air || this.onTop) && this.support ? this.support(this.pos.x, this.pos.y, y0) : null;
-    const ground = sup && sup.y > land ? sup.y : land;
+    // Трамплин: его наклон — та же земля; съехал с кромки вперёд на скорости — прыжок.
+    const rp = !air && this.ramp ? this.ramp(this.pos.x, this.pos.y, y0, f2.x, f2.y) : null;
+    let ground = sup && sup.y > land ? sup.y : land;
+    if (rp && !this.onRamp) { // заехал на ускоритель
+      const v = this.vel.dot(f2), add = Math.max(0, Math.min(RAMP_BOOST, this.maxSpeed * RAMP_TOP - v));
+      this.vel.addScaledVector(f2, add);
+      this.boostT = RAMP_FX;
+    }
+    const v = this.vel.dot(f2);
+    if (rp && rp.y > ground) ground = rp.y;
+    else if (!air && this.onRamp && this.onRamp.k > RAMP_LIP && v > RAMP_MIN) {
+      const vy = Math.max(RAMP_VY_MIN, Math.min(RAMP_VY_MAX, v * RAMP_VY));
+      this.air = { kind: 'ramp', t: 0, vy, dur: 2 * vy / FLIP_G, dir: 1, a: 0, w: 0, acc: 0 };
+      this.y = Math.max(this.y, this.onRamp.y);
+    }
+    this.onRamp = rp && rp.y >= ground ? rp : null;
     this.onTop = sup && sup.y > land && !air ? sup : null;
     // Съехал с крыши (или с обрыва) — падаем, а не съезжаем плавно.
-    if (!air && y0 - ground > FALL && this.sink === 0) {
+    if (!this.air && y0 - ground > FALL && this.sink === 0) {
       this.air = { kind: 'fall', t: 0, vy: 0, dur: 1, dir: 1, a: 0, w: 0, acc: 0 };
       this.onTop = null;
     }
@@ -302,7 +338,7 @@ export class Car {
       air.vy -= FLIP_G * dt;
       this.y += air.vy * dt;
       const u = Math.min(1, air.t / (air.dur * FLIP_SPIN));
-      const want = Math.PI * (1 - Math.cos(Math.PI * u)); // 0 → 2π, плавно разгоняется и тормозит
+      const want = air.kind === 'ramp' ? 0 : Math.PI * (1 - Math.cos(Math.PI * u)); // 0 → 2π, плавно разгоняется и тормозит
       const acc = FLIP_K * (want - air.a) - FLIP_C * air.w;
       air.w += acc * dt;
       air.a += air.w * dt;
@@ -321,8 +357,8 @@ export class Car {
         this.landedOn = sup && sup.y > land ? sup.kind : null; // и на что: крыша машины, трамвая, дома
         if (this.landedOn) this.onTop = sup;
       }
-    } else {
-      this.y += (ground - this.y) * Math.min(1, dt * 15);
+    } else if (!this.air) {
+      this.y = this.onRamp ? ground : this.y + (ground - this.y) * Math.min(1, dt * 15);
       // Подскок на лежачем полицейском: невысоко над поверхностью, без прыжка (струи трюка не нужны).
       if (this.hopV || this.hopH) {
         this.hopV -= FLIP_G * dt;
@@ -341,7 +377,10 @@ export class Car {
     const hr = g.ground(this.pos.x + r2.x * 0.9, this.pos.y + r2.y * 0.9, y0);
     const k = Math.min(1, dt * 10);
     // В воздухе — ровно, рельеф под колёсами не наклоняет.
-    this.pitch += ((air ? 0 : -Math.atan2(hf - hb, 3.2)) - this.pitch) * k;
+    // С трамплина нос идёт по траектории: вверх на взлёте, вниз к посадке.
+    const pitchTo = air ? (air.kind === 'ramp' ? -0.5 * Math.atan2(air.vy, Math.max(5, vf)) : 0)
+      : this.onRamp ? -Math.atan(this.onRamp.slope) : -Math.atan2(hf - hb, 3.2);
+    this.pitch += (pitchTo - this.pitch) * k;
     this.roll += ((air ? 0 : Math.atan2(hl - hr, 1.8)) - this.roll) * k; // от рельефа — вся машина
     // Кузов кренится наружу поворота от бокового ускорения (скорость × угловая скорость) и
     // покачивается на подвеске — пружина с демпфером, после поворота чуть перекачивается обратно.

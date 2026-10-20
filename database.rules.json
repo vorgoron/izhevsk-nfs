@@ -22,6 +22,8 @@
           "b": { ".validate": "newData.isNumber()" },
           "t": { ".validate": "newData.isNumber()" },
           "o": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+          "w": { ".validate": "newData.isString() && newData.val().length <= 200" },
+          "l": { ".validate": "newData.isString() && newData.val().length <= 8" },
           "r": {
             "$uid": {
               ".write": "auth != null && auth.uid === $uid",
