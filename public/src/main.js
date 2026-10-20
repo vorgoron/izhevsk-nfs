@@ -976,10 +976,12 @@ async function main() {
 
   // Штраф — вспышка камеры по экрану. Красный — signals.js, скорость — камеры (cameras.js).
   const flash = () => { const f = $('flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on'); };
+  // В гонке (и на отсчёте) не штрафуют. Проверки всё равно идут — иначе скорость, снятая камерой на заезде,
+  // пришла бы штрафом сразу после финиша.
   function fines(dt) {
-    if (race.state === 'countdown') return;
-    if (signals.checkPlayer(car)) { wallet.fine(PRICES.redLight, 'проезд на красный'); flash(); }
-    const shot = cameras.update(dt, car);
+    const red = signals.checkPlayer(car), shot = cameras.update(dt, car);
+    if (race.state === 'countdown' || race.state === 'running') return;
+    if (red) { wallet.fine(PRICES.redLight, 'проезд на красный'); flash(); }
     if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); }
   }
   // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху. Дрифт — drift.js.
