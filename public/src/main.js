@@ -480,7 +480,7 @@ async function main() {
     poi: () => [
       ...fuel.stations.map((s) => ({ kind: 'fuel', name: s.name, x: s.cx, z: s.cz })),
       ...landmarks.markers.map((m) => ({ kind: 'landmark', name: m.name, x: m.x, z: m.z })),
-      ...cameras.list.map((c) => ({ kind: 'camera', name: `камера ${c.lim}`, x: c.x, z: c.z })),
+      ...cameras.list.map((c) => ({ kind: 'camera', name: c.speed === false ? 'камера на перекрёстке' : `камера ${c.lim}`, x: c.x, z: c.z })),
       ...[...net.ghosts.values()].filter((g) => g.mesh?.visible).map((g) => ({ kind: 'ghost', name: g.name, x: g.mesh.position.x, z: g.mesh.position.z })),
     ],
     extra: () => (race.state === 'running' || race.state === 'countdown' ? [{ route: race.route, color: '#ffd23f' }] : []),
@@ -974,7 +974,7 @@ async function main() {
 
   // ---------------------------------------------------------------- штрафы и награды
 
-  // Штраф — вспышка камеры по экрану. Красный — signals.js, скорость — камеры (cameras.js).
+  // Штраф — вспышка камеры по экрану. Красный — signals.js (только у камер), скорость — камеры (cameras.js).
   const flash = () => { const f = $('flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on'); };
   // В гонке (и на отсчёте) не штрафуют. Проверки всё равно идут — иначе скорость, снятая камерой на заезде,
   // пришла бы штрафом сразу после финиша.

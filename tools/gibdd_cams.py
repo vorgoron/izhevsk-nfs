@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Камеры скорости из перечня Госавтоинспекции Удмуртии -> data/gibdd_cams.json и cams в city.json.
+"""Камеры скорости и перекрёстков из перечня Госавтоинспекции Удмуртии -> data/gibdd_cams.json и cams в city.json.
 
 Перечень — «Комплексы для сайта Госавтоинспекции» (.xls: адрес, широта, долгота, режим, виды нарушений).
 В data/gibdd_cams.json кладутся все комплексы республики как есть; fetch_city.py берёт из него
-комплексы, которые ловят скорость, внутри области города.
+комплексы, которые ловят скорость или проезд перекрёстка, внутри области города.
 
 Запуск (нужен xlrd: pip install xlrd):
   python3 tools/gibdd_cams.py путь/к/перечню.xls   — обновить data/gibdd_cams.json и cams в public/city.json
@@ -47,7 +47,7 @@ def main():
     city["cams"] = gibdd_cams(lambda x, z: xmin - 300 < x < xmax + 300 and zmin - 300 < z < zmax + 300)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(city, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"камер скорости в городе: {len(city['cams'])} -> {OUT}")
+    print(f"камер в городе (скорость и перекрёстки): {len(city['cams'])} -> {OUT}")
 
 
 if __name__ == "__main__":

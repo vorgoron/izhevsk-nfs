@@ -166,6 +166,7 @@ export class Signals {
   }
 
   // Проезд игрока на красный: пересёк стоп-линию подхода, по полосе которого едет, когда там красный.
+  // Штрафуют только перекрёстки под камерой (c.cam — ставит cameras.js), остальные — нет, как в жизни.
   // Полоса подхода — курс вдоль ребра и справа от оси дороги (односторонняя — вся ширина). Жёлтый не
   // штрафуется; в прыжке над перекрёстком — тоже. Один перекрёсток штрафует не чаще раза в 15 с.
   // Возвращает перекрёсток или null.
@@ -175,7 +176,7 @@ export class Signals {
     if (!prev || car.air) return null;
     const f = car.forward;
     for (const c of this.ctrls) {
-      if (Math.abs(c.cx - px) > 80 || Math.abs(c.cz - pz) > 80 || this.time - (c.fined ?? -99) < 15) continue;
+      if (!c.cam || Math.abs(c.cx - px) > 80 || Math.abs(c.cz - pz) > 80 || this.time - (c.fined ?? -99) < 15) continue;
       for (const ap of c.approaches) {
         const e = ap.e;
         if (f.x * e.dx + f.y * e.dz < 0.6) continue;

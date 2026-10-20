@@ -1,7 +1,9 @@
-// Камеры скорости: столб с камерой у перекрёстка, штраф за превышение по КоАП 12.9 (money.js).
-// Где стоят: комплексы из перечня Госавтоинспекции Удмуртии (city.cams: [x, z, предел км/ч или 0],
-// tools/gibdd_cams.py); если их нет в собранном city.json — игровые: на части перекрёстков со светофорами
-// на крупных улицах (места выдуманные). Камера снимает только тех, кто едет на объектив, — со спины не ловит.
+// Камеры: столб с камерой, штраф за превышение по КоАП 12.9 (money.js); перекрёсток под камерой штрафует и
+// проезд на красный (signals.js, ctrl.cam) — на остальных красный не штрафуется.
+// Где стоят: комплексы из перечня Госавтоинспекции Удмуртии (city.cams: [x, z, предел км/ч или 0,
+// 1 — на перекрёсток, 0 — без скорости (нет — со скоростью)], tools/gibdd_cams.py); если их нет в собранном
+// city.json — игровые: на части перекрёстков со светофорами на крупных улицах (места выдуманные).
+// Камера снимает скорость только тех, кто едет на объектив, — со спины не ловит.
 // Предел — maxspeed улицы из OSM (road.ms), без него — 60 км/ч.
 import * as THREE from 'three';
 import { World } from './world.js';
@@ -12,6 +14,7 @@ const WARN = 260;         // м: заранее показываем знак к
 const FACING = 0.5;       // cos угла: курс навстречу объективу не дальше ~60° от прямого
 const COOLDOWN = 20;      // с: одна камера не штрафует чаще
 const KEEP = 0.4;         // доля перекрёстков с камерой (игровые места)
+const CROSS = 120;        // м: комплекс «на перекрёсток» следит за светофором не дальше
 const MAJOR = new Set(['trunk', 'primary', 'secondary', 'trunk_link', 'primary_link']);
 
 export class Cameras {
@@ -20,7 +23,10 @@ export class Cameras {
     this.time = 0;
     const own = world.city.cams || [];
     this.list = own.length
-      ? own.map(([x, z, lim, cross]) => this.#fromList(x, z, lim, cross, signals))
+      ? own.map(([x, z, lim, cross, speed = 1]) => {
+        if (cross) { const k = this.#nearestCtrl(signals, x, z, CROSS); if (k) k.cam = true; }
+        return speed ? this.#fromList(x, z, lim, cross, signals) : this.#atSignal(x, z, signals);
+      }).filter(Boolean)
       : this.#fromSignals(signals);
     this.#build(scene);
   }
@@ -70,6 +76,23 @@ export class Cameras {
     return c;
   }
 
+  // Комплекс только на перекрёсток (без скорости): столб за светофором ближайшего к точке подхода.
+  #atSignal(x, z, signals) {
+    const k = this.#nearestCtrl(signals, x, z, CROSS);
+    let ap = null, bd = Infinity;
+    for (const a of k?.approaches ?? []) {
+      const d = a.pole ? Math.hypot(a.pole[0] - x, a.pole[1] - z) : Infinity;
+      if (d < bd) { bd = d; ap = a; }
+    }
+    return ap && { ...this.#behind(ap), x, z, lim: 0, speed: false };
+  }
+
+  // Столб — за светофором подхода, на 3 м дальше от перекрёстка, объектив — на подъезжающих.
+  #behind(ap) {
+    const [x, z] = ap.pole;
+    return { pole: [x - ap.e.dx * 3, z - ap.e.dz * 3], face: Math.atan2(-ap.e.dx, -ap.e.dz) };
+  }
+
   #nearestCtrl(signals, x, z, maxD) {
     let best = null, bd = maxD;
     for (const k of signals.ctrls) {
@@ -86,10 +109,8 @@ export class Cameras {
       if (!ap) continue;
       const h = (Math.imul(Math.round(c.cx * 10) ^ Math.round(c.cz * 10) * 31, 2654435761) >>> 0) % 1000;
       if (h >= KEEP * 1000) continue;
-      // Столб — за светофором своего подхода, на 3 м дальше от перекрёстка.
-      const [x, z] = ap.pole;
-      out.push({ x: c.cx, z: c.cz, pole: [x - ap.e.dx * 3, z - ap.e.dz * 3], face: Math.atan2(-ap.e.dx, -ap.e.dz),
-        lim: ap.e.road.ms || CITY_LIMIT });
+      c.cam = true;
+      out.push({ x: c.cx, z: c.cz, ...this.#behind(ap), lim: ap.e.road.ms || CITY_LIMIT });
     }
     return out;
   }
@@ -128,7 +149,9 @@ export class Cameras {
 
   // Расстояние до столба, если машина перед объективом (по ту сторону столба, куда смотрит камера) и едет
   // на него (курс навстречу, объектив смотрит по (sin face, cos face)); проехали столб, сзади, мимо — Infinity.
+  // Камера без скорости (только перекрёсток) — тоже Infinity.
   #facing(c, car) {
+    if (c.speed === false) return Infinity;
     const [px, pz] = c.pole, dx = px - car.pos.x, dz = pz - car.pos.y;
     if (Math.abs(dx) > WARN || Math.abs(dz) > WARN) return Infinity;
     const lx = Math.sin(c.face), lz = Math.cos(c.face), f = car.forward;
