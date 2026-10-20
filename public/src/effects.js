@@ -444,7 +444,7 @@ export class SkidMarksFX {
     const f = car.forward, r = car.right;
     const k = slipAmount(car);
     // Цвет — по покрытию прямо под машиной (offroad сглажен и отстаёт на съезде с дороги).
-    const color = SKID_COLOR[car.surface === 'ground' ? 'ground' : 'road'];
+    const color = SKID_COLOR[car.surface === 'ground' || car.surface === 'dirt' ? 'ground' : 'road'];
     for (let w = 0; w < 2; w++) {
       const side = w ? 0.75 : -0.75;
       const x = car.pos.x - f.x * 1.3 + r.x * side, z = car.pos.y - f.y * 1.3 + r.y * side;
@@ -590,7 +590,7 @@ export class TireSmokeFX {
   }
 
   update(dt, car) {
-    const k = car.surface === 'ground' ? 0 : slipAmount(car);
+    const k = car.surface === 'ground' || car.surface === 'dirt' ? 0 : slipAmount(car);
     this.carry += TIRE_RATE * k * dt;
     if (this.carry >= 1) this.alive = TIRE_LIFE * 1.3;
     const f = car.forward, r = car.right;
