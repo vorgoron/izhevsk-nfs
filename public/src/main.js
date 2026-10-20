@@ -35,6 +35,7 @@ import { Gauges } from './gauges.js';
 import { Account } from './account.js';
 import { CLEAR_ALT } from './car.js';
 
+const CAM_CONE = 100, CAM_SPREAD = 0.55; // миникарта: длина конуса камеры (м) и его полуугол (рад)
 const FINISH_BIG = 3000; // мс: столько «ФИНИШ» крупно по центру, потом — мельче и наверх, чтобы не мешал ехать
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('loading-text').textContent = t; };
@@ -788,7 +789,28 @@ async function main() {
     mg.rotate(car.heading + Math.PI); // курс машины — вверх
     mg.scale(zoom, zoom);
     mg.translate(-cx, -cz);
-    minimap.draw(mg, car.pos.x, car.pos.y, (size / 2 / zoom / scale) * 1.42, scale);
+    const view = (size / 2 / zoom / scale) * 1.42; // м: радиус видимого на миникарте
+    minimap.draw(mg, car.pos.x, car.pos.y, view, scale);
+    // Камеры скорости — как в навигаторах: красный конус обзора по направлению объектива (под маршрутом)
+    // и значок на столбе (поверх всего).
+    const camIcons = [];
+    for (const c of cameras.list) {
+      const [px, pz] = c.pole;
+      if (Math.abs(px - car.pos.x) > view || Math.abs(pz - car.pos.y) > view) continue;
+      const x = (px - xmin) * scale, z = (pz - zmin) * scale, a = Math.atan2(Math.cos(c.face), Math.sin(c.face));
+      const len = CAM_CONE * scale;
+      const fill = mg.createRadialGradient(x, z, 0, x, z, len);
+      fill.addColorStop(0, 'rgba(255, 40, 30, 0.9)');
+      fill.addColorStop(0.6, 'rgba(255, 40, 30, 0.45)');
+      fill.addColorStop(1, 'rgba(255, 60, 50, 0)');
+      mg.beginPath();
+      mg.moveTo(x, z);
+      mg.arc(x, z, len, a - CAM_SPREAD, a + CAM_SPREAD);
+      mg.closePath();
+      mg.fillStyle = fill;
+      mg.fill();
+      camIcons.push(x, z);
+    }
     for (const m of landmarks.markers) {
       mg.beginPath();
       mg.arc((m.x - xmin) * scale, (m.z - zmin) * scale, 4 / zoom, 0, 7);
@@ -830,7 +852,8 @@ async function main() {
       mg.beginPath();
       navRoute.forEach(([x, z], i) => mg[i ? 'lineTo' : 'moveTo']((x - xmin) * scale, (z - zmin) * scale));
       mg.strokeStyle = 'rgba(74,179,255,0.9)';
-      mg.lineWidth = 4 / zoom;
+      mg.lineWidth = 6 / zoom;
+      mg.lineCap = mg.lineJoin = 'round';
       mg.stroke();
       const t = citymap.target;
       mg.beginPath();
@@ -842,7 +865,8 @@ async function main() {
       mg.beginPath();
       race.route.forEach(([x, z], i) => mg[i ? 'lineTo' : 'moveTo']((x - xmin) * scale, (z - zmin) * scale));
       mg.strokeStyle = 'rgba(255,210,63,0.75)';
-      mg.lineWidth = 3 / zoom;
+      mg.lineWidth = 5 / zoom;
+      mg.lineCap = mg.lineJoin = 'round';
       mg.stroke();
       race.checkpoints.forEach((cp, i) => {
         if (i < race.next) return;
@@ -851,6 +875,20 @@ async function main() {
         mg.fillStyle = cp.finish ? '#40ff8a' : i === race.next ? '#ffd23f' : '#9a8540';
         mg.fill();
       });
+    }
+    for (let i = 0; i < camIcons.length; i += 2) {
+      const x = camIcons[i], z = camIcons[i + 1];
+      mg.beginPath();
+      mg.arc(x, z, 6 / zoom, 0, 7);
+      mg.fillStyle = '#fff';
+      mg.fill();
+      mg.lineWidth = 2 / zoom;
+      mg.strokeStyle = '#e0302a';
+      mg.stroke();
+      mg.beginPath();
+      mg.arc(x, z, 2.4 / zoom, 0, 7);
+      mg.fillStyle = '#1b1f22';
+      mg.fill();
     }
     mg.restore();
     // Север: карта повёрнута курсом вверх; значок N лежит на окружности миникарты (отдельный

@@ -63,6 +63,7 @@ export class Cameras {
         const s = this.world.nearestRoad(x, z, 40)?.seg;
         face = s ? Math.atan2(s.bx - s.ax, s.bz - s.az) : 0;
       }
+      c.face = face; // объектив смотрит по (sin face, cos face) — для конуса на миникарте
       m.compose(p.set(x, this.world.terrain(x, z), z), q.setFromAxisAngle(up, face), one);
       for (const mesh of meshes) mesh.setMatrixAt(i, m);
     });
