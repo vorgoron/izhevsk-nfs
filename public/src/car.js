@@ -73,7 +73,8 @@ const SINK_TIME = 2.8;    // с: от въезда в воду до «утону
 const DIRT_OFF = 0.6; // грунтовка: доля «бездорожья» (скорость, сцепление, тряска); > 0,5 — пыль и срыв газом, как на грунте
 // Лежачие полицейские (World.bumpCross): быстрее BUMP_HOP м/с подбрасывает; [подскок, м/с вверх на 1 м/с сверх
 // порога; скорость, на которой удар в полную силу] по виду неровности.
-const BUMP_HOP = 11, BUMP_HIT = [[0.45, 25], [0.3, 35], [0.25, 40]];
+// Подскок до BUMP_HOP_MAX м/с: на 60 км/ч через бугор — ~0,7 м, на 90 — ~1,2 м (было 0,2 и 0,5 — почти не видно).
+const BUMP_HOP = 9, BUMP_HOP_MAX = 6, BUMP_HIT = [[0.6, 25], [0.45, 35], [0.35, 40]];
 // Крыши: после трюка можно сесть на машину трафика, трамвай или дом (support — main.js) и ехать по ней;
 // съехал с края, а под колёсами пустота выше FALL м — падаешь.
 const FALL = 1.2;
@@ -412,7 +413,7 @@ export class Car {
     const v = Math.abs(vf), [hop, hard] = BUMP_HIT[k];
     this.impact = Math.max(this.impact, Math.min(1, v / hard));
     this.bodyRollV += (Math.random() - 0.5) * v * 0.05;
-    if (v > BUMP_HOP) this.hopV = Math.max(this.hopV ?? 0, Math.min(4, (v - BUMP_HOP) * hop));
+    if (v > BUMP_HOP) this.hopV = Math.max(this.hopV ?? 0, Math.min(BUMP_HOP_MAX, (v - BUMP_HOP) * hop));
   }
 
   // Контакт с машиной трафика или очереди: n — нормаль от неё к нам, depth — перекрытие,

@@ -112,7 +112,7 @@ python3 tools/gibdd_cams.py "…/Kompleksy_dlya_sayta_Gosavtoinspekcii_<год>.
 - `public/src/props.js` — мелочи из OSM (точки готовит `World.#initPoints`, данные — `road_points`, `tall_things`, `playgrounds`
   в `fetch_city.py`): «зебры» на размеченных переходах (`highway=crossing`) и знаки 5.19; лежачие полицейские
   (`traffic_calming=bump/hump/table`) — жёлто-чёрная разметка горбом, полотно поднимается (`World.bumpAt` в `ground`), на скорости
-  больше 40 км/ч машину подбрасывает (`Car.#bump`), трафик перед ними сбрасывает скорость (`World.bumpAhead`), знаки 5.20;
+  больше ~32 км/ч машину подбрасывает (`Car.#bump`; на 60 км/ч — на ~0,7 м, на 90 — на ~1,2 м), трафик перед ними сбрасывает скорость (`World.bumpAhead`), знаки 5.20;
   «Уступи дорогу» и STOP (`highway=give_way/stop`, по `direction`, без него — для едущих к ближайшему перекрёстку); «Андреевский
   крест» у ж/д переездов (`railway=level_crossing`); шлагбаумы на дорогах (`barrier=lift_gate`), столбики (`bollard`) и бетонные
   блоки (`block`); детские площадки (`leisure=playground`: песок и горка с качелями). Знаки, шлагбаумы, столбики и площадки

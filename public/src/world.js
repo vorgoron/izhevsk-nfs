@@ -50,7 +50,7 @@ const UTURN_R = 4;    // м: радиус дуги разворота, если 
 export const SIDEWALK = { primary: [2, 3], secondary: [1.5, 3], tertiary: [1, 2.5], residential: [0, 2], unclassified: [0, 2] };
 // Лежачие полицейские (bumps в city.json): вид → [длина вдоль дороги, высота], м. Приподнятый переход (2) —
 // ровная площадка с пандусами BUMP_RAMP м.
-export const BUMP = [[0.6, 0.06], [3.5, 0.08], [7, 0.1]];
+export const BUMP = [[0.9, 0.09], [4, 0.11], [7, 0.12]];
 export const BUMP_RAMP = 1.5;
 const BUMP_CELL = 25;
 // Где ставить знаки у точек на дорогах: м до точки по ходу и от края полотна.
