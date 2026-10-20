@@ -2,16 +2,21 @@
 // два пальца — масштаб. На карте — машина, заправки, достопримечательности, камеры, другие игроки, маршрут.
 // Нажатие на место или значок — маршрут туда по улицам (стрелки на дороге — guide.js). Пока карта открыта,
 // игра стоит, как в меню.
-// Подложка (вода, парки, дома, улицы) рисуется один раз при первом открытии в отдельный холст.
+// Подложка (вода, парки, дома, улицы) рисуется один раз в отдельный холст — в фоне после старта (prepare).
 
 const ZOOM_MIN = 0.04, ZOOM_MAX = 2.5; // экранных пикселей на метр
 const TAP = 8;             // px: сдвиг меньше — нажатие, а не перетаскивание
 const HIT = 16;            // px: радиус попадания по значку
 const SNAP = 300;          // м: нажатие дальше от улиц — маршрута нет
 
+const SLICE = 6;            // мс: столько за раз рисуется подложка в фоне
+const BATCH = 300;         // домов в одном пути подложки
+
 const ROAD_COLOR = { trunk: '#e8b44a', primary: '#e8c46a', secondary: '#d9d2bd', tertiary: '#c9c4b5' };
 
 export class CityMap {
+  #work = null; // недорисованная подложка (генератор #steps)
+
   // world, car; poi() — значки: [{ kind: 'fuel'|'landmark'|'camera'|'ghost', name, x, z }];
   // onRoute(route | null, target) — проложен / сброшен маршрут.
   // base — пикселей подложки на метр (на телефоне меньше: холст на весь город).
@@ -60,12 +65,32 @@ export class CityMap {
 
   // ---------------------------------------------------------------- подложка
 
-  prepare() { this.#base(); }
+  // Заранее, в фоне: подложка рисуется кусками по SLICE мс между кадрами, игра не встаёт.
+  prepare() {
+    const steps = this.#steps();
+    const tick = () => {
+      if (this.baseCv) return; // успели открыть карту — дорисовано целиком
+      const end = performance.now() + SLICE;
+      while (performance.now() < end) if (steps.next().done) return;
+      setTimeout(tick, 0);
+    };
+    this.#work = steps;
+    tick();
+  }
 
+  // Готовая подложка; недорисованная в фоне — дорисовывается сразу.
   #base() {
     if (this.baseCv) return this.baseCv;
+    const steps = this.#work ?? this.#steps();
+    while (!steps.next().done);
+    return this.baseCv;
+  }
+
+  // Подложка по шагам (генератор): вода и парки, реки, дома пачками по BATCH (весь город одним путём
+  // заливается секундами), улицы. Холст — в baseCv по окончании.
+  *#steps() {
     const w = this.world, [xmin, zmin, xmax, zmax] = w.bounds;
-    const c = (this.baseCv = document.createElement('canvas'));
+    const c = document.createElement('canvas');
     c.width = Math.ceil((xmax - xmin) * this.B);
     c.height = Math.ceil((zmax - zmin) * this.B);
     const g = c.getContext('2d');
@@ -81,6 +106,7 @@ export class CityMap {
       for (const h of a.holes || []) ring(h);
       g.fillStyle = color;
       g.fill('evenodd');
+      yield;
     }
     g.lineCap = g.lineJoin = 'round';
     g.strokeStyle = '#24465c';
@@ -89,11 +115,16 @@ export class CityMap {
       r.p.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)));
       g.lineWidth = Math.max(0.8, r.w * this.B);
       g.stroke();
+      yield;
     }
     g.fillStyle = '#30343a';
-    g.beginPath();
-    for (const b of w.city.buildings) ring(b.p);
-    g.fill();
+    const bs = w.city.buildings;
+    for (let i = 0; i < bs.length; i += BATCH) {
+      g.beginPath();
+      for (let j = i; j < Math.min(i + BATCH, bs.length); j++) ring(bs[j].p);
+      g.fill();
+      yield;
+    }
     // Улицы: сначала мелкие, крупные — поверх.
     const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
     const roads = [...w.roads].sort((a, b) => order(a.k) - order(b.k));
@@ -103,8 +134,9 @@ export class CityMap {
       g.lineWidth = Math.max(r.k in ROAD_COLOR ? 1.6 : 0.8, r.w * this.B);
       g.strokeStyle = ROAD_COLOR[r.k] ?? '#6f6d68';
       g.stroke();
+      yield;
     }
-    return c;
+    this.baseCv = c;
   }
 
   // ---------------------------------------------------------------- вид
