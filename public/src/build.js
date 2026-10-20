@@ -1122,8 +1122,9 @@ export function buildingMaterials(renderer) {
 }
 
 // Двускатная крыша частного дома: по прямоугольнику наименьшей площади вокруг контура,
-// конёк вдоль длинной стороны, свес, фронтоны на торцах (цвета стен).
-function gableRoof(pts, top, wallCol, roofCol, rp, rc) {
+// конёк вдоль длинной стороны, свес, фронтоны на торцах (цвета стен). hip — вальмовая (четырёхскатная): конёк
+// короче на полширины с каждого конца, на торцах вместо фронтонов — треугольные скаты.
+function gableRoof(pts, top, wallCol, roofCol, rp, rc, hip = false) {
   let best = null;
   for (let i = 0; i < pts.length; i++) {
     const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % pts.length];
@@ -1156,12 +1157,19 @@ function gableRoof(pts, top, wallCol, roofCol, rp, rc) {
     for (const v of [a, b, c]) { rp.push(...v); rc.push(col.r, col.g, col.b); }
   };
   const yr = top + H, ye = top - ov * (H / half); // свес чуть ниже карниза
+  // Концы конька: у вальмовой — на полширины внутрь (скат торца с тем же уклоном), не дальше середины.
+  const sm = (s0 + s1) / 2, r0 = hip ? Math.min(sm, s0 + half) : s0 - ov, r1 = hip ? Math.max(sm, s1 - half) : s1 + ov;
   for (const t of [t0 - ov, t1 + ov]) {
-    const a = P(s0 - ov, t, ye), b = P(s1 + ov, t, ye), c = P(s1 + ov, tm, yr), d = P(s0 - ov, tm, yr);
+    const a = P(s0 - ov, t, ye), b = P(s1 + ov, t, ye), c = P(r1, tm, yr), d = P(r0, tm, yr);
     tri(a, b, c, roofCol);
     tri(a, c, d, roofCol);
   }
-  for (const s of [s0, s1]) tri(P(s, t0, top), P(s, t1, top), P(s, tm, yr), wallCol);
+  if (hip) {
+    tri(P(s0 - ov, t0 - ov, ye), P(s0 - ov, t1 + ov, ye), P(r0, tm, yr), roofCol);
+    tri(P(s1 + ov, t0 - ov, ye), P(s1 + ov, t1 + ov, ye), P(r1, tm, yr), roofCol);
+  } else {
+    for (const s of [s0, s1]) tri(P(s, t0, top), P(s, t1, top), P(s, tm, yr), wallCol);
+  }
 }
 
 // Доля прямоугольника наименьшей площади вокруг контура, занятая самим контуром (1 — прямоугольник).
@@ -1423,11 +1431,11 @@ export function buildBuildingChunk(world, list, mats) {
       gableRoof(pts, top, col, new THREE.Color(b.rc ?? HOUSE_ROOFS[(hash >> 3) % HOUSE_ROOFS.length]).multiplyScalar(k), rp, rc);
       continue;
     }
-    // Малоэтажный послевоенный: прямоугольный — двускатная крыша, Г/П-образный — вальмовая (скаты от
-    // каждой стены), иначе ниже — плоская.
+    // Малоэтажный послевоенный (как на Орджоникидзе) — крыша вальмовая, четырёхскатная: прямоугольный — по
+    // прямоугольнику с коньком, Г/П-образный — скаты от каждой стены; не вышло — ниже плоская.
     if (b.s === 11 && !holes.length) {
       const roofCol = new THREE.Color(b.rc ?? LOWRISE_ROOFS[(hash >> 3) % LOWRISE_ROOFS.length]).multiplyScalar(k);
-      if (rectFill(pts) > 0.85) { gableRoof(pts, top, col, roofCol, rp, rc); continue; }
+      if (rectFill(pts) > 0.85) { gableRoof(pts, top, col, roofCol, rp, rc, true); continue; }
       if (hipRoof(pts, top, roofCol, rp, rc)) continue;
     }
 
