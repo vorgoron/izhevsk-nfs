@@ -2,7 +2,8 @@
 // два пальца — масштаб. На карте — машина, заправки, достопримечательности, камеры, другие игроки, маршрут.
 // Нажатие на место или значок — маршрут туда по улицам (стрелки на дороге — guide.js). Пока карта открыта,
 // игра стоит, как в меню.
-// Подложка (вода, парки, дома, улицы) рисуется один раз в отдельный холст — в фоне после старта (prepare).
+// Подложка (вода, парки, дома, улицы) рисуется один раз в отдельный холст — в фоне после старта (prepare);
+// крупнее её масштаба поверх ложатся плитки, нарисованные вектором под масштаб (#tiles).
 
 const ZOOM_MIN = 0.04, ZOOM_MAX = 2.5; // экранных пикселей на метр
 const TAP = 8;             // px: сдвиг меньше — нажатие, а не перетаскивание
@@ -11,11 +12,16 @@ const SNAP = 300;          // м: нажатие дальше от улиц — 
 
 const SLICE = 6;            // мс: столько за раз рисуется подложка в фоне
 const BATCH = 300;         // домов в одном пути подложки
+const CELL = 250;          // м: ячейка индекса, по которому плитка берёт своё
+const TILE = 512;          // px: сторона плитки (вектором, когда карта крупнее подложки)
+const TILES = 64;          // плиток в памяти (по 1 МБ); видимые не выбрасываются
+const TILE_MS = 12;        // мс за кадр на новые плитки
 
 const ROAD_COLOR = { trunk: '#e8b44a', primary: '#e8c46a', secondary: '#d9d2bd', tertiary: '#c9c4b5' };
 
 export class CityMap {
   #work = null; // недорисованная подложка (генератор #steps)
+  tiles = new Map(); // 'k/i/j' → холст плитки, по давности использования
 
   // world, car; poi() — значки: [{ kind: 'fuel'|'landmark'|'camera'|'ghost', name, x, z }];
   // onRoute(route | null, target) — проложен / сброшен маршрут.
@@ -86,57 +92,138 @@ export class CityMap {
     return this.baseCv;
   }
 
-  // Подложка по шагам (генератор): вода и парки, реки, дома пачками по BATCH (весь город одним путём
-  // заливается секундами), улицы. Холст — в baseCv по окончании.
+  // Подложка по шагам (генератор): весь город в один холст масштаба B. Холст — в baseCv по окончании.
   *#steps() {
-    const w = this.world, [xmin, zmin, xmax, zmax] = w.bounds;
+    const [xmin, zmin, xmax, zmax] = this.world.bounds;
     const c = document.createElement('canvas');
     c.width = Math.ceil((xmax - xmin) * this.B);
     c.height = Math.ceil((zmax - zmin) * this.B);
     const g = c.getContext('2d');
-    const tx = (x) => (x - xmin) * this.B, tz = (z) => (z - zmin) * this.B;
-    const ring = (p) => { g.moveTo(tx(p[0][0]), tz(p[0][1])); for (const [x, z] of p) g.lineTo(tx(x), tz(z)); g.closePath(); };
     g.fillStyle = '#1b1f22';
     g.fillRect(0, 0, c.width, c.height);
-    for (const a of w.city.areas) {
-      const color = a.k === 'water' ? '#24465c' : a.k === 'park' ? (a.f ? '#1f2e1c' : '#25331f') : a.k === 'grass' ? '#222b1f' : a.k === 'industrial' ? '#24242a' : null;
-      if (!color) continue;
-      g.beginPath();
-      ring(a.p);
-      for (const h of a.holes || []) ring(h);
-      g.fillStyle = color;
-      g.fill('evenodd');
-      yield;
-    }
-    g.lineCap = g.lineJoin = 'round';
-    g.strokeStyle = '#24465c';
-    for (const r of w.city.waterways) {
-      g.beginPath();
-      r.p.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)));
-      g.lineWidth = Math.max(0.8, r.w * this.B);
-      g.stroke();
-      yield;
-    }
-    g.fillStyle = '#30343a';
-    const bs = w.city.buildings;
-    for (let i = 0; i < bs.length; i += BATCH) {
-      g.beginPath();
-      for (let j = i; j < Math.min(i + BATCH, bs.length); j++) ring(bs[j].p);
-      g.fill();
-      yield;
-    }
-    // Улицы: сначала мелкие, крупные — поверх.
-    const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
-    const roads = [...w.roads].sort((a, b) => order(a.k) - order(b.k));
-    for (const r of roads) {
-      g.beginPath();
-      r.n.forEach((id, i) => { const [x, z] = w.nodes[id]; g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)); });
-      g.lineWidth = Math.max(r.k in ROAD_COLOR ? 1.6 : 0.8, r.w * this.B);
-      g.strokeStyle = ROAD_COLOR[r.k] ?? '#6f6d68';
-      g.stroke();
-      yield;
-    }
+    const { items } = yield* this.#index();
+    yield* this.#paint(g, this.B, xmin, zmin, items.map((_, i) => i));
     this.baseCv = c;
+  }
+
+  // Всё, что на подложке, — одним списком в порядке рисования (вода и парки, реки, дома, улицы: мелкие, крупные
+  // поверх) и сетка ячеек по CELL м с номерами того, что в них попадает, — чтобы плитка брала только своё.
+  *#index() {
+    if (this.idx) return this.idx;
+    const w = this.world, [xmin, zmin, xmax, zmax] = w.bounds;
+    const nx = Math.ceil((xmax - xmin) / CELL), nz = Math.ceil((zmax - zmin) / CELL);
+    const cells = Array.from({ length: nx * nz }, () => []), items = [];
+    const add = (it, pad = 0) => {
+      let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+      for (const [x, z] of it.p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+      const id = items.push(it) - 1;
+      const cx = (x) => Math.max(0, Math.min(nx - 1, Math.floor((x - xmin) / CELL)));
+      const cz = (z) => Math.max(0, Math.min(nz - 1, Math.floor((z - zmin) / CELL)));
+      for (let j = cz(z0 - pad); j <= cz(z1 + pad); j++) for (let i = cx(x0 - pad); i <= cx(x1 + pad); i++) cells[j * nx + i].push(id);
+    };
+    for (const a of w.city.areas) {
+      const c = a.k === 'water' ? '#24465c' : a.k === 'park' ? (a.f ? '#1f2e1c' : '#25331f') : a.k === 'grass' ? '#222b1f' : a.k === 'industrial' ? '#24242a' : null;
+      if (c) add({ k: 'a', p: a.p, holes: a.holes, c });
+    }
+    for (const r of w.city.waterways) add({ k: 'l', p: r.p, w: r.w, min: 0.8, c: '#24465c' }, r.w);
+    yield;
+    for (const b of w.city.buildings) add({ k: 'b', p: b.p });
+    yield;
+    const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
+    for (const r of [...w.roads].sort((a, b) => order(a.k) - order(b.k))) {
+      add({ k: 'l', p: r.n.map((id) => w.nodes[id]), w: r.w, min: r.k in ROAD_COLOR ? 1.6 : 0.8, c: ROAD_COLOR[r.k] ?? '#6f6d68' }, r.w);
+    }
+    return (this.idx = { items, cells, nx, nz });
+  }
+
+  // Рисует items[ids] (ids — по возрастанию, это и есть порядок) в масштабе S пикселей на метр, (ox, oz) — левый
+  // верхний угол. Дома — общим путём пачками по BATCH (весь город одним путём заливается секундами).
+  *#paint(g, S, ox, oz, ids) {
+    const items = this.idx.items;
+    const tx = (x) => (x - ox) * S, tz = (z) => (z - oz) * S;
+    const ring = (p) => { g.moveTo(tx(p[0][0]), tz(p[0][1])); for (const [x, z] of p) g.lineTo(tx(x), tz(z)); g.closePath(); };
+    g.lineCap = g.lineJoin = 'round';
+    g.fillStyle = '#30343a';
+    let houses = 0;
+    const flush = () => { if (houses) { g.fillStyle = '#30343a'; g.fill(); houses = 0; } };
+    for (const id of ids) {
+      const it = items[id];
+      if (it.k === 'b') {
+        if (!houses) g.beginPath();
+        ring(it.p);
+        if (++houses === BATCH) { flush(); yield; }
+        continue;
+      }
+      flush();
+      g.beginPath();
+      if (it.k === 'a') {
+        ring(it.p);
+        for (const h of it.holes || []) ring(h);
+        g.fillStyle = it.c;
+        g.fill('evenodd');
+      } else {
+        it.p.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo'](tx(x), tz(z)));
+        g.lineWidth = Math.max(it.min, it.w * S);
+        g.strokeStyle = it.c;
+        g.stroke();
+      }
+      yield;
+    }
+    flush();
+  }
+
+  // ---------------------------------------------------------------- плитки
+
+  // Крупнее подложки — плитки TILE×TILE, нарисованные вектором под масштаб: уровень k — B·2^k пикселей экрана на
+  // метр, ближайший не мельче нужного. Каждая рисуется один раз и кешируется (до TILES последних); не успели
+  // за TILE_MS — пока видна размытая подложка, дорисовываем в следующих кадрах.
+  #tiles(g, dpr, W, H) {
+    const need = this.zoom * dpr;
+    if (need <= this.B * 1.25) return;
+    const k = Math.min(Math.ceil(Math.log2(ZOOM_MAX * 2 / this.B)), Math.ceil(Math.log2(need / this.B)));
+    const S = this.B * 2 ** k, m = TILE / S; // м на плитку
+    const [xmin, zmin, xmax, zmax] = this.world.bounds;
+    const cell = (v, lo, hi) => Math.max(0, Math.min(Math.floor((hi - lo) / m), Math.floor((v - lo) / m)));
+    const i0 = cell(this.#wx(0), xmin, xmax), i1 = cell(this.#wx(W), xmin, xmax);
+    const j0 = cell(this.#wz(0), zmin, zmax), j1 = cell(this.#wz(H), zmin, zmax);
+    const px = (v) => Math.round(v * dpr), end = performance.now() + TILE_MS;
+    let missing = false;
+    g.save();
+    g.beginPath();
+    g.rect(this.#sx(xmin), this.#sz(zmin), (xmax - xmin) * this.zoom, (zmax - zmin) * this.zoom);
+    g.clip();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const key = `${k}/${i}/${j}`;
+      let t = this.tiles.get(key);
+      if (t) this.tiles.delete(key);
+      else if (performance.now() < end) t = this.#tile(S, xmin + i * m, zmin + j * m);
+      else { missing = true; continue; }
+      this.tiles.set(key, t); // в конец: недавно нужная
+      const x0 = px(this.#sx(xmin + i * m)), x1 = px(this.#sx(xmin + (i + 1) * m));
+      const y0 = px(this.#sz(zmin + j * m)), y1 = px(this.#sz(zmin + (j + 1) * m));
+      g.drawImage(t, x0, y0, x1 - x0, y1 - y0);
+    }
+    g.restore();
+    const keep = Math.max(TILES, (i1 - i0 + 1) * (j1 - j0 + 1));
+    for (const key of this.tiles.keys()) { if (this.tiles.size <= keep) break; this.tiles.delete(key); }
+    if (missing && !this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
+  }
+
+  #tile(S, x0, z0) {
+    const c = document.createElement('canvas');
+    c.width = c.height = TILE;
+    const g = c.getContext('2d');
+    g.fillStyle = '#1b1f22';
+    g.fillRect(0, 0, TILE, TILE);
+    const { cells, nx, nz } = this.idx, [xmin, zmin] = this.world.bounds, m = TILE / S;
+    const ids = new Set();
+    const ci = (v, lo, n) => Math.max(0, Math.min(n - 1, Math.floor((v - lo) / CELL)));
+    for (let j = ci(z0, zmin, nz); j <= ci(z0 + m, zmin, nz); j++) {
+      for (let i = ci(x0, xmin, nx); i <= ci(x0 + m, xmin, nx); i++) for (const id of cells[j * nx + i]) ids.add(id);
+    }
+    for (const _ of this.#paint(g, S, x0, z0, [...ids].sort((a, b) => a - b)));
+    return c;
   }
 
   // ---------------------------------------------------------------- вид
@@ -258,6 +345,7 @@ export class CityMap {
     const base = this.#base(), [xmin, zmin] = this.world.bounds;
     g.imageSmoothingEnabled = true;
     g.drawImage(base, this.#sx(xmin), this.#sz(zmin), base.width / this.B * this.zoom, base.height / this.B * this.zoom);
+    this.#tiles(g, dpr, W, H);
 
     const line = (route, color, width) => {
       g.beginPath();
@@ -362,6 +450,7 @@ export class CityMap {
     this.isOpen = false;
     this.el.classList.remove('open');
     document.body.classList.remove('in-map');
+    this.tiles.clear(); // память — игре
     this.onClose?.();
   }
 
