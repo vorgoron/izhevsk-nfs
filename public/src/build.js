@@ -2086,8 +2086,9 @@ const SIGN = { s: 0.7, y: 2.4 }; // сторона щитка, высота ег
 export function stopMaterials(renderer) {
   const posts = [-1.95, 1.95].flatMap((x) => [PAV.back, 0.7].map((z) =>
     part(new THREE.BoxGeometry(0.08, PAV.h, 0.08).translate(x, 0.12 + PAV.h / 2, z), '#3f6e8c')));
+  // Площадка — отдельно: снесённый павильон падает, а она остаётся.
+  const base = part(new THREE.BoxGeometry(4.6, 0.5, 2.4).translate(0, -0.13, 0.15), '#a19d93'); // низ — в склон
   const frame = mergeGeos([
-    part(new THREE.BoxGeometry(4.6, 0.5, 2.4).translate(0, -0.13, 0.15), '#a19d93'), // площадка, низ — в склон
     ...posts,
     part(new THREE.BoxGeometry(4.3, 0.12, 1.95).translate(0, 2.68, 0.05), '#2e3840'), // крыша
     part(new THREE.BoxGeometry(4.3, 0.26, 0.05).translate(0, 2.6, 1.04), '#2c5d8f'),  // синий козырёк
@@ -2100,7 +2101,7 @@ export function stopMaterials(renderer) {
     ...[-1.95, 1.95].map((x) => new THREE.BoxGeometry(0.02, 2.1, 1.35).translate(x, 1.43, -0.06)),
   ]);
   return {
-    frame, glass,
+    base: mergeGeos([base], ['color']), frame, glass,
     // Стойка с заглушкой и щиток-пластина (кромка серая), лицо — отдельной плоскостью с каждой стороны.
     post: mergeGeos([
       part(new THREE.CylinderGeometry(0.04, 0.045, 2.9, 8).translate(0, 1.35, 0), '#8d9196'),
@@ -2165,9 +2166,18 @@ export function buildStopChunk(world, info, mats) {
     mesh.castShadow = shadow;
     return mesh;
   };
+  // Павильоны и знаки сносятся (breakables.js: addStops) — места и меши с той же матрицей лежат у каркаса и стойки.
   const out = [];
-  if (pavs.length) out.push(inst(mats.frame, mats.frameMat, pavs, true), inst(mats.glass, mats.glassMat, pavs, false));
-  if (signs.length) out.push(inst(mats.post, mats.frameMat, signs, true), ...mats.faces.map((f) => inst(f, mats.sign, signs, false)));
+  if (pavs.length) {
+    const frame = inst(mats.frame, mats.frameMat, pavs, true), glass = inst(mats.glass, mats.glassMat, pavs, false);
+    Object.assign(frame.userData, { spots: pavs, stop: 'pavilion', parts: [glass] });
+    out.push(inst(mats.base, mats.frameMat, pavs, false), frame, glass);
+  }
+  if (signs.length) {
+    const post = inst(mats.post, mats.frameMat, signs, true), faces = mats.faces.map((f) => inst(f, mats.sign, signs, false));
+    Object.assign(post.userData, { spots: signs, stop: 'stopSign', parts: faces });
+    out.push(post, ...faces);
+  }
   return out.length ? out : null;
 }
 
