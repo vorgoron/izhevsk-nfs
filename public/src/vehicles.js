@@ -5,6 +5,23 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { carGlows, glowMaterial } from './night.js';
 
+// ИЖ-27175 (фургон «Ода») отключён: хорошей 3D-модели нет, процедурная не годится.
+// Вернуть — добавить `odavan: ODAVAN` в MODELS (по году — после «Оды»), в MIX (traffic.js) и KINDS (queues.js).
+const ODAVAN = {
+  name: 'ИЖ-27175 (фургон «Ода»)', years: '1997–2012',
+  about: '«Каблук» нового поколения: перед от «Оды» и пластиковая будка.',
+  width: 1.65, cabinWidth: 1.42,
+  body: [[-2.03, 0.32], [2.03, 0.32], [2.05, 0.56], [1.96, 0.78], [0.95, 0.9], [-0.5, 0.92], [-2.03, 0.92]],
+  cabin: [[0.95, 0.88], [0.18, 1.39], [-0.42, 1.4], [-0.5, 0.92]],
+  windows: [[2, -2]], doors: [0.9, -0.46],
+  box: { from: -0.52, to: -2.1, y0: 0.88, y1: 1.92, width: 1.68, color: '#ecebe6' },
+  wheels: { r: 0.29, front: 1.26, rear: -1.21, track: 0.7 },
+  bumper: '#2b2d31', bumperH: 0.24, grille: '#17181b', grilleBars: '#b9bdc2', trim: '#1a1b1d',
+  lights: 'rect', lamp: { w: 0.44, h: 0.19 },
+  colors: ['#e9e9e6', '#7c1622', '#2c5aa0', '#2f6b3a', '#8c9196', '#1e1f22', '#c9a227', '#1f5e6b'],
+  stats: { kmh: 140, accel: 0.72, grip: 0.9, eco: 1.2 },
+};
+
 // Профили: [z, y] — z вперёд (перед машины при +len/2), y вверх, от земли.
 // body — кузов, cabin — салон (оба под краску, cabin уже кузова и сужается к крыше).
 // windows — боковые стёкла [z спереди, z сзади] внутри силуэта салона, frame — цвет рамок между
@@ -103,20 +120,6 @@ export const MODELS = {
     lights: 'rect', lamp: { w: 0.44, h: 0.19 }, tail: { w: 0.36, h: 0.17, y: 0.76 },
     colors: ['#7c1622', '#e9e9e6', '#1f5e6b', '#2c5aa0', '#8c9196', '#2f6b3a', '#d8641e', '#1e1f22'],
     stats: { kmh: 165, accel: 0.86, grip: 1.0, eco: 1.0 },
-  },
-  odavan: {
-    name: 'ИЖ-27175 (фургон «Ода»)', years: '1997–2012',
-    about: '«Каблук» нового поколения: перед от «Оды» и пластиковая будка.',
-    width: 1.65, cabinWidth: 1.42,
-    body: [[-2.03, 0.32], [2.03, 0.32], [2.05, 0.56], [1.96, 0.78], [0.95, 0.9], [-0.5, 0.92], [-2.03, 0.92]],
-    cabin: [[0.95, 0.88], [0.18, 1.39], [-0.42, 1.4], [-0.5, 0.92]],
-    windows: [[2, -2]], doors: [0.9, -0.46],
-    box: { from: -0.52, to: -2.1, y0: 0.88, y1: 1.92, width: 1.68, color: '#ecebe6' },
-    wheels: { r: 0.29, front: 1.26, rear: -1.21, track: 0.7 },
-    bumper: '#2b2d31', bumperH: 0.24, grille: '#17181b', grilleBars: '#b9bdc2', trim: '#1a1b1d',
-    lights: 'rect', lamp: { w: 0.44, h: 0.19 },
-    colors: ['#e9e9e6', '#7c1622', '#2c5aa0', '#2f6b3a', '#8c9196', '#1e1f22', '#c9a227', '#1f5e6b'],
-    stats: { kmh: 140, accel: 0.72, grip: 0.9, eco: 1.2 },
   },
   vesta: {
     name: 'LADA Vesta', years: '2015–2022',
