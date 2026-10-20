@@ -1353,6 +1353,23 @@ def mark_village_houses(buildings):
     print(f"village houses: {n}")
 
 
+GIBDD_CAMS = os.path.join(ROOT, "data", "gibdd_cams.json")
+
+
+def gibdd_cams(inside):
+    """Камеры скорости из перечня Госавтоинспекции (data/gibdd_cams.json, собирает tools/gibdd_cams.py):
+    [x, z, 0, 1 — комплекс и на перекрёсток / 0] — предел берётся по улице (cameras.js). Комплексы только на
+    перекрёсток, парковку, переезд — без скорости — не берём: проезд на красный штрафует signals.js."""
+    with open(GIBDD_CAMS, encoding="utf-8") as f:
+        rows = json.load(f)["cams"]
+    out = []
+    for c in rows:
+        x, z = project(c["lat"], c["lon"])
+        if "Скорость" in c["kinds"] and inside(x, z):
+            out.append([x, z, 0, int("Перекресток" in c["kinds"])])
+    return out
+
+
 def build_city():
     xmin, zmax = project(SOUTH, WEST)
     xmax, zmin = project(NORTH, EAST)
@@ -1523,9 +1540,8 @@ def build_city():
         # Светофоры — узлы дорог (индексы в roadNodes); в браузере группируются в перекрёстки.
         "signals": sorted(road_node_index[n] for n, t in node_tags.items()
                           if t.get("highway") == "traffic_signals" and n in road_node_index),
-        # Камеры скорости: [x, z, предел км/ч из maxspeed камеры или 0 — тогда по улице] (cameras.js).
-        "cams": [[*project(*nodes[n]), maxspeed_kmh(t) or 0] for n, t in node_tags.items()
-                 if t.get("highway") == "speed_camera" and n in nodes and inside([project(*nodes[n])])],
+        # Камеры скорости — из перечня Госавтоинспекции (gibdd_cams), OSM их знает мало.
+        "cams": gibdd_cams(lambda x, z: inside([(x, z)])),
     }
 
 

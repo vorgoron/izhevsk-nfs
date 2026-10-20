@@ -1,8 +1,10 @@
 // Камеры скорости: столб с камерой у перекрёстка, штраф за превышение по КоАП 12.9 (money.js).
-// Где стоят: highway=speed_camera из OSM (city.cams: [x, z, предел км/ч или 0]), а пока их нет в собранном
-// city.json — игровые: на части перекрёстков со светофорами на крупных улицах (как комплексы на
-// перекрёстках Ижевска, но места выдуманные). Предел — maxspeed улицы из OSM (road.ms), без него — 60 км/ч.
+// Где стоят: комплексы из перечня Госавтоинспекции Удмуртии (city.cams: [x, z, предел км/ч или 0],
+// tools/gibdd_cams.py); если их нет в собранном city.json — игровые: на части перекрёстков со светофорами
+// на крупных улицах (места выдуманные). Камера снимает только тех, кто едет на объектив, — со спины не ловит.
+// Предел — maxspeed улицы из OSM (road.ms), без него — 60 км/ч.
 import * as THREE from 'three';
+import { World } from './world.js';
 
 const CITY_LIMIT = 60;    // км/ч в населённом пункте (ПДД 10.2)
 const ZONE = 22;          // м до столба: ближе, едучи на объектив, — камера снимает
@@ -18,14 +20,63 @@ export class Cameras {
     this.time = 0;
     const own = world.city.cams || [];
     this.list = own.length
-      ? own.map(([x, z, lim]) => ({ x, z, pole: [x, z], lim: lim || this.#limitAt(x, z) }))
+      ? own.map(([x, z, lim, cross]) => this.#fromList(x, z, lim, cross, signals))
       : this.#fromSignals(signals);
     this.#build(scene);
   }
 
-  // Предел у точки: maxspeed ближайшей улицы или городской.
-  #limitAt(x, z) {
-    return this.world.nearestRoad(x, z, 40)?.seg.road.ms || CITY_LIMIT;
+  // Камера из перечня: координаты — у дороги, иногда посреди неё. Столб — на обочине ближайшей улицы,
+  // объектив — навстречу машинам своей стороны дороги (едут, имея столб справа).
+  #fromList(x, z, lim, cross, signals) {
+    let r = this.world.nearestRoad(x, z, 60);
+    const c = { x, z, pole: [x, z], lim: lim || r?.seg.road.ms || CITY_LIMIT };
+    if (!r) return c;
+    const dir = (s) => { const l = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; return [(s.bx - s.ax) / l, (s.bz - s.az) / l]; };
+    // Раздельные проезжие части (по половине на направление, road.ow): комплекс на перекрёсток стоит у той,
+    // что едет к перекрёстку, — точка из перечня бывает у встречной половины.
+    if (cross && r.seg.road.ow) {
+      const ctrl = this.#nearestCtrl(signals, x, z, 300);
+      const [dx, dz] = dir(r.seg);
+      if (ctrl && (ctrl.cx - r.px) * dx + (ctrl.cz - r.pz) * dz < 0) {
+        let best = null;
+        for (const s of this.world.segmentsNear(r.px, r.pz, 50)) {
+          if (!s.road.ow) continue;
+          const [ex, ez] = dir(s);
+          if (ex * dx + ez * dz > -0.8) continue; // не встречная половина
+          const q = World.closest(s, r.px, r.pz);
+          if (q.d < 50 && (!best || q.d < best.d)) best = { ...q, d: q.d, seg: s };
+        }
+        if (best) r = best;
+      }
+    }
+    const s = r.seg, [dx, dz] = dir(s);
+    // Сторона: у половины проезжей части — справа по ходу (слева разделительная); у обычной улицы — та, где
+    // точка из перечня (на оси — справа по ходу отрезка), если там столб не попал на полотно соседней улицы
+    // (у перекрёстка); иначе — где до чужого полотна дальше.
+    let side = s.road.ow ? 1 : (x - r.px) * -dz + (z - r.pz) * dx < 0 ? -1 : 1, off = s.w / 2 + 1;
+    const at = (k) => [r.px - dz * k * off, r.pz + dx * k * off];
+    const room = ([px, pz]) => this.world.nearestRoad(px, pz, 30)?.d ?? 30;
+    const p1 = at(side);
+    if (!s.road.ow) {
+      const p2 = at(-side);
+      if (room(p1) < 0.5 && room(p2) > room(p1)) side = -side;
+      c.pole = at(side);
+    } else { // у половины — назад от перекрёстка, пока столб на полотне поперечной улицы
+      c.pole = p1;
+      for (let t = 3; t <= 45 && room(c.pole) < 0.5; t += 3) c.pole = [p1[0] - dx * t, p1[1] - dz * t];
+    }
+    // Машины у столба едут вдоль отрезка, если он справа от них (side 1), иначе против; объектив — им навстречу.
+    c.face = Math.atan2(-dx * side, -dz * side);
+    return c;
+  }
+
+  #nearestCtrl(signals, x, z, maxD) {
+    let best = null, bd = maxD;
+    for (const k of signals.ctrls) {
+      const d = Math.hypot(k.cx - x, k.cz - z);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
   }
 
   #fromSignals(signals) {
