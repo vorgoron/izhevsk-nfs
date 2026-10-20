@@ -68,6 +68,7 @@ export class World {
     this.#initDem(city.dem);
     this.#initMeshGrid();
     this.#levelUnderBuildings();
+    this.#gradeRoads();
     this.#planOverpasses();
     this.#carveUnderBridges();
     this.levelEnds = [];
@@ -270,6 +271,154 @@ export class World {
       }
     }
     for (const [n, [t, c]] of sum) h[n] += (t / c - h[n]) * LEVEL_K;
+  }
+
+  // Полотно улиц: узлы сетки рельефа у дороги ставятся на её продольный профиль — исходный рельеф по
+  // оси, сглаженный вдоль дороги на ±GRADE_SMOOTH м. Поперёк дорога ровная, а площадки под домами
+  // (#levelUnderBuildings) не задирают её горбом: узел сетки 15 м тянет за собой треугольники и под
+  // улицей. До GRADE_PAD м от края — ровно по профилю, дальше за GRADE_FALL м — к своему рельефу.
+  // Узел у нескольких дорог — к средней их высоте с весом по близости. Мосты не трогаем.
+  #gradeRoads() {
+    const GRADE_SMOOTH = 40, GRADE_STEP = 5, GRADE_FALL = 15;
+    const PIN_FLAT = 7.5, PIN_BEND = 15, PIN_EASE = 40; // м: примыкание (см. ниже)
+    const GRADE_PAD = { service: 6, living_street: 6 };
+    const { h, nx, nz, dx, dz, xmin, zmin } = this.mesh;
+    const sumK = new Float32Array(h.length), sumH = new Float32Array(h.length), maxW = new Float32Array(h.length);
+    const graded = [], atNode = new Map(); // узел OSM → [{ g, s }]
+    for (const road of this.roads) {
+      if (road.br) continue;
+      const pts = road.n.map((i) => this.nodes[i]), acc = [0];
+      for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      const L = acc[acc.length - 1];
+      if (!(L > 0)) continue;
+      // Профиль: рельеф через GRADE_STEP м по оси и скользящее среднее.
+      const N = Math.ceil(L / GRADE_STEP) + 1, st = L / (N - 1), raw = new Float64Array(N), xz = new Float64Array(N * 4);
+      for (let k = 0, i = 1; k < N; k++) {
+        const s = k * st;
+        while (i < pts.length - 1 && acc[i] < s) i++;
+        const l = acc[i] - acc[i - 1] || 1, t = (s - acc[i - 1]) / l;
+        const x = pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, z = pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t;
+        xz.set([x, z, (pts[i][0] - pts[i - 1][0]) / l, (pts[i][1] - pts[i - 1][1]) / l], k * 4);
+        raw[k] = this.baseTerrain(x, z);
+      }
+      // Окно симметричное и к концам сужается: на конце профиль — рельеф в точке (продолжение той же
+      // улицы стыкуется без ступеньки).
+      const m = Math.round(GRADE_SMOOTH / st), pre = new Float64Array(N + 1), prof = new Float64Array(N);
+      for (let k = 0; k < N; k++) pre[k + 1] = pre[k] + raw[k];
+      for (let k = 0; k < N; k++) {
+        const r = Math.min(m, k, N - 1 - k), a = k - r, b = k + r;
+        prof[k] = (pre[b + 1] - pre[a]) / (b - a + 1);
+      }
+      const profAt = (s) => {
+        const f = Math.min(Math.max(s / st, 0), N - 1), k = Math.min(Math.floor(f), N - 2);
+        return N < 2 ? prof[0] : prof[k] + (prof[k + 1] - prof[k]) * (f - k);
+      };
+      const g = { road, pts, acc, st, xz, prof, profAt, rank: roadLift(road.k), pad: road.w / 2 + (GRADE_PAD[road.k.replace('_link', '')] ?? TERRAIN_SEG) };
+      graded.push(g);
+      road.n.forEach((id, i) => {
+        const e = atNode.get(id);
+        if (e) e.push({ g, s: acc[i] }); else atNode.set(id, [{ g, s: acc[i] }]);
+      });
+    }
+    // Две проезжие части одной улицы (параллельно, той же важности, между осями не больше суммы
+    // полуширин + TWIN_GAP м) — общий профиль, средний из двух: иначе на склоне рельеф между ними
+    // тянул каждую к соседке, и обе кренились внутрь. Точки профилей — в сетке CELL м.
+    // Проезжие части в OSM — односторонние линии, среди них и ищем.
+    const TWIN_GAP = 16, CELL = 40, grid = new Map(), key = (x, z) => Math.floor(x / CELL) * 65536 + Math.floor(z / CELL);
+    const oneway = graded.filter((g) => g.road.ow);
+    for (const g of oneway) {
+      for (let k = 0; k < g.prof.length; k++) {
+        const c = key(g.xz[k * 4], g.xz[k * 4 + 1]), e = grid.get(c);
+        if (e) e.push(g, k); else grid.set(c, [g, k]);
+      }
+    }
+    // Сдвиг к среднему сглаживается вдоль дороги (±TWIN_EASE м): где пара начинается и кончается — без ступеньки.
+    const TWIN_EASE = 25;
+    const twinFix = oneway.map((g) => {
+      const N = g.prof.length, xz = g.xz, fix = new Float64Array(N), lim0 = (g.road.w / 2 + TWIN_GAP) ** 2;
+      for (let k = 0; k < N; k++) {
+        const x = xz[k * 4], z = xz[k * 4 + 1], ux = xz[k * 4 + 2], uz = xz[k * 4 + 3];
+        let best = null, bd = Infinity;
+        for (let a = -1; a <= 1; a++) {
+          for (let b = -1; b <= 1; b++) {
+            const e = grid.get(key(x + a * CELL, z + b * CELL));
+            for (let q = 0; e && q < e.length; q += 2) {
+              const o = e[q];
+              if (o === g || o.rank !== g.rank) continue;
+              const j = e[q + 1] * 4, ox = o.xz[j] - x, oz = o.xz[j + 1] - z, d2 = ox * ox + oz * oz;
+              const lim = (Math.sqrt(lim0) + o.road.w / 2) ** 2;
+              if (d2 >= bd || d2 >= lim) continue;
+              if (Math.abs(ux * o.xz[j + 2] + uz * o.xz[j + 3]) < 0.9 || (ox * ux + oz * uz) ** 2 > d2 * 0.25) continue;
+              if (g.road.name && o.road.name && g.road.name !== o.road.name) continue;
+              bd = d2; best = o.prof[e[q + 1]];
+            }
+          }
+        }
+        if (best !== null) fix[k] = (best - g.prof[k]) / 2;
+      }
+      const m = Math.round(TWIN_EASE / g.st), pre = new Float64Array(N + 1), out = new Float64Array(N);
+      for (let k = 0; k < N; k++) pre[k + 1] = pre[k] + fix[k];
+      for (let k = 0; k < N; k++) {
+        const a = Math.max(0, k - m), b = Math.min(N - 1, k + m);
+        out[k] = (pre[b + 1] - pre[a]) / (b - a + 1);
+      }
+      return out;
+    });
+    oneway.forEach((g, i) => { for (let k = 0; k < g.prof.length; k++) g.prof[k] += twinFix[i][k]; });
+    // Примыкание к более важной улице: второстепенная у её края (полуширина + PIN_FLAT) идёт вровень
+    // с ней, за PIN_BEND м плавно выходит на свой уклон, а разница высот с главной сходит за PIN_EASE м.
+    // Иначе на склоне главная перекашивалась поперёк (узлы под ней тянула примыкающая), а отдать узлы
+    // главной — ступенька на второстепенной; ровно на всю клетку сетки — излом, где она догоняет свой уклон.
+    // Важные первыми: их профиль к этому времени окончательный.
+    graded.sort((a, b) => b.rank - a.rank);
+    for (const g of graded) {
+      // Для каждой точки — ближайшее примыкание: [расстояние, высота главной, сдвиг своего профиля].
+      const join = new Array(g.prof.length).fill(null);
+      g.road.n.forEach((id, i) => {
+        for (const o of atNode.get(id)) {
+          if (o.g.rank <= g.rank + 1e-3) continue;
+          const y = o.g.profAt(o.s), d0 = o.g.road.w / 2 + PIN_FLAT;
+          for (let k = 0; k < g.prof.length; k++) {
+            const d = Math.abs(k * g.st - g.acc[i]) - d0;
+            if (d < PIN_EASE && (!join[k] || d < join[k][0])) join[k] = [d, y, y - g.profAt(g.acc[i])];
+          }
+        }
+      });
+      const ss = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+      for (let k = 0; k < g.prof.length; k++) {
+        if (!join[k]) continue;
+        const [d, y, shift] = join[k], own = g.prof[k] + shift * (1 - ss(d / PIN_EASE));
+        g.prof[k] = y + (own - y) * ss(d / PIN_BEND);
+      }
+    }
+    // Узлы сетки в R м от отрезков дороги: fn(n, d, s) — номер узла, расстояние до оси, метр профиля.
+    const near = ({ pts, acc }, R, fn) => {
+      for (let k = 1; k < pts.length; k++) {
+        const [ax, az] = pts[k - 1], [bx, bz] = pts[k], sx = bx - ax, sz = bz - az, l2 = sx * sx + sz * sz || 1;
+        const i0 = Math.max(0, Math.ceil((Math.min(ax, bx) - R - xmin) / dx)), i1 = Math.min(nx, Math.floor((Math.max(ax, bx) + R - xmin) / dx));
+        const j0 = Math.max(0, Math.ceil((Math.min(az, bz) - R - zmin) / dz)), j1 = Math.min(nz, Math.floor((Math.max(az, bz) + R - zmin) / dz));
+        for (let j = j0; j <= j1; j++) {
+          for (let i = i0; i <= i1; i++) {
+            const x = xmin + i * dx - ax, z = zmin + j * dz - az; // как World.closest, без объекта на узел
+            const t = Math.min(1, Math.max(0, (x * sx + z * sz) / l2)), ex = x - sx * t, ez = z - sz * t, d2 = ex * ex + ez * ez;
+            if (d2 < R * R) fn(j * (nx + 1) + i, Math.sqrt(d2), acc[k - 1] + (acc[k] - acc[k - 1]) * t);
+          }
+        }
+      }
+    };
+    // Узлы у самого полотна важной улицы держит она (второстепенная там с ней вровень, см. выше).
+    const own = new Float32Array(h.length);
+    for (const g of graded) near(g, g.road.w / 2 + PIN_FLAT, (n) => { if (g.rank > own[n]) own[n] = g.rank; });
+    for (const g of graded) {
+      near(g, g.pad + GRADE_FALL, (n, d, s) => {
+        if (g.rank < own[n] - 1e-3) return;
+        const wt = d <= g.pad ? 1 : 1 - (d - g.pad) / GRADE_FALL, kk = (wt * wt) / (1 + d) ** 3;
+        sumK[n] += kk;
+        sumH[n] += kk * g.profAt(s);
+        if (wt > maxW[n]) maxW[n] = wt;
+      });
+    }
+    for (let n = 0; n < h.length; n++) if (maxW[n] > 0) h[n] += (sumH[n] / sumK[n] - h[n]) * maxW[n];
   }
 
   // Путепроводы: мост только над дорогами/рельсами идёт горбом — нижняя дорога остаётся на земле,
