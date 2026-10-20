@@ -23,6 +23,7 @@ import { NitroFX, JetFX, DustFX, ExhaustFX } from './effects.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
+import { createDebug } from './debug.js';
 import { Net, CITY } from './net.js';
 import { track } from './analytics.js';
 import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
@@ -366,6 +367,11 @@ async function main() {
   let fpsCap = 60;
   try { const v = localStorage.getItem('fps'); if (v !== null && FPS_CAPS.includes(+v)) fpsCap = +v; } catch {}
 
+  // Отладочная плашка (debug.js): `?debug` в адресе или запомненный выбор.
+  let debugOn = flags.has('debug');
+  try { debugOn ||= localStorage.getItem('debug') === '1'; } catch {}
+  const debug = createDebug({ world, car, camera, camMode: () => camMode, dayNight, fpsCap: () => fpsCap, on: debugOn });
+
   // Действия общие для клавиатуры, меню и сенсорных кнопок. Действия «в игру» (гонка, на дорогу,
   // гараж) закрывают меню, настройки переключаются на месте.
   const actions = {
@@ -411,6 +417,7 @@ async function main() {
       citymap.toggle();
       sound.setPaused(citymap.isOpen);
     },
+    debug: () => debug.toggle(),
     fullscreen: toggleFullscreen,
     // Позвать друзей: своя комната и ссылка на неё в буфер обмена (не вышло — ссылка видна в адресе).
     invite: () => {
@@ -448,7 +455,7 @@ async function main() {
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
     radio: { names: STATIONS.map((s) => s.name), get: () => radio.station, select: (i) => radio.select(i) },
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, debug: debug.on, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
       money: formatMoney(wallet.balance), nitro: car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
@@ -483,7 +490,7 @@ async function main() {
   $('menu-btn').addEventListener('click', actions.menu);
   $('race-btn').addEventListener('click', actions.race);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
-    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night' }; // Y — «Н» в русской раскладке
+    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night', KeyI: 'debug' }; // Y — «Н» в русской раскладке
 
   let starting = true;
   const keys = new Set();
@@ -1167,6 +1174,7 @@ async function main() {
     sun.target.position.set(car.pos.x, car.y, car.pos.y);
     sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 300);
     updateHud(dt, inp);
+    debug.update(now);
     renderer.render(scene, camera);
     perf?.end();
   });

@@ -8,7 +8,7 @@ const CAMERAS = ['сзади', 'из салона', 'сверху', 'кино'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, fullscreen };
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, fullscreen, debug };
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
   // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
@@ -47,6 +47,7 @@ export class Menu {
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
       <button data-act="fps">Кадров в секунду <b data-v="fps"></b><kbd>L</kbd></button>
       <button data-act="map">Карта города <b data-v="nav"></b><kbd>M</kbd></button>
+      <button data-act="debug">Отладка: координаты и камера <b data-v="debug"></b><kbd>I</kbd></button>
       ${fs ? '<button data-act="fullscreen">Во весь экран <b data-v="fullscreen"></b><kbd>F</kbd></button>' : ''}
       <button data-page="tricks">Трюки <b data-v="tricks"></b><i>›</i></button>
       <div class="keys">
@@ -141,6 +142,7 @@ export class Menu {
       money: s.money,
       account: { in: this.account?.state().email, sent: 'письмо отправлено' }[this.account?.state().status] ?? 'войти по почте',
       nitro: s.nitro,
+      debug: s.debug ? 'вкл' : 'выкл',
     };
     s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
