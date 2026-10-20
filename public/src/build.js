@@ -1514,7 +1514,9 @@ export function buildTreeChunk(world, info, mats) {
   const put = (kind, x, z, forest = false) => { spots[kind].push([x, z, forest]); count++; };
   // Городские лиственные: липа, клён, тополь, берёза.
   const leafy = () => { const u = rand(); return u < 0.3 ? 'birch' : u < 0.6 ? 'lime' : u < 0.82 ? 'maple' : 'poplar'; };
-  for (const [x, z] of data.trees) if (free(x, z)) put(leafy(), x, z);
+  // Деревья из OSM (и ряды natural=tree_row) — не на полотне: ряд в OSM бывает нарисован по оси или разделительной.
+  const offRoad = (x, z) => !(world.nearestRoad(x, z, 3)?.d < 1.5);
+  for (const [x, z] of data.trees) if (free(x, z) && offRoad(x, z)) put(leafy(), x, z);
   for (const a of data.areas) {
     if (a.k !== 'park') continue;
     // Сажаем только в части рамки парка, попавшей в квадрат.
