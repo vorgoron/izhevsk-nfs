@@ -22,7 +22,7 @@ const RAIL_ALONG = 9; // м от края полотна путепровода:
 // Трамвайное полотно — на TRAM_ABOVE выше среднего края соседних проезжих частей в TRAM_REACH м
 // (обе колеи вровень), без дорог — на TRAM_LIFT над рельефом. Поперёк дороги (переезд) — прямая
 // между полотном до и после, не ниже асфальта; край переезда ищется не дальше TRAM_SPAN м.
-const TRAM_ABOVE = 0.02, TRAM_REACH = 8, TRAM_LIFT = 0.1, TRAM_SPAN = 60, TRAM_STEP = 2, TRAM_EASE = 20;
+const TRAM_ABOVE = 0.02, TRAM_REACH = 8, TRAM_LIFT = 0.1, TRAM_SPAN = 60, TRAM_STEP = 2, TRAM_EASE = 20, TRAM_XEASE = 8, TRAM_EDGE_WIN = 2;
 export const TRAM_BED = 3.2; // м: ширина трамвайного полотна на путь (= междупутье, соседние смыкаются)
 export const TRAM_GRASS = 1; // м: газон между полотном и дорогой (лента дороги обрезается за ним, build.js)
 // Газон снаружи пути уходит вниз от края щебня: на TRAM_DROP м к краю газона плюс TRAM_TUCK м под асфальт.
@@ -321,11 +321,13 @@ export class World {
         if (e) e.push({ g, s: acc[i] }); else atNode.set(id, [{ g, s: acc[i] }]);
       });
     }
-    // Две проезжие части одной улицы (параллельно, той же важности, между осями не больше суммы
-    // полуширин + TWIN_GAP м) — общий профиль, средний из двух: иначе на склоне рельеф между ними
-    // тянул каждую к соседке, и обе кренились внутрь. Точки профилей — в сетке CELL м.
+    // Две проезжие части одной улицы (встречные, параллельно, той же важности, между краями не больше
+    // TWIN_GAP м) — общий профиль, средний из двух: иначе на склоне рельеф между ними тянул каждую к
+    // соседке, и обе кренились внутрь. Чем шире зазор (больше TWIN_FULL м), тем слабее: разнесённые
+    // (трамвай посередине) на склоне и правда на разной высоте, и полное среднее сдвигало каждую на метр.
+    // Попутная — это продолжение той же проезжей части, не пара. Точки профилей — в сетке CELL м.
     // Проезжие части в OSM — односторонние линии, среди них и ищем.
-    const TWIN_GAP = 16, CELL = 40, grid = new Map(), key = (x, z) => Math.floor(x / CELL) * 65536 + Math.floor(z / CELL);
+    const TWIN_GAP = 16, TWIN_FULL = 4, CELL = 40, grid = new Map(), key = (x, z) => Math.floor(x / CELL) * 65536 + Math.floor(z / CELL);
     const oneway = graded.filter((g) => g.road.ow);
     for (const g of oneway) {
       for (let k = 0; k < g.prof.length; k++) {
@@ -339,7 +341,7 @@ export class World {
       const N = g.prof.length, xz = g.xz, fix = new Float64Array(N), lim0 = (g.road.w / 2 + TWIN_GAP) ** 2;
       for (let k = 0; k < N; k++) {
         const x = xz[k * 4], z = xz[k * 4 + 1], ux = xz[k * 4 + 2], uz = xz[k * 4 + 3];
-        let best = null, bd = Infinity;
+        let best = null, bd = Infinity, bw = 0;
         for (let a = -1; a <= 1; a++) {
           for (let b = -1; b <= 1; b++) {
             const e = grid.get(key(x + a * CELL, z + b * CELL));
@@ -349,13 +351,16 @@ export class World {
               const j = e[q + 1] * 4, ox = o.xz[j] - x, oz = o.xz[j + 1] - z, d2 = ox * ox + oz * oz;
               const lim = (Math.sqrt(lim0) + o.road.w / 2) ** 2;
               if (d2 >= bd || d2 >= lim) continue;
-              if (Math.abs(ux * o.xz[j + 2] + uz * o.xz[j + 3]) < 0.9 || (ox * ux + oz * uz) ** 2 > d2 * 0.25) continue;
+              const dot = ux * o.xz[j + 2] + uz * o.xz[j + 3], along = ox * ux + oz * uz;
+              if (dot > -0.9 || along * along > d2 * 0.25) continue;
               if (g.road.name && o.road.name && g.road.name !== o.road.name) continue;
-              bd = d2; best = o.prof[e[q + 1]];
+              // Высота соседки точно напротив, а не в её ближайшей точке: та бывает впереди на полшага, на уклоне — дециметры.
+              bd = d2; best = o.profAt(e[q + 1] * o.st + along);
+              bw = Math.min(1, Math.max(0, 1 - (Math.sqrt(d2) - (g.road.w + o.road.w) / 2 - TWIN_FULL) / (TWIN_GAP - TWIN_FULL)));
             }
           }
         }
-        if (best !== null) fix[k] = (best - g.prof[k]) / 2;
+        if (best !== null) fix[k] = ((best - g.prof[k]) / 2) * bw;
       }
       const m = Math.round(TWIN_EASE / g.st), pre = new Float64Array(N + 1), out = new Float64Array(N);
       for (let k = 0; k < N; k++) pre[k + 1] = pre[k] + fix[k];
@@ -407,13 +412,21 @@ export class World {
         }
       }
     };
-    // Узлы у самого полотна важной улицы держит она (второстепенная там с ней вровень, см. выше).
-    const own = new Float32Array(h.length);
-    for (const g of graded) near(g, g.road.w / 2 + PIN_FLAT, (n) => { if (g.rank > own[n]) own[n] = g.rank; });
+    // Узлы у самого полотна важной улицы держит она (второстепенная там с ней вровень, см. выше): в PIN_FLAT м
+    // от края — от всех, кто ниже её, на всю клетку сетки — от дворовых проездов. Узел за 7,5 м ещё тянет
+    // треугольники под проезжей частью, и проезд на склоне в 15 м от неё задирал её край на полметра; на
+    // проезде ступенька не так заметна, а улице рядом широкая зона дала бы ступеньку (Профсоюзный у Совхозной).
+    const own = new Float32Array(h.length), ownYard = new Float32Array(h.length);
     for (const g of graded) {
+      near(g, g.road.w / 2 + PIN_FLAT, (n) => { if (g.rank > own[n]) own[n] = g.rank; });
+      near(g, g.road.w / 2 + TERRAIN_SEG, (n) => { if (g.rank > ownYard[n]) ownYard[n] = g.rank; });
+    }
+    for (const g of graded) {
+      const yard = GRADE_PAD[g.road.k.replace('_link', '')] !== undefined;
       near(g, g.pad + GRADE_FALL, (n, d, s) => {
-        if (g.rank < own[n] - 1e-3) return;
-        const wt = d <= g.pad ? 1 : 1 - (d - g.pad) / GRADE_FALL, kk = (wt * wt) / (1 + d) ** 3;
+        if (g.rank < (yard ? ownYard[n] : own[n]) - 1e-3) return;
+        // Важная улица весит больше: соседняя улица ниже рангом в 15 м сбоку не прогибает её край.
+        const wt = d <= g.pad ? 1 : 1 - (d - g.pad) / GRADE_FALL, kk = ((wt * wt) / (1 + d) ** 3) * Math.exp(20 * g.rank);
         sumK[n] += kk;
         sumH[n] += kk * g.profAt(s);
         if (wt > maxW[n]) maxW[n] = wt;
@@ -1106,8 +1119,17 @@ export class World {
       const w = a && b ? a.d / (a.d + b.d) : o ? Math.min(1, o.d / TRAM_EASE) : 1;
       const A = a && b ? a : o ?? p, B = a && b ? b : p;
       const y = A.y + (B.y - A.y) * w, gx = A.gx + (B.gx - A.gx) * w, gz = A.gz + (B.gz - A.gz) * w;
-      return p.cross ? { s: p.s, y: Math.max(p.y, y), bed: false, cross: true, gx: 0, gz: 0 } : { s: p.s, y, bed: p.bed, cross: false, gx, gz };
+      return p.cross ? { s: p.s, y: Math.max(p.y, y), road: p.y, bed: false, cross: true, gx: 0, gz: 0 } : { s: p.s, y, bed: p.bed, cross: false, gx, gz };
     });
+    // На переезде рельсы — в асфальте: от края полотна за TRAM_XEASE м опускаются с прямой на асфальт
+    // (прямая над серединой перекрёстка на склоне висела над дорогой на полметра).
+    for (let i = 0; i < P.length; i++) {
+      if (!P[i].cross) continue;
+      let dc = Infinity;
+      for (let j = i - 1; j >= 0 && dc === Infinity; j--) if (!P[j].cross) dc = P[i].s - P[j].s;
+      for (let j = i + 1; j < P.length; j++) if (!P[j].cross) { dc = Math.min(dc, P[j].s - P[i].s); break; }
+      P[i].y = P[i].road + (P[i].y - P[i].road) * Math.max(0, 1 - dc / TRAM_XEASE);
+    }
     // Полуширина полотна влево/вправо (по ходу пути): снаружи пары — с газоном до дороги. Газон — только
     // где соседа с этой стороны нет на ±TRAM_GRASS_WIN м, и ширина меняется плавно (TRAM_GRASS за 5 м):
     // сосед на изгибе находится через раз, и край полотна шёл ступеньками.
@@ -1118,6 +1140,47 @@ export class World {
       for (let i = w.length - 2; i >= 0; i--) w[i] = Math.min(w[i], w[i + 1] + rate);
       w.forEach((v, i) => (P[i][key] = v));
     }
+    // Край полотна не выше асфальта сразу за ним: у перекрёстка рядом с полотном асфальт другой улицы,
+    // а плоскость считается по параллельным проезжим частям — на склоне полотно вставало над ним бортом.
+    // Сдвиг края сглажен вдоль пути (±TRAM_EDGE_WIN точек), чтобы не было ступеньки.
+    const rp = this.city.rails[ri].p, at = [];
+    for (let i = 1, s0 = 0; i < rp.length; i++) {
+      const L = Math.hypot(rp[i][0] - rp[i - 1][0], rp[i][1] - rp[i - 1][1]);
+      at.push([s0, L, rp[i - 1], rp[i]]); s0 += L;
+    }
+    const asph = (x, z) => {
+      let y = null;
+      for (const q of this.nearbyRoadSegments(x, z)) {
+        if (q.ya !== undefined || q.road.ramp || q.road.hump) continue;
+        const c = World.closest(q, x, z);
+        if (c.d <= q.w / 2) y = Math.max(y ?? -Infinity, this.#segY(q, c, x, z, this.terrain(x, z)));
+      }
+      return y;
+    };
+    const cut = P.map((p) => {
+      if (!p.bed) return null;
+      const e = at.find(([s0, L]) => p.s <= s0 + L) ?? at[at.length - 1], [s0, L, [ax, az], [bx, bz]] = e;
+      if (!(L > 0)) return null;
+      const dx = (bx - ax) / L, dz = (bz - az) / L, t = p.s - s0, x = ax + dx * t, z = az + dz * t, nx = -dz, nz = dx;
+      const side = (w) => {
+        const ey = p.y + (p.gx * nx + p.gz * nz) * w, a = asph(x + nx * (w + 0.6), z + nz * (w + 0.6));
+        return a === null ? 0 : Math.min(0, a + TRAM_ABOVE - ey);
+      };
+      return [side(p.wl), side(-p.wr)];
+    });
+    const sm = (k, i) => {
+      let v = 0;
+      for (let j = Math.max(0, i - TRAM_EDGE_WIN); j <= Math.min(P.length - 1, i + TRAM_EDGE_WIN); j++) if (cut[j]) v = Math.min(v, cut[j][k]);
+      return v;
+    };
+    const dl = P.map((_, i) => sm(0, i)), dr = P.map((_, i) => sm(1, i));
+    P.forEach((p, i) => {
+      if (!p.bed || (!dl[i] && !dr[i])) return;
+      const e = at.find(([s0, L]) => p.s <= s0 + L) ?? at[at.length - 1], [, L, [ax, az], [bx, bz]] = e;
+      const nx = -(bz - az) / (L || 1), nz = (bx - ax) / (L || 1), g0 = p.gx * nx + p.gz * nz;
+      const yl = p.y + g0 * p.wl + dl[i], yr = p.y - g0 * p.wr + dr[i], g = (yl - yr) / (p.wl + p.wr);
+      p.y = yr + g * p.wr; p.gx = g * nx; p.gz = g * nz;
+    });
     this.tramProfiles.set(ri, P);
     return P;
   }
