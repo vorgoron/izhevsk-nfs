@@ -55,6 +55,10 @@ const YAW_DAMP = 2.2, YAW_MAX = 4, SKID_GRIP = 0.85;
 const RADIUS = 1.15;      // два круга-коллайдера вдоль кузова
 const AXLE = 1.25;
 const SINK_TIME = 2.8;    // с: от въезда в воду до «утонул»
+const DIRT_OFF = 0.45; // грунтовка: доля «бездорожья» (скорость, сцепление, тряска)
+// Лежачие полицейские (World.bumpCross): быстрее BUMP_HOP м/с подбрасывает; [подскок, м/с вверх на 1 м/с сверх
+// порога; скорость, на которой удар в полную силу] по виду неровности.
+const BUMP_HOP = 11, BUMP_HIT = [[0.45, 25], [0.3, 35], [0.25, 40]];
 // Крыши: после трюка можно сесть на машину трафика, трамвай или дом (support — main.js) и ехать по ней;
 // съехал с края, а под колёсами пустота выше FALL м — падаешь.
 const FALL = 1.2;
@@ -112,6 +116,7 @@ export class Car {
     this.pitch = 0;
     this.bodyRoll = this.bodyRollV = 0;
     this.air = null;
+    this.hopV = this.hopH = 0;
     this.flip = this.flipP = this.alt = 0;
     this.yawV = this.skid = this.slide = 0;
     this.onTop = null;
@@ -150,10 +155,11 @@ export class Car {
     } else {
       this.dry.set(this.pos.x, this.pos.y);
     }
-    // Покрытие под машиной — 20 раз в секунду; offroad плавно 0..1 (дорога → грунт).
+    // Покрытие под машиной — 20 раз в секунду; offroad плавно 0..1 (дорога → грунт, грунтовка — наполовину).
     this.surfT = (this.surfT ?? 0) - dt;
     if (this.surfT <= 0) { this.surface = this.world.surfaceAt(this.pos.x, this.pos.y); this.surfT = 0.05; }
-    this.offroad = (this.offroad ?? 0) + ((this.surface === 'ground' ? 1 : 0) - (this.offroad ?? 0)) * Math.min(1, dt * 5);
+    const offT = this.surface === 'ground' ? 1 : this.surface === 'dirt' ? DIRT_OFF : 0;
+    this.offroad = (this.offroad ?? 0) + (offT - (this.offroad ?? 0)) * Math.min(1, dt * 5);
     const off = this.offroad;
     const f = this.forward, r = this.right;
     let vf = this.vel.dot(f), vr = this.vel.dot(r);
@@ -225,6 +231,7 @@ export class Car {
     // От текущей высоты: под мостом настил над головой не считается поверхностью.
     const y0 = this.y;
     const land = g.ground(this.pos.x, this.pos.y, y0);
+    this.#bump(vf, air);
     // Крыша под машиной — только в прыжке и пока на ней стоим (с земли на крышу не заехать).
     const sup = (air || this.onTop) && this.support ? this.support(this.pos.x, this.pos.y, y0) : null;
     const ground = sup && sup.y > land ? sup.y : land;
@@ -271,6 +278,16 @@ export class Car {
       }
     } else {
       this.y += (ground - this.y) * Math.min(1, dt * 15);
+      // Подскок на лежачем полицейском: невысоко над поверхностью, без прыжка (струи трюка не нужны).
+      if (this.hopV || this.hopH) {
+        this.hopV -= FLIP_G * dt;
+        this.hopH = (this.hopH ?? 0) + this.hopV * dt;
+        if (this.hopH <= 0) {
+          this.impact = Math.max(this.impact, Math.min(0.8, -this.hopV / 8));
+          this.hopH = this.hopV = 0;
+        }
+        this.y = Math.max(this.y, ground + this.hopH);
+      }
     }
     this.alt = this.y - land; // над землёй и дорогой (на крыше — высота крыши): пролетаем ли трафик
     const hf = g.ground(this.pos.x + f2.x * 1.6, this.pos.y + f2.y * 1.6, y0);
@@ -301,6 +318,17 @@ export class Car {
 
     this.impact = Math.max(0, this.impact - dt * 2);
     this.#syncModel(dt, vf);
+  }
+
+  // Лежачий полицейский под колёсами: удар, на скорости — подбрасывает (hopV, м/с вверх; сам подскок — в update).
+  #bump(vf, air) {
+    const x = this.pos.x, z = this.pos.y, k = air || this.onTop ? -1 : this.world.bumpCross(this.bumpX ?? x, this.bumpZ ?? z, x, z);
+    this.bumpX = x; this.bumpZ = z;
+    if (k < 0) return;
+    const v = Math.abs(vf), [hop, hard] = BUMP_HIT[k];
+    this.impact = Math.max(this.impact, Math.min(1, v / hard));
+    this.bodyRollV += (Math.random() - 0.5) * v * 0.05;
+    if (v > BUMP_HOP) this.hopV = Math.max(this.hopV ?? 0, Math.min(4, (v - BUMP_HOP) * hop));
   }
 
   // Контакт с машиной трафика или очереди: n — нормаль от неё к нам, depth — перекрытие,

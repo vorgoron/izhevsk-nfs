@@ -266,6 +266,10 @@ export class Traffic {
       if (cos < 0.75) { limit = Math.min(limit, 4 + d * 0.5 + cos * 3); break; }
     }
 
+    // Лежачий полицейский впереди — переваливаем шагом.
+    const bump = this.world.bumpAhead(v.x, v.z, v.dx, v.dz, 30);
+    if (bump < Infinity) limit = Math.min(limit, 3 + bump * 0.35);
+
     // Светофор на этом или следующем ребре: стоим у стоп-линии на красный и на жёлтый,
     // если ещё успеваем затормозить.
     if (this.signals) {

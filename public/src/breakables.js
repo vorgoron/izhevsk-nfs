@@ -18,6 +18,11 @@ const KINDS = {
   tree: { r: 0.3, h: 6, breakV: Infinity }, // не сбить: упираешься на любой скорости; r — на масштаб 1
   // Кусок забора (≤ 5 м): отрезок толщиной 2r, высота — своя у куска; падает плашмя поперёк.
   fence: { r: 0.08, tip: 0.04, breakV: 3, loss: 0.12, kick: 0.25, over: 0.4, hop: 0, lift: 0.04 },
+  // Мелочи из OSM (props.js): знаки, столбики, детские площадки; шлагбаум — стрела отрезком (как забор).
+  sign: { r: 0.06, h: 2.9, tip: 0.3, breakV: 1.5, loss: 0.05, kick: 0.35 },
+  bollard: { r: 0.12, h: 0.9, tip: 0.1, breakV: 4, loss: 0.2, kick: 0.3, over: 0.2 },
+  play: { r: 1.2, h: 2.4, tip: 0.3, breakV: 4, loss: 0.25, kick: 0.2 },
+  gate: { r: 0.06, h: 1.1, tip: 0.04, breakV: 1.5, loss: 0.05, kick: 0.3, over: 0.2, hop: 0, lift: 0.04 },
 };
 const CELL = 16;          // м: клетка сетки поиска
 const MAX_DEBRIS = 40;    // больше — самое старое встаёт на место
@@ -89,6 +94,41 @@ export class Breakables {
         hide: () => { if (pool) pm = hideInstance(pool, i); return hideInstance(mesh, i); },
         show: (m) => { if (pm) showInstance(pool, i, pm); pm = null; showInstance(mesh, i, m); },
         make: () => new THREE.Mesh(mesh.geometry, mesh.material),
+      };
+    }));
+  }
+
+  // Мелочи квадрата (buildPropChunk): InstancedMesh, геометрия от основания, вид — mesh.userData.breakKind.
+  addProps(mesh) {
+    const kind = KINDS[mesh.userData.breakKind];
+    this.#add(mesh, mesh.userData.spots.map(([x, y, z, a], i) => ({
+      kind, x, y, z, a,
+      hide: () => hideInstance(mesh, i),
+      show: (m) => showInstance(mesh, i, m),
+      make: () => new THREE.Mesh(mesh.geometry, mesh.material),
+    })));
+  }
+
+  // Шлагбаумы квадрата: стойка (posts) и стрела (posts.userData.arms, растянута на длину len вдоль своей оси x).
+  // Бьётся стрела — отрезок от стойки поперёк дороги; падает вместе со стойкой.
+  addGates(posts) {
+    const arms = posts.userData.arms;
+    this.#add(posts, posts.userData.spots.map(([x, y, z, a, len], i) => {
+      let am = null;
+      const ux = Math.cos(a), uz = -Math.sin(a); // ось x экземпляра в мире
+      return {
+        kind: KINDS.gate, x, y, z, a, top: y + 1.1, low: y,
+        seg: { ax: x, az: z, bx: x + ux * len, bz: z + uz * len },
+        hide: () => { am = hideInstance(arms, i); return hideInstance(posts, i); },
+        show: (m) => { if (am) showInstance(arms, i, am); am = null; showInstance(posts, i, m); },
+        make: () => {
+          const g = new THREE.Group();
+          g.add(new THREE.Mesh(posts.geometry, posts.material));
+          const arm = new THREE.Mesh(arms.geometry, arms.material);
+          arm.scale.set(len, 1, 1);
+          g.add(arm);
+          return g;
+        },
       };
     }));
   }

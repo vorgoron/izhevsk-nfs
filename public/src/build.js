@@ -112,6 +112,7 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
 // Края — сплошные; на двусторонней — осевая (на 4+ полосах двойная сплошная, иначе прерывистая);
 // между полосами одного направления — прерывистые.
 export function roadMarking(road) {
+  if (road.sf) return 'dirt'; // грунтовка (surface=unpaved… в OSM)
   if (!MARKED_CLASSES.has(road.k.replace('_link', ''))) return 'plain';
   const total = Math.max(1, road.ln ?? Math.round((road.w - 1) / 3.3));
   if (road.ow) return `${total}/0/1`;
@@ -124,14 +125,19 @@ function asphaltTexture(key, renderer) {
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
-  g.fillStyle = '#3a3b3d';
+  const dirt = key === 'dirt';
+  g.fillStyle = dirt ? '#7a6a52' : '#3a3b3d';
   g.fillRect(0, 0, W, H);
   for (let i = 0; i < 5000; i++) {
     const v = 40 + Math.random() * 40;
-    g.fillStyle = `rgba(${v},${v},${v},0.5)`;
-    g.fillRect(Math.random() * W, Math.random() * H, 1.5, 1.5);
+    g.fillStyle = dirt ? `rgba(${v + 70},${v + 55},${v + 30},0.55)` : `rgba(${v},${v},${v},0.5)`;
+    g.fillRect(Math.random() * W, Math.random() * H, dirt ? 2.5 : 1.5, dirt ? 2.5 : 1.5);
   }
-  if (key !== 'plain') {
+  if (dirt) { // колеи
+    g.fillStyle = 'rgba(70,58,42,0.35)';
+    for (const u of [0.28, 0.72]) g.fillRect(u * W - 14, 0, 28, H);
+  }
+  if (key !== 'plain' && !dirt) {
     const [left, right, ow] = key.split('/').map(Number);
     const n = left + right;
     g.fillStyle = '#d8d8d0';
@@ -1276,7 +1282,7 @@ export function buildBuildingChunk(world, list, mats) {
     // Лёгкий разброс оттенка, чтобы кварталы не были одинаковыми; частные дома — каждый в свой цвет.
     const hash = Math.abs(Math.round(pts[0][0] * 7.3 + pts[0][1] * 3.1));
     const pal = WALLS[b.s] ?? WALLS[2];
-    col.set(RECOLOR[b.lm]?.[0] ?? (b.r ? HOUSE_WALLS[hash % HOUSE_WALLS.length] : pal[(hash >> 2) % pal.length]));
+    col.set(RECOLOR[b.lm]?.[0] ?? b.bc ?? (b.r ? HOUSE_WALLS[hash % HOUSE_WALLS.length] : pal[(hash >> 2) % pal.length]));
     const k = 0.9 + ((pts.length * 7919 + Math.round(b.h * 13)) % 20) / 100;
     col.multiplyScalar(k);
 
@@ -1336,13 +1342,13 @@ export function buildBuildingChunk(world, list, mats) {
     }
 
     if (b.r) {
-      gableRoof(pts, top, col, new THREE.Color(HOUSE_ROOFS[(hash >> 3) % HOUSE_ROOFS.length]).multiplyScalar(k), rp, rc);
+      gableRoof(pts, top, col, new THREE.Color(b.rc ?? HOUSE_ROOFS[(hash >> 3) % HOUSE_ROOFS.length]).multiplyScalar(k), rp, rc);
       continue;
     }
     // Малоэтажный послевоенный: прямоугольный — двускатная крыша, Г/П-образный — вальмовая (скаты от
     // каждой стены), иначе ниже — плоская.
     if (b.s === 11 && !holes.length) {
-      const roofCol = new THREE.Color(LOWRISE_ROOFS[(hash >> 3) % LOWRISE_ROOFS.length]).multiplyScalar(k);
+      const roofCol = new THREE.Color(b.rc ?? LOWRISE_ROOFS[(hash >> 3) % LOWRISE_ROOFS.length]).multiplyScalar(k);
       if (rectFill(pts) > 0.85) { gableRoof(pts, top, col, roofCol, rp, rc); continue; }
       if (hipRoof(pts, top, roofCol, rp, rc)) continue;
     }
@@ -1350,7 +1356,7 @@ export function buildBuildingChunk(world, list, mats) {
     const contour = pts.map(([x, z]) => new THREE.Vector2(x, z));
     const tris = THREE.ShapeUtils.triangulateShape(contour, holes.map((h) => h.map(([x, z]) => new THREE.Vector2(x, z))));
     pts = [...pts, ...holes.flat()]; // индексы треугольников — по контуру и дырам подряд
-    const rcol = new THREE.Color(RECOLOR[b.lm]?.[1] ?? ROOFS[b.s] ?? ROOFS[2]).multiplyScalar(k);
+    const rcol = new THREE.Color(RECOLOR[b.lm]?.[1] ?? b.rc ?? ROOFS[b.s] ?? ROOFS[2]).multiplyScalar(k);
     for (let [a, c, d] of tris) {
       // Нормаль крыши должна смотреть вверх.
       const ux = pts[c][0] - pts[a][0], uz = pts[c][1] - pts[a][1];
