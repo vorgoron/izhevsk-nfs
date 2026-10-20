@@ -3,6 +3,7 @@
 // чтобы переключатели в меню показывали текущее состояние.
 
 import { Wheel } from './wheel.js';
+import { AD_LIMITS } from './adrequest.js';
 
 const CAMERAS = ['сзади', 'из салона', 'сверху', 'кино'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
@@ -14,7 +15,8 @@ export class Menu {
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
   // shared (гонка общая — в своей комнате на связи). money — баланс, nitro — цена долива баллона (или «полный»).
   // account — вход по почте (account.js): { state() → { status, email, error }, start(), send(email), signOut() }.
-  constructor({ actions, state, volume, radio, setName, account }) {
+  // adRequest — отправить заявку на рекламу { who, contact, what } → Promise (adrequest.js).
+  constructor({ actions, state, volume, radio, setName, account, adRequest }) {
     this.account = account;
     this.actions = actions;
     this.state = state;
@@ -50,6 +52,7 @@ export class Menu {
       <button data-act="debug">Отладка: координаты и камера <b data-v="debug"></b><kbd>I</kbd></button>
       ${fs ? '<button data-act="fullscreen">Во весь экран <b data-v="fullscreen"></b><kbd>F</kbd></button>' : ''}
       <button data-page="tricks">Трюки <b data-v="tricks"></b><i>›</i></button>
+      <button data-page="ads">Реклама на щитах <b data-v="ads"></b><i>›</i></button>
       <div class="keys">
         <kbd>W A S D</kbd> / стрелки — ехать · <kbd>Пробел</kbd> ручник · <kbd>Shift</kbd> нитро<br>
         <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>W</kbd> kickflip · <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>S</kbd> backflip · <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>A</kbd>/<kbd>D</kbd> бочка<br>
@@ -93,6 +96,17 @@ export class Menu {
       <p class="hint">Прокрутите барабан — станция включится, когда он остановится.<span class="only-keys"> Стрелки ↑ ↓ или <kbd>B</kbd> — следующая.</span></p>
       <button data-page="main" class="go">‹ Готово <kbd>Esc</kbd></button>
       </div>
+      <div class="page" data-page="ads" hidden>
+      <h2>Реклама на щитах</h2>
+      <p class="hint">Ваш плакат на рекламных щитах вдоль улиц Ижевска в игре: нажатие на него ведёт на ваш сайт.
+        Оставьте заявку — свяжемся и расскажем о местах и ценах.</p>
+      <input data-ad="who" maxlength="${AD_LIMITS.who}" autocomplete="organization" placeholder="Компания или имя">
+      <input data-ad="contact" maxlength="${AD_LIMITS.contact}" autocomplete="tel" placeholder="Телефон, почта или Telegram">
+      <textarea data-ad="what" maxlength="${AD_LIMITS.what}" rows="3" placeholder="Что рекламировать и где (улицы, район) — по желанию"></textarea>
+      <p class="hint" data-ad="text"></p>
+      <button data-ad="send" class="go">Отправить заявку</button>
+      <button data-page="main">‹ Назад <kbd>Esc</kbd></button>
+      </div>
       <div class="page" data-page="volume" hidden>
       <h2>Громкость</h2>
       <div class="volumes">${Object.entries(VOLUME_LABELS).map(([k, label]) =>
@@ -115,6 +129,23 @@ export class Menu {
     el.querySelector('[data-acc=send]').addEventListener('click', () => account.send(email.value));
     email.addEventListener('keydown', (e) => { if (e.key === 'Enter') account.send(email.value); });
     el.querySelector('[data-acc=out]').addEventListener('click', () => account.signOut());
+    // Заявка на рекламу: нужны имя и контакт; ушла — поля чистятся, пишем спасибо.
+    const ad = (k) => el.querySelector(`[data-ad=${k}]`);
+    ad('send').addEventListener('click', () => {
+      const v = { who: ad('who').value.trim(), contact: ad('contact').value.trim(), what: ad('what').value.trim() };
+      if (!v.who || !v.contact) { this.adStatus('Укажите компанию или имя и как с вами связаться.'); return; }
+      ad('send').disabled = true;
+      this.adStatus('Отправляю…');
+      adRequest(v).then(() => {
+        for (const k of ['who', 'contact', 'what']) ad(k).value = '';
+        this.adStatus('Заявка отправлена — спасибо! Свяжемся с вами.');
+        this.adSent = true;
+        this.sync();
+      }, (e) => {
+        console.warn('[ads] заявка не ушла:', e);
+        this.adStatus('Не получилось отправить — проверьте интернет и попробуйте ещё раз.');
+      }).finally(() => { ad('send').disabled = false; });
+    });
     this.wheel = new Wheel(radio.names, { get: radio.get, select: (i) => { radio.select(i); this.sync(); } });
     el.querySelector('[data-wheel]').replaceWith(this.wheel.el);
     // Клик мимо панели — продолжить.
@@ -145,12 +176,13 @@ export class Menu {
       account: { in: this.account?.state().email, sent: 'письмо отправлено' }[this.account?.state().status] ?? 'войти по почте',
       nitro: s.nitro,
       debug: s.debug ? 'вкл' : 'выкл',
+      ads: this.adSent ? 'заявка отправлена' : 'оставить заявку',
     };
     s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account', 'ads'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;
@@ -176,7 +208,9 @@ export class Menu {
     this.wheel.sync();
   }
 
-  // Показать страницу меню: 'main', 'name', 'radio', 'volume' или 'tricks'.
+  adStatus(text) { this.el.querySelector('[data-ad=text]').textContent = text; }
+
+  // Показать страницу меню: 'main', 'name', 'radio', 'volume', 'tricks' или 'ads'.
   page(name) {
     // Уходим со страницы имени — сохранить введённое (change не всегда успевает, например по Esc).
     if (document.activeElement === this.nameIn) this.nameIn.blur();
@@ -184,6 +218,7 @@ export class Menu {
     this.sync();
     if (name === 'name') this.nameIn.focus();
     if (name === 'account') this.account?.start();
+    if (name === 'ads' && !this.adSent) this.adStatus('');
     if (name === 'radio') {
       this.wheel.show();
       this.wheel.wheel.focus({ preventScroll: true });

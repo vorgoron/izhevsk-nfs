@@ -1788,9 +1788,11 @@ export function buildPoleChunk(world, info, mats) {
 // сторона показывает строки 0…P, обратная 1…P+1), смена — сдвигом offset.y, у всех щитов разом, как роллерный
 // щит. Нажатие на плакат — ссылка рекламодателя (url) или действие игры (act, main.js). share — доля щитов.
 export const ADVERTISERS = [
-  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.4 },
-  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.3 },
-  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.3 },
+  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.35 },
+  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.25 },
+  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.25 },
+  // «Место свободно» — заявка на рекламу (меню → «Реклама на щитах», adrequest.js).
+  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.15 },
 ];
 const AD_W = 1024, AD_H = 512;
 const AD_SHOW = 8, AD_ROLL = 0.9; // с: плакат стоит, затем прокрутка
@@ -1900,6 +1902,37 @@ function daurFmAd(g) {
   adText(g, 'слушай за рулём', 110, 310, 76, 800, left);
   g.fillStyle = '#111';
   adText(g, 'радио — в меню игры', 110, 420, 54, 700, left);
+}
+
+// Свободное место: белый щит с пунктирной рамкой, как настоящий «Аренда» — и тёмный «Ваша реклама».
+function freeAd(g) {
+  g.fillStyle = '#f4f1ea';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.strokeStyle = '#2c5d8f';
+  g.lineWidth = 10;
+  g.setLineDash([36, 20]);
+  g.strokeRect(30, 30, AD_W - 60, AD_H - 60);
+  g.setLineDash([]);
+  g.textAlign = 'center';
+  g.fillStyle = '#15181b';
+  adText(g, 'РЕКЛАМНОЕ МЕСТО', AD_W / 2, 175, 92);
+  g.fillStyle = '#2c5d8f';
+  adText(g, 'СВОБОДНО', AD_W / 2, 300, 128);
+  g.fillStyle = '#15181b';
+  adText(g, 'нажмите на щит — оставьте заявку', AD_W / 2, 400, 48, 700);
+}
+
+function freeYoursAd(g) {
+  g.fillStyle = '#2c5d8f';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#ffd23f';
+  g.fillRect(0, AD_H - 90, AD_W, 90);
+  g.textAlign = 'left';
+  g.fillStyle = '#fff';
+  adText(g, 'ВАША РЕКЛАМА', 70, 175, 112);
+  adText(g, 'на щитах по всему Ижевску', 70, 275, 62, 700);
+  g.fillStyle = '#15181b';
+  adText(g, 'нажмите, чтобы разместить', 70, AD_H - 28, 52, 800);
 }
 
 // Щит 6 × 3 м на одной стойке, плакаты с двух сторон; щит — вдоль локальной x, лицевые стороны ±z.

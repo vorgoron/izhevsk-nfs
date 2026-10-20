@@ -23,6 +23,7 @@ import { Queues } from './queues.js';
 import { Trams } from './trams.js';
 import { NitroFX, JetFX, DustFX, ExhaustFX, SkidMarksFX, TireSmokeFX } from './effects.js';
 import { GhostFX } from './ghostfx.js';
+import { sendAdRequest } from './adrequest.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
@@ -467,6 +468,7 @@ async function main() {
     city: () => { clearTimeout(copied); copied = 0; net.join(CITY); },
     // Страница «Трюки» в меню (с плаката-подсказки).
     tricks: () => { menu.open(); sound.setPaused(true); menu.page('tricks'); },
+    ads: () => { menu.open(); sound.setPaused(true); menu.page('ads'); }, // щит «Место свободно» (build.js)
     // Нитро за деньги: долить баллон, на сколько хватает.
     nitro: () => {
       const got = Math.min(1 - car.nitro, Math.max(0, wallet.balance) / PRICES.nitro);
@@ -512,6 +514,7 @@ async function main() {
       money: formatMoney(wallet.balance), nitro: car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
     setName: (v) => net.setName(v),
     account: { state: () => account ?? { status: 'out' }, start: () => account.start(), send: (e) => account.send(e), signOut: () => account.signOut() },
+    adRequest: (v) => sendAdRequest(v).then(() => track('ad_request')),
   });
   game.menu = menu;
   // Аккаунт по почте (account.js): прогресс — в базу при каждом изменении денег и выезде из гаража.
@@ -572,8 +575,8 @@ async function main() {
     }
   };
   addEventListener('keydown', (e) => {
-    // Печатают в поле (имя в меню) — буквы не управляют игрой, работает только Esc.
-    if (e.target.closest?.('input:not([type=range])') && e.code !== 'Escape') return;
+    // Печатают в поле (имя, заявка на рекламу в меню) — буквы не управляют игрой, работает только Esc.
+    if (e.target.closest?.('input:not([type=range]), textarea') && e.code !== 'Escape') return;
     keys.add(e.code);
     sound.unlock();
     if (e.code !== 'KeyB') radio.unlock();
