@@ -186,15 +186,34 @@ async function main() {
   const guide = owned('стрелки', () => new RouteGuide(world, scene));
   let navRoute = null; // маршрут до точки на большой карте (citymap.js)
 
-  // Старт у Центральной площади.
+  // Старт у Центральной площади; в общем городе — там, где уехал в прошлый раз (localStorage 'pos', пишет savePos).
+  // По ссылке друга — у площади, как и он: иначе не встретиться. heading — повернуть по дороге в ту же сторону.
   const spawn = world.nearestRoad(0, 0, 400);
-  const respawnAt = (x, z) => {
+  const respawnAt = (x, z, heading) => {
     const r = world.nearestRoad(x, z, 500);
-    if (!r) return car.place(x, z, 0);
+    if (!r) return car.place(x, z, heading ?? 0);
     const s = r.seg;
-    car.place(r.px, r.pz, Math.atan2(s.bx - s.ax, s.bz - s.az));
+    let h = Math.atan2(s.bx - s.ax, s.bz - s.az);
+    if (heading != null && Math.cos(h - heading) < 0) h += Math.PI;
+    car.place(r.px, r.pz, h);
   };
-  respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0); // гонки нет — свободная езда, гонка — по кнопке (N)
+  const respawnHome = () => respawnAt(spawn ? spawn.px : 0, spawn ? spawn.pz : 0);
+  let lastPos = null;
+  try {
+    const p = JSON.parse(localStorage.getItem('pos'));
+    if (!new URLSearchParams(location.search).has('room') && [p?.x, p?.z, p?.h].every(Number.isFinite) && world.nearestRoad(p.x, p.z, 500)) lastPos = p;
+  } catch {}
+  if (lastPos) respawnAt(lastPos.x, lastPos.z, lastPos.h); else respawnHome(); // гонки нет — свободная езда, гонка — по кнопке (N)
+  // Место пишем раз в POS_EVERY с и при уходе со страницы; в воде и в прыжке — последнюю точку на суше.
+  const POS_EVERY = 5;
+  let posT = 0, posReady = false; // до «Поехали» машина стоит, где поставили, — не пишем
+  const savePos = () => {
+    if (!posReady) return;
+    const p = car.air || car.sink ? car.dry : car.pos;
+    try { localStorage.setItem('pos', JSON.stringify({ x: Math.round(p.x), z: Math.round(p.y), h: +car.heading.toFixed(2) })); } catch {}
+  };
+  addEventListener('pagehide', savePos);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
   progress(0.7, 'Строю город вокруг…');
   await frame();
   await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
@@ -1144,6 +1163,8 @@ async function main() {
       fr.querySelector('small').textContent = invited ? 'без других игроков' : 'получите ссылку — кто её откроет, окажется в городе рядом с вами';
       fr.addEventListener('click', () => {
         if (invited) { net.join(CITY); go(); return; }
+        // Друг по ссылке появится у площади — туда же и мы, если стояли в прошлом месте.
+        if (lastPos) { respawnHome(); traffic.reset(car.pos.x, car.pos.y); }
         // Ссылка — в «Поделиться» на телефоне, иначе в буфер обмена; в игре — подсказка, что с ней делать.
         const link = net.inviteLink();
         track('invite', { from: 'start' });
@@ -1181,6 +1202,7 @@ async function main() {
   progress(1);
   await startScreen();
   starting = false;
+  posReady = true;
   setTimeout(() => citymap.prepare(), 3000); // подложку большой карты — заранее, чтобы она открылась сразу
   track('game_start', { model: garage.choice.model, touch: isTouch, room: net.room !== CITY });
   if (!choice.saved) garage.open();
@@ -1216,6 +1238,7 @@ async function main() {
       acc -= STEP;
     }
     chunks.update(car.pos.x, car.pos.y, isTouch ? 1 : 2);
+    if ((posT += dt) > POS_EVERY) { posT = 0; savePos(); }
     if (car.drowned) {
       // Утонул — всё сначала: та же гонка с отсчётом, трафик заново. Бак и нитро — какие были (за деньги).
       if (race.restart()) car.place(race.startPose.x, race.startPose.z, race.startPose.heading);
