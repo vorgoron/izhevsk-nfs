@@ -253,6 +253,7 @@ export class Car {
     else if (input.up && off > 0.5 && vf > 8 && into > 0.7) this.slide = Math.min(Math.max(this.slide, 0.8), this.slide + SLIDE_DIRT * dt);
     else if (!(input.up && vf > 5 && Math.abs(beta) > SLIDE_MIN)) this.slide = Math.max(0, this.slide - bySurface(SLIDE_OFF, off) * dt);
     this.handbrake = !air && input.brake && vf > 3; // для следов колёс
+    this.gas = !!(input.up || input.down); // газ — для звука мотора у других игроков (net.js)
     const s = this.slide;
 
     // Боковое сцепление — в старых осях кузова: гасит скольжение, этим и гнёт траекторию к курсу.

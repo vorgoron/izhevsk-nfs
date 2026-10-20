@@ -29,6 +29,9 @@ const CAR_R = 1.15, CAR_AXLE = 1.25; // два круга вдоль машин�
 const SHARE = 0.5;
 const RACE_DELAY = 5000; // мс от «Новой гонки» до старта: успеть всем получить гонку и встать на старт
 const SAME_LEVEL = 3; // м: по высоте дальше — разные уровни (эстакада и дорога под ней), не сталкиваемся
+// Что делает машина — 12-м числом в s (флаги): 1 — газ, 2 — нитро, 4 — ручник, 8 — грунт; биты 4–6 — трюк в воздухе
+// (номер в AIR_KINDS), 128 — оборот влево (air.dir < 0). По ним у других — звук мотора и эффекты (ghostfx.js).
+export const AIR_KINDS = ['', 'kick', 'back', 'roll', 'ramp', 'fall'];
 
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, NAME_MAX);
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
@@ -208,8 +211,9 @@ export class Net {
       this.sendT = this.#alone(now) ? HEARTBEAT : SEND_EVERY;
       const f = (v, n = 2) => +v.toFixed(n);
       const s = [f(car.pos.x), f(car.y), f(car.pos.y), f(car.heading, 3), f(wrap(car.pitch - car.flipP), 3), f(wrap(car.roll + car.flip), 3),
-        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts].join(',');
-      // Детали — 11-м числом в s, а не своим полем: правила базы не пускают новые поля, а старые клиенты читают первые 10.
+        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts, fxFlags(car)].join(',');
+      // Детали — 11-м числом в s, флаги — 12-м, а не своими полями: правила базы не пускают новые поля, а старые клиенты
+      // читают первые 10.
       const data = { n: this.name, s, m: this.model };
       if (this.color) data.c = this.color;
       if (this.progress != null) data.p = Math.round(this.progress);
@@ -248,7 +252,7 @@ export class Net {
     if (!v || typeof v.s !== 'string') return;
     const n = v.s.split(',').map(Number);
     if (n.length < 10 || n.some((x) => !Number.isFinite(x))) return;
-    const [x, y, z, h, p, r, br, sp, st, t, opts = 0] = n;
+    const [x, y, z, h, p, r, br, sp, st, t, opts = 0, fx = 0] = n;
     const model = Object.hasOwn(MODELS, v.m ?? '') ? v.m : DEFAULT_MODEL;
     const color = /^#[0-9a-f]{6}$/i.test(v.c ?? '') ? v.c : undefined;
     const name = cleanName(v.n) || 'Гонщик';
@@ -283,7 +287,7 @@ export class Net {
     // Часы у игроков свои: смещение — наименьшее «пришло − отправлено» (сдвиг часов + самая быстрая доставка).
     g.offset = Math.min(g.offset, performance.now() - t);
     g.at = performance.now();
-    g.buf.push({ t, x, y, z, h, p, r, br, sp, st });
+    g.buf.push({ t, x, y, z, h, p, r, br, sp, st, fx });
     if (g.buf.length > 30) g.buf.shift();
   }
 
@@ -315,7 +319,9 @@ export class Net {
     m.rotation.order = 'YXZ';
     m.rotation.set(lerpAngle(a.p, c.p, k), lerpAngle(a.h, c.h, k), lerpAngle(a.r, c.r, k)); // тангаж и крен — по кругу: трюки крутят на 360°
     if (m.userData.body) m.userData.body.rotation.z = L(a.br, c.br);
-    g.spin += (L(a.sp, c.sp) / 0.34) * dt;
+    g.speed = L(a.sp, c.sp);
+    g.fx = (i === -1 ? c : a).fx; // флаги не смешиваются — берём точку, от которой едем
+    g.spin += (g.speed / 0.34) * dt;
     const steer = L(a.st, c.st);
     for (const { pivot, w, front } of m.userData.wheels) {
       w.rotation.x = g.spin;
@@ -341,4 +347,10 @@ export class Net {
     if (g.label) { this.scene.remove(g.label); g.label.material.map.dispose(); g.label.material.dispose(); }
     this.ghosts.delete(uid);
   }
+}
+
+function fxFlags(car) {
+  const air = car.air ? Math.max(0, AIR_KINDS.indexOf(car.air.kind)) : 0;
+  return (car.gas ? 1 : 0) | (car.nitroOn ? 2 : 0) | (car.handbrake ? 4 : 0) | ((car.offroad ?? 0) > 0.5 ? 8 : 0)
+    | (air << 4) | (car.air?.dir < 0 ? 128 : 0);
 }
