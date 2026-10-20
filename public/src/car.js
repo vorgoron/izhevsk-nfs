@@ -44,6 +44,8 @@ const FLIP_VY = 12.3, FLIP_G = 15, FLIP_SPIN = 0.5, FLIP_AXIS = 0.7;
 const FLIP_K = 100, FLIP_C = 11, FLIP_ACC = 30; // 1/с², 1/с; рад/с² — ускорение, при котором струи на полной тяге
 // Поворот в воздухе боковыми соплами, рад/с на полном руле; курс полёта поворачивается вместе с машиной.
 const AIR_YAW = 0.9;
+// Бочка: тот же оборот вбок, что kickflip, но сторона задаётся самим набором и машину сносит вбок, м/с.
+const ROLL_SIDE = 3.5;
 // Выше этой высоты над поверхностью машины трафика не задевают — пролетаем.
 export const CLEAR_ALT = 1.6;
 // Удар со стороны: момент инерции кузова на единицу массы, м² (брусок 4,3 × 1,8 м); закрутка гаснет
@@ -121,7 +123,8 @@ export class Car {
   get right() { return new THREE.Vector2(-Math.cos(this.heading), Math.sin(this.heading)); }
   get speed() { return this.vel.dot(this.forward); }
 
-  // Начать трюк: kind 'kick' (dir — в какую сторону крутиться, ±1) или 'back'. Только с земли и не в воде.
+  // Начать трюк: kind 'kick' или 'roll' (dir — в какую сторону крутиться, ±1, 1 — вправо) или 'back'.
+  // Только с земли и не в воде.
   #jump(kind, dir = 1) {
     if (this.air || this.sink > 0 || this.drowned) return false;
     // a, w — угол и угловая скорость оборота; acc — угловое ускорение в долях полной тяги (± — раскрутка/торможение).
@@ -130,6 +133,11 @@ export class Car {
   }
   kickflip(dir) { return this.#jump('kick', dir || 1); }
   backflip() { return this.#jump('back'); }
+  barrelRoll(dir) {
+    if (!this.#jump('roll', dir)) return false;
+    this.vel.addScaledVector(this.right, dir * ROLL_SIDE);
+    return true;
+  }
 
   update(dt, input) {
     // В воде: мотор заглох, руль не слушается, машина тонет. drowned — пора начинать сначала.
@@ -254,7 +262,7 @@ export class Car {
         this.y = ground;
         this.air = null;
         this.flip = this.flipP = 0;
-        if (air.kind === 'kick') this.bodyRollV += air.dir * 1.5;
+        if (air.kind !== 'back') this.bodyRollV += air.dir * 1.5;
         this.impact = Math.max(this.impact, 0.3);
         this.landings = (this.landings ?? 0) + 1; // для пара при посадке (JetFX); респаун в прыжке — не посадка
         this.landed = air.kind; // какой трюк приземлён — забирает main.js (награда)

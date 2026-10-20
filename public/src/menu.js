@@ -52,7 +52,7 @@ export class Menu {
       <button data-page="tricks">Трюки <b data-v="tricks"></b><i>›</i></button>
       <div class="keys">
         <kbd>W A S D</kbd> / стрелки — ехать · <kbd>Пробел</kbd> ручник · <kbd>Shift</kbd> нитро<br>
-        <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>W</kbd> kickflip · <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>S</kbd> backflip<br>
+        <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>W</kbd> kickflip · <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>S</kbd> backflip · <kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>A</kbd>/<kbd>D</kbd> бочка<br>
         мышь — повернуть камеру
       </div>
       </div>
@@ -81,6 +81,8 @@ export class Menu {
         <div><b>Backflip</b> — подскок и оборот назад через крышу
           <span class="combo only-keys"><kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>S</kbd> или <kbd>↓</kbd></span>
           <span class="combo only-touch">ручник · ручник · тормоз</span></div>
+        <div><b>Бочка</b> — подскок и оборот влево или вправо, машину при этом сносит вбок на полосу-другую
+          <span class="combo only-keys"><kbd>Пробел</kbd> <kbd>Пробел</kbd> <kbd>A</kbd>/<kbd>D</kbd> или <kbd>←</kbd>/<kbd>→</kbd></span></div>
         <div>В полёте руль поворачивает машину боковыми соплами. Подскок — выше машин и автобусов, их можно перелететь.</div>
       </div>
       <button data-page="main" class="go">‹ Назад <kbd>Esc</kbd></button>
@@ -138,7 +140,7 @@ export class Menu {
       invite: s.copied ? 'ссылка скопирована' : 'скопировать ссылку',
       room: s.room,
       race: s.shared ? 'со всеми в комнате' : '',
-      tricks: 'kickflip, backflip',
+      tricks: 'kickflip, backflip, бочка',
       money: s.money,
       account: { in: this.account?.state().email, sent: 'письмо отправлено' }[this.account?.state().status] ?? 'войти по почте',
       nitro: s.nitro,

@@ -497,17 +497,19 @@ async function main() {
   let starting = true;
   const keys = new Set();
   const analog = { steer: null }; // сенсорный руль, -1..1; null — рулим клавишами
-  // Трюки — набором нажатий, как суперудар в файтинге: пробел, пробел, вперёд / назад — не дольше COMBO_MS.
+  // Трюки — набором нажатий, как суперудар в файтинге: пробел, пробел, вперёд / назад / вбок — не дольше COMBO_MS.
   // Нажатия, а не удержание: едешь с зажатым газом — отпусти и нажми снова.
   const TRICKS = [
     { seq: ['Space', 'Space', 'Up'], run: (dir) => car.kickflip(dir) },
     { seq: ['Space', 'Space', 'Down'], run: () => car.backflip() },
+    { seq: ['Space', 'Space', 'Left'], run: () => car.barrelRoll(-1) },
+    { seq: ['Space', 'Space', 'Right'], run: () => car.barrelRoll(1) },
   ];
   const COMBO_MS = 700;
   const combo = [];
   const press = (code) => {
     if (starting || menu.isOpen || garage.isOpen || race.state === 'countdown') return;
-    const k = code === 'KeyW' || code === 'ArrowUp' ? 'Up' : code === 'KeyS' || code === 'ArrowDown' ? 'Down' : code;
+    const k = { KeyW: 'Up', ArrowUp: 'Up', KeyS: 'Down', ArrowDown: 'Down', KeyA: 'Left', ArrowLeft: 'Left', KeyD: 'Right', ArrowRight: 'Right' }[code] ?? code;
     const t = performance.now();
     combo.push({ k, t });
     if (combo.length > 4) combo.shift();
@@ -987,7 +989,8 @@ async function main() {
     if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); }
   }
   // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху. Дрифт — drift.js.
-  const TRICK_PAY = { kick: 500, back: 700 }, OVER_PAY = 300;
+  const TRICK_PAY = { kick: 500, back: 700, roll: 600 }, OVER_PAY = 300;
+  const TRICK_NAME = { kick: 'kickflip', back: 'backflip', roll: 'бочка' };
   const ROOF_PAY = { car: 800, bus: 1200, tram: 1500, roof: 1000 };
   const ROOF_NAME = { car: 'на крышу машины', bus: 'на крышу автобуса', tram: 'на крышу трамвая', roof: 'на крышу дома' };
   const jumped = new Set();
@@ -1005,7 +1008,7 @@ async function main() {
     jumped.clear();
     // Посадка на крышу — сверху ещё (на трамвай и автобус дороже: попасть труднее).
     const roof = on ? ROOF_PAY[on] : 0;
-    wallet.earn(TRICK_PAY[kind] + n * OVER_PAY + roof, `${kind === 'kick' ? 'kickflip' : 'backflip'}${n ? ` над ${n} ${n === 1 ? 'машиной' : 'машинами'}` : ''}${on ? ` · ${ROOF_NAME[on]}` : ''}`);
+    wallet.earn(TRICK_PAY[kind] + n * OVER_PAY + roof, `${TRICK_NAME[kind]}${n ? ` над ${n} ${n === 1 ? 'машиной' : 'машинами'}` : ''}${on ? ` · ${ROOF_NAME[on]}` : ''}`);
   }
 
   const gauges = isTouch ? null : new Gauges($('tacho'));
