@@ -12,7 +12,8 @@ export class Menu {
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
   // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
-  // shared (гонка общая — в своей комнате на связи). money — баланс, nitro — цена долива баллона (или «полный»).
+  // shared (гонка общая — в своей комнате на связи). money — баланс, nitro — цена долива баллона (или «полный»),
+  // hopper — стоит ли «Кузнечик» (трюки).
   // account — вход по почте (account.js): { state() → { status, email, error }, start(), send(email), signOut() }.
   constructor({ actions, state, volume, radio, setName, account }) {
     this.account = account;
@@ -32,7 +33,7 @@ export class Menu {
       <button data-act="race">Новая гонка <b data-v="race"></b><kbd>N</kbd></button>
       <button data-act="respawn">На дорогу <kbd>R</kbd></button>
       <button data-act="nitro">Нитро в баллон <b data-v="nitro"></b></button>
-      <button data-act="garage">Гараж — выбор машины <kbd>G</kbd></button>
+      <button data-act="garage">Автосалон — машины и улучшения <kbd>G</kbd></button>
       <h3>Сеть <span data-v="net"></span></h3>
       <button data-page="name">Имя <b data-v="name"></b><i>›</i></button>
       <button data-act="invite">Позвать друзей <b data-v="invite"></b></button>
@@ -72,6 +73,8 @@ export class Menu {
       </div>
       <div class="page" data-page="tricks" hidden>
       <h2>Трюки</h2>
+      <p class="hint" data-show="no-hopper">Трюкам нужна система «Кузнечик» — струи на днище машины. Она продаётся в автосалоне
+        (<span class="only-keys"><kbd>G</kbd> или </span>«Автосалон» в меню) и ставится на машину.</p>
       <p class="hint">Набор — как суперудар: три нажатия подряд, быстро, не дольше 0,7 с. Газ или тормоз нажать
         заново, даже если уже держите.</p>
       <div class="tricks">
@@ -140,7 +143,7 @@ export class Menu {
       invite: s.copied ? 'ссылка скопирована' : 'скопировать ссылку',
       room: s.room,
       race: s.shared ? 'со всеми в комнате' : '',
-      tricks: 'kickflip, backflip, бочка',
+      tricks: s.hopper ? 'kickflip, backflip, бочка' : 'нужен «Кузнечик»',
       money: s.money,
       account: { in: this.account?.state().email, sent: 'письмо отправлено' }[this.account?.state().status] ?? 'войти по почте',
       nitro: s.nitro,
@@ -153,6 +156,7 @@ export class Menu {
       b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
+    this.el.querySelector('[data-show="no-hopper"]').hidden = s.hopper;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;
     for (const r of this.el.querySelectorAll('[data-vol]')) {
       const pct = Math.round(this.volume.get(r.dataset.vol) * 100);

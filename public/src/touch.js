@@ -52,7 +52,10 @@ export function setupTouch({ keys, analog, actions, press }) {
   const arm = (on) => { ctl.nitro = on; nitroBtn.classList.toggle('on', on); };
   nitroBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); arm(!ctl.nitro); });
   ui.querySelector('[data-key=KeyS]').addEventListener('pointerdown', () => arm(false));
-  ctl.update = (car) => { if (ctl.nitro && car.nitroLocked) arm(false); };
+  ctl.update = (car) => {
+    if (ctl.nitro && (car.nitroLocked || !car.nitroLevel)) arm(false);
+    nitroBtn.hidden = !car.nitroLevel; // нитро не куплено (автосалон)
+  };
 
   for (const b of ui.querySelectorAll('[data-act]')) {
     b.addEventListener('pointerdown', (e) => {

@@ -5,6 +5,9 @@ import * as THREE from 'three';
 const NITRO_K = 1.3;      // нитро: верхняя скорость ×1.3
 const NITRO_UNLOCK = 0.25; // после опустошения нитро снова доступно с этого запаса
 const NITRO_REFILL = 0.06; // 1/с: баллон сам наполняется, пока нитро не горит (~17 с с нуля); за деньги — сразу
+// Нитро и «Кузнечик» (струи для трюков) покупаются в автосалоне (shop.js), уровень 0 — не стоит.
+// По уровню нитро: расход баллона, 1/с, и скорость наполнения (доля NITRO_REFILL); «Кузнечик-М» — подскок выше (HOP_VY).
+const NITRO_BURN = [0, 0.35, 0.23], NITRO_FILL = [0, 1, 1.3], HOP_VY = [0, 1, 1.22];
 // Нитро само не восполняется — баллон заправляют за деньги на АЗС или в меню (fuel.js, money.js).
 // Вне дороги (трава, лес, пустырь): доля от максимальной скорости, разгона, сцепления; торможение грунтом.
 const OFF_SPEED = 0.45, OFF_ACCEL = 0.5, OFF_GRIP = 0.6, OFF_DRAG = 0.08;
@@ -126,13 +129,15 @@ export class Car {
     this.nitroBoost = 1; // во сколько раз быстрее наполняется нитро (отстающему в общей гонке — main.js)
   }
 
-  // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы).
+  // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы; nitro, hopper — уровни систем).
   setModel(model, stats) {
     this.model = model;
     this.maxSpeed = stats.kmh / 3.6;
     this.accel = ACCEL * stats.accel;
     this.grip = GRIP * stats.grip;
     this.eco = stats.eco ?? 1;
+    this.nitroLevel = stats.nitro ?? 1;
+    this.hopper = stats.hopper ?? 1;
   }
 
   place(x, z, heading) {
@@ -157,8 +162,9 @@ export class Car {
   get speed() { return this.vel.dot(this.forward); }
 
   // Начать трюк: kind 'kick' или 'roll' (dir — в какую сторону крутиться, ±1, 1 — вправо) или 'back'.
-  // Только с земли и не в воде.
+  // Только с земли и не в воде, и только с «Кузнечиком».
   #jump(kind, dir = 1) {
+    if (!this.hopper) return false;
     // С трамплина трюк можно начать в воздухе: оборот успевает за оставшийся полёт.
     if (this.air?.kind === 'ramp') {
       const a = this.air;
@@ -168,7 +174,8 @@ export class Car {
     }
     if (this.air || this.sink > 0 || this.drowned) return false;
     // a, w — угол и угловая скорость оборота; acc — угловое ускорение в долях полной тяги (± — раскрутка/торможение).
-    this.air = { kind, t: 0, vy: FLIP_VY, dur: 2 * FLIP_VY / FLIP_G, dir, a: 0, w: 0, acc: 0 };
+    const vy = FLIP_VY * HOP_VY[this.hopper];
+    this.air = { kind, t: 0, vy, dur: 2 * vy / FLIP_G, dir, a: 0, w: 0, acc: 0 };
     return true;
   }
   kickflip(dir) { return this.#jump('kick', dir || 1); }
@@ -205,14 +212,15 @@ export class Car {
     // нитро включалось бы каждый кадр на крохи восстановления).
     if (this.nitro <= 0) this.nitroLocked = true;
     else if (this.nitro >= NITRO_UNLOCK) this.nitroLocked = false;
-    const nitroOn = input.nitro && !this.nitroLocked && vf > 5;
+    const nitroOn = input.nitro && this.nitroLevel > 0 && !this.nitroLocked && vf > 5;
     this.boostT = Math.max(0, (this.boostT ?? 0) - dt);
     this.nitroOn = nitroOn || this.boostT > 0; // для пламени и камеры: ускоритель — тоже нитро
     const vf0 = vf;
     if (input.up || (input.down && vf <= 0.5)) {
       this.fuel = Math.max(0, this.fuel - (Math.abs(vf) * dt + 0.3 * dt) / TANK_M * this.eco * (nitroOn ? 3 : 1));
     }
-    this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -0.35 : NITRO_REFILL * this.nitroBoost) * dt));
+    const lvl = this.nitroLevel;
+    this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -NITRO_BURN[lvl] : NITRO_REFILL * NITRO_FILL[lvl] * this.nitroBoost) * dt));
     const top = (nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed) * (1 - (1 - OFF_SPEED) * off);
     const accel = this.accel * (1 - (1 - OFF_ACCEL) * off);
 

@@ -163,7 +163,8 @@ export class Fuel {
 
   // Стоим на территории АЗС — бак наполняется, потом баллон нитро. Платим по мере заправки (wallet —
   // money.js, полный бак — PRICES.tank); итог — одной плашкой, когда заправка кончилась. Денег нет, а бак
-  // почти пуст — заправщик наливает до EMERGENCY бесплатно (car.freeFuel — для надписи), нитро — только за деньги.
+  // почти пуст — заправщик наливает до EMERGENCY бесплатно (car.freeFuel — для надписи), нитро — только за деньги
+  // и только если оно стоит (shop.js).
   update(dt, car, wallet) {
     for (const s of this.stations) s.group.visible = Math.hypot(s.cx - car.pos.x, s.cz - car.pos.y) < 1500;
     const st = Math.abs(car.speed) < STOP_SPEED && car.sink === 0 ? this.inside(car.pos.x, car.pos.y) : null;
@@ -185,7 +186,7 @@ export class Fuel {
       car.fuel = Math.min(1, car.fuel + got);
       car.refueling = got > 0;
       car.broke = got < want && !car.freeFuel;
-    } else if (st && car.nitro < 1) {
+    } else if (st && car.nitroLevel > 0 && car.nitro < 1) { // нитро не куплено — нечего доливать
       const want = Math.min(1 - car.nitro, NITRO_RATE * dt), got = afford(want, PRICES.nitro);
       bill.nitro += got * PRICES.nitro;
       car.nitro += got;

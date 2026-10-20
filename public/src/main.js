@@ -4,7 +4,8 @@ import { MINIMAP_SCALE } from './build.js';
 import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
 import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates } from './vehicles.js';
-import { Garage, loadChoice, optionKey } from './garage.js';
+import { Garage, loadChoice, defaultChoice, optionKey } from './garage.js';
+import { tuned, ownsCar, grandfather } from './shop.js';
 import { Race, formatTime, LENGTHS } from './race.js';
 import { Ramps } from './ramps.js';
 import { Pickups, NITRO_GIVE } from './pickups.js';
@@ -140,18 +141,21 @@ async function main() {
   scene.add(landmarks.group);
   const minimap = new MinimapTiles(world);
 
-  // Своя машина: выбор из гаража (localStorage), по умолчанию — «Ода».
+  // Своя машина: выбор из гаража (localStorage), по умолчанию — стартовая (Москвич-412).
   await vehiclesReady;
-  const choice = loadChoice();
-  // Деньги (money.js). Детали, выбранные до появления денег, считаются купленными.
+  let choice = loadChoice();
+  // Деньги (money.js). Детали, выбранные до появления денег, считаются купленными; машина, на которой ездили
+  // до автосалона, — тоже, с нитро и «Кузнечиком» (shop.js). Не своя машина (вышли из аккаунта) — стартовая.
   const wallet = new Wallet($('money'), $('money-log'));
   if (wallet.fresh) {
     wallet.grant((MODELS[choice.model].options || []).map((o) => optionKey(choice.model, o.key, choice.options[o.key])));
   }
+  grandfather(wallet, choice.model);
+  if (!ownsCar(wallet, choice.model)) choice = { ...defaultChoice(), saved: choice.saved };
   const model = buildPlayerModel(choice.model, choice.color, choice.options);
   model.userData.perf = 'машина игрока';
   scene.add(model);
-  const car = new Car(world, model, MODELS[choice.model].stats);
+  const car = new Car(world, model, tuned(wallet, choice.model));
   const setVehicle = (key, color, options) => {
     scene.remove(car.model);
     car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
@@ -160,7 +164,7 @@ async function main() {
     setPlate(m, net.name);
     m.userData.perf = 'машина игрока';
     scene.add(m);
-    car.setModel(m, MODELS[key].stats);
+    car.setModel(m, tuned(wallet, key));
     net.setVehicle(key, color, options);
     nitroFx.attach(m);
     jetFx.attach(m);
@@ -218,6 +222,8 @@ async function main() {
   const garage = new Garage(choice, {
     wallet,
     onChange: setVehicle,
+    // Улучшение куплено — новые характеристики сразу (модель та же).
+    onUpgrade: () => { car.setModel(car.model, tuned(wallet, garage.choice.model)); game.account?.save(); },
     onClose: (changed) => {
       if (changed) track('car_select', { model: garage.choice.model, color: garage.choice.color });
       if (changed) game.account?.save();
@@ -446,8 +452,9 @@ async function main() {
     city: () => { clearTimeout(copied); copied = 0; net.join(CITY); },
     // Страница «Трюки» в меню (с плаката-подсказки).
     tricks: () => { menu.open(); sound.setPaused(true); menu.page('tricks'); },
-    // Нитро за деньги: долить баллон, на сколько хватает.
+    // Нитро за деньги: долить баллон, на сколько хватает. Нет нитро — в автосалон.
     nitro: () => {
+      if (!car.nitroLevel) { resume(); garage.open(); return; }
       const got = Math.min(1 - car.nitro, Math.max(0, wallet.balance) / PRICES.nitro);
       if (got * PRICES.nitro < 1) return;
       wallet.pay(Math.min(got * PRICES.nitro, wallet.balance), 'нитро');
@@ -488,7 +495,8 @@ async function main() {
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, debug: debug.on, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
-      money: formatMoney(wallet.balance), nitro: car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
+      money: formatMoney(wallet.balance), hopper: car.hopper > 0,
+      nitro: !car.nitroLevel ? 'не установлено — в автосалон' : car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
     setName: (v) => net.setName(v),
     account: { state: () => account ?? { status: 'out' }, start: () => account.start(), send: (e) => account.send(e), signOut: () => account.signOut() },
   });
@@ -497,10 +505,12 @@ async function main() {
   account = new Account({
     wallet,
     vehicle: () => garage.choice,
-    setVehicle: (v) => { if (garage.set(v)) setVehicle(garage.choice.model, garage.choice.color, garage.choice.options); },
+    // Машину из аккаунта — только если она своя (купленное к этому времени уже слито в кошелёк).
+    setVehicle: (v) => { if (MODELS[v.model] && ownsCar(wallet, v.model) && garage.set(v)) setVehicle(garage.choice.model, garage.choice.color, garage.choice.options); },
     onChange: () => menu.sync(),
   });
-  wallet.onChange = () => account.save();
+  // Покупки могли приехать из аккаунта — характеристики своей машины пересчитываем.
+  wallet.onChange = () => { account.save(); car.setModel(car.model, tuned(wallet, garage.choice.model)); };
   game.account = account;
   // Большая карта: значки — заправки, достопримечательности, камеры, другие игроки; маршрут гонки — жёлтым.
   citymap = new CityMap({
@@ -536,6 +546,7 @@ async function main() {
   ];
   const COMBO_MS = 700;
   const combo = [];
+  let hopperHint = -Infinity;
   const press = (code) => {
     if (starting || menu.isOpen || garage.isOpen || race.state === 'countdown') return;
     const k = { KeyW: 'Up', ArrowUp: 'Up', KeyS: 'Down', ArrowDown: 'Down', KeyA: 'Left', ArrowLeft: 'Left', KeyD: 'Right', ArrowRight: 'Right' }[code] ?? code;
@@ -545,6 +556,12 @@ async function main() {
     for (const { seq, run } of TRICKS) {
       const tail = combo.slice(-seq.length);
       if (tail.length < seq.length || tail.some((c, i) => c.k !== seq[i]) || t - tail[0].t > COMBO_MS) continue;
+      // Без «Кузнечика» трюков нет — подсказка, где его взять (не чаще раза в 4 с).
+      if (!car.hopper) {
+        combo.length = 0;
+        if (t - hopperHint > 4000) { hopperHint = t; notice(`Трюкам нужна система «Кузнечик» — она в автосалоне${isTouch ? ' (меню → автосалон)' : ' (G)'}`); }
+        return;
+      }
       // Сторона оборота — куда рулишь; руль прямо — наугад.
       const st = analog.steer ?? (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
       if (run(Math.sign(st) || (Math.random() < 0.5 ? -1 : 1))) combo.length = 0;
@@ -1055,6 +1072,7 @@ async function main() {
     $('speed').textContent = Math.round(Math.abs(car.speed) * 3.6);
     $('nitro-fill').style.width = `${car.nitro * 100}%`;
     $('nitro').classList.toggle('locked', !!car.nitroLocked); // пусто — ждём четверть баллона
+    $('nitro').hidden = !car.nitroLevel; // нитро не куплено
     touch.update(car);
     const r = world.nearestRoad(car.pos.x, car.pos.y, 12);
     const street = r?.seg.road.name;
@@ -1225,7 +1243,10 @@ async function main() {
     if (!garage.isOpen) race.update(dt, car); // в гараже гонка на паузе
     // Канистры и трамплины на трассе — пока едем гонку; кончилась — убираем.
     if (race.state === 'running') {
-      for (let n = pickups.update(dt, car); n > 0; n--) { car.nitro = Math.min(1, car.nitro + NITRO_GIVE); wallet.say('🔷 нитро', `+${NITRO_GIVE * 100}%`); }
+      for (let n = pickups.update(dt, car); n > 0; n--) {
+        if (!car.nitroLevel) { wallet.say('🔷 канистра', 'нитро не установлено — в автосалон'); continue; }
+        car.nitro = Math.min(1, car.nitro + NITRO_GIVE); wallet.say('🔷 нитро', `+${NITRO_GIVE * 100}%`);
+      }
     } else if (race.state !== 'countdown' && (pickups.items.length || ramps.list.length)) { pickups.clear(); ramps.clear(); }
     signals.update(dt);
     fines(dt);
