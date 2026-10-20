@@ -1,5 +1,5 @@
-// Мультиплеер через Firebase Realtime Database: каждый считает свою машину сам и 10 раз в секунду
-// пишет её положение в rooms/<комната>/players/<uid>; чужие машины плавно едут между полученными
+// Мультиплеер через Firebase Realtime Database: каждый считает свою машину сам и 10 раз в секунду (один
+// в комнате — раз в 4 с) пишет её положение в rooms/<комната>/players/<uid>; чужие машины плавно едут между полученными
 // точками. Столкновения каждый считает сам: свою машину отталкивает от того, где видит чужую, — и
 // у того, в кого врезались, его игра так же оттолкнёт его машину от нашей.
 // Общая гонка — rooms/<комната>/race: { a, b — узлы старта и финиша, t — старт по часам сервера,
@@ -11,6 +11,10 @@ import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates, optio
 
 export const CITY = 'city'; // общий город — комната по умолчанию
 const SEND_EVERY = 0.1;      // с
+// с: один в комнате (ни от кого нет обновлений STALE) — пишем себя только так редко, экономия лимита базы.
+// Не реже STALE: зашедший или вернувшийся во вкладку должен увидеть, что мы тут, и начать слать — тогда и мы
+// перейдём на SEND_EVERY.
+const HEARTBEAT = 4;
 const DELAY = 150;           // мс: показываем чужие машины с запасом на неровную доставку
 const EXTRAPOLATE = 250;     // мс: дольше нет данных — машина стоит в последней точке
 const LABEL_DIST = 600;      // м: дальше ник не показываем
@@ -190,10 +194,17 @@ export class Net {
     this.sendT = 0;
   }
 
-  // Раз в кадр: своё положение — в базу (10 раз в секунду), чужие машины — на места.
+  // Никто в комнате не шлёт обновлений — смотреть на нашу машину некому.
+  #alone(now) {
+    for (const g of this.ghosts.values()) if (now - g.at <= STALE) return false;
+    return true;
+  }
+
+  // Раз в кадр: своё положение — в базу (10 раз в секунду, одному — раз в HEARTBEAT), чужие машины — на места.
   update(dt, car) {
+    const now = performance.now();
     if (this.me && (this.sendT -= dt) <= 0) {
-      this.sendT = SEND_EVERY;
+      this.sendT = this.#alone(now) ? HEARTBEAT : SEND_EVERY;
       const f = (v, n = 2) => +v.toFixed(n);
       const s = [f(car.pos.x), f(car.y), f(car.pos.y), f(car.heading, 3), f(wrap(car.pitch - car.flipP), 3), f(wrap(car.roll + car.flip), 3),
         f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts].join(',');
@@ -206,7 +217,6 @@ export class Net {
         this.writeErr = true;
       });
     }
-    const now = performance.now();
     for (const g of this.ghosts.values()) this.#place(g, now, dt, car);
     this.#collide(car);
   }
@@ -267,6 +277,8 @@ export class Net {
     const last = g.buf.at(-1);
     if (last && t < last.t - 1000) { g.buf = []; g.offset = Infinity; } // у игрока перезагрузилась вкладка
     if (last && t <= last.t) return;
+    // Были одни (слали редко), а тут кто-то шлёт — сразу переходим на частые обновления.
+    if (this.#alone(performance.now())) this.sendT = 0;
     // Часы у игроков свои: смещение — наименьшее «пришло − отправлено» (сдвиг часов + самая быстрая доставка).
     g.offset = Math.min(g.offset, performance.now() - t);
     g.at = performance.now();
