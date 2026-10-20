@@ -5,8 +5,9 @@
 import * as THREE from 'three';
 
 const CITY_LIMIT = 60;    // км/ч в населённом пункте (ПДД 10.2)
-const ZONE = 22;          // м: проехал ближе — камера сняла
+const ZONE = 22;          // м до столба: ближе, едучи на объектив, — камера снимает
 const WARN = 260;         // м: заранее показываем знак камеры
+const FACING = 0.5;       // cos угла: курс навстречу объективу не дальше ~60° от прямого
 const COOLDOWN = 20;      // с: одна камера не штрафует чаще
 const KEEP = 0.4;         // доля перекрёстков с камерой (игровые места)
 const MAJOR = new Set(['trunk', 'primary', 'secondary', 'trunk_link', 'primary_link']);
@@ -74,28 +75,34 @@ export class Cameras {
     }
   }
 
-  // Ближайшая камера впереди в пределах WARN — для знака на экране: { cam, d } или null.
+  // Расстояние до столба, если машина перед объективом (по ту сторону столба, куда смотрит камера) и едет
+  // на него (курс навстречу, объектив смотрит по (sin face, cos face)); проехали столб, сзади, мимо — Infinity.
+  #facing(c, car) {
+    const [px, pz] = c.pole, dx = px - car.pos.x, dz = pz - car.pos.y;
+    if (Math.abs(dx) > WARN || Math.abs(dz) > WARN) return Infinity;
+    const lx = Math.sin(c.face), lz = Math.cos(c.face), f = car.forward;
+    if (-dx * lx - dz * lz <= 0 || f.x * lx + f.y * lz >= -FACING) return Infinity;
+    return Math.hypot(dx, dz);
+  }
+
+  // Ближайшая камера в пределах WARN, на объектив которой едем, — для знака на экране: { cam, d } или null.
   ahead(car) {
-    const f = car.forward;
     let best = null, bd = WARN;
     for (const c of this.list) {
-      const dx = c.x - car.pos.x, dz = c.z - car.pos.y;
-      if (Math.abs(dx) > WARN || Math.abs(dz) > WARN) continue;
-      const d = Math.hypot(dx, dz);
-      if (d < bd && (d < ZONE || (dx * f.x + dz * f.y) / d > 0.5)) { bd = d; best = c; }
+      const d = this.#facing(c, car);
+      if (d < bd) { bd = d; best = c; }
     }
     return best && { cam: best, d: bd };
   }
 
-  // Проезд мимо камеры: пока в зоне, запоминаем наибольшую скорость; выехал — штраф по ней.
-  // Возвращает { cam, kmh, over } при превышении больше 20 км/ч, иначе null.
+  // Проезд камеры: пока едем на неё и до столба меньше ZONE, запоминаем наибольшую скорость; проехали
+  // столб (или ушли из зоны) — штраф по ней. Возвращает { cam, kmh, over } при превышении больше 20 км/ч, иначе null.
   update(dt, car) {
     this.time += dt;
     const kmh = Math.abs(car.speed) * 3.6;
     let shot = null;
     for (const c of this.list) {
-      const d = Math.hypot(c.x - car.pos.x, c.z - car.pos.y);
-      if (d < ZONE && !car.air) c.max = Math.max(c.max ?? 0, kmh);
+      if (this.#facing(c, car) < ZONE && !car.air) c.max = Math.max(c.max ?? 0, kmh);
       else if (c.max !== undefined) {
         const over = c.max - c.lim;
         if (over > 20 && this.time - (c.shotAt ?? -99) > COOLDOWN) {

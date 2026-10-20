@@ -1066,7 +1066,9 @@ async function main() {
     cw.hidden = !cam || garage.isOpen;
     if (cam) {
       cw.innerHTML = `📷 <b>${cam.cam.lim}</b><small>${cam.d < 25 ? 'камера' : fmtDist(cam.d)}</small>`;
-      cw.classList.toggle('fast', Math.abs(car.speed) * 3.6 > cam.cam.lim + 20);
+      const kmh = Math.abs(car.speed) * 3.6;
+      cw.classList.toggle('over', kmh > cam.cam.lim);
+      cw.classList.toggle('fast', kmh > cam.cam.lim + 20); // столько камера штрафует (cameras.js)
     }
     document.body.classList.toggle('no-race', race.state === 'idle');
     roster();

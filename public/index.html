@@ -165,14 +165,17 @@
     @keyframes note-in { from { opacity: 0; transform: translateX(12px); } }
     body.in-garage #money-log, body.in-menu #money-log { display: none; }
     /* Камера впереди (cameras.js): знак с пределом скорости. */
-    #camwarn { right: 28px; bottom: 178px; display: flex; align-items: center; gap: 6px; font-size: 20px; background: rgba(0,0,0,.45); padding: 4px 10px;
-      border-radius: 8px; }
+    /* По центру над дорогой; быстрее предела — мигает красным, на штраф (больше чем на 20) — ещё и пульсирует. */
+    #camwarn { left: 50%; top: 24%; translate: -50% 0; display: flex; align-items: center; gap: 8px; font-size: 26px; background: rgba(0,0,0,.45);
+      padding: 6px 14px; border-radius: 10px; }
     #camwarn[hidden] { display: none; }
-    #camwarn b { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 4px solid #e0261b; background: #fff;
-      color: #111; font-size: 15px; box-sizing: border-box; }
-    #camwarn small { font-size: 13px; opacity: .8; }
-    #camwarn.fast { background: rgba(200,30,20,.75); animation: pulse-cam .6s ease-in-out infinite; }
-    @keyframes pulse-cam { 50% { transform: scale(1.06); } }
+    #camwarn b { display: inline-grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; border: 5px solid #e0261b; background: #fff;
+      color: #111; font-size: 19px; box-sizing: border-box; }
+    #camwarn small { font-size: 16px; opacity: .85; }
+    #camwarn.over { animation: blink-cam .5s steps(1) infinite; }
+    #camwarn.fast { animation: blink-cam .5s steps(1) infinite, pulse-cam .5s ease-in-out infinite; }
+    @keyframes blink-cam { 50% { background: rgba(215,30,20,.85); } }
+    @keyframes pulse-cam { 50% { scale: 1.08; } }
     #money-log .info { background: rgba(30,90,150,.85); }
     /* Большая карта (citymap.js): холст на весь экран, сверху — строка с маршрутом и кнопками. */
     #citymap { position: fixed; inset: 0; z-index: 17; display: none; background: #15181b; touch-action: none; }
@@ -361,8 +364,9 @@
     body.touch #race-btn kbd { display: none; }
     body.touch #money { right: calc(10px + env(safe-area-inset-right)); top: calc(54px + env(safe-area-inset-top)); font-size: 15px; padding: 2px 8px; }
     body.touch #money-log { top: calc(64px + env(safe-area-inset-top)); font-size: 13px; }
-    body.touch #camwarn { right: auto; bottom: auto; left: calc(146px + env(safe-area-inset-left)); top: calc(166px + env(safe-area-inset-top)); font-size: 14px; padding: 2px 8px; }
-    body.touch #camwarn b { width: 26px; height: 26px; border-width: 3px; font-size: 11px; }
+    body.touch #camwarn { top: 22%; font-size: 16px; padding: 3px 10px; gap: 6px; }
+    body.touch #camwarn b { width: 32px; height: 32px; border-width: 3px; font-size: 13px; }
+    body.touch #camwarn small { font-size: 12px; }
     body.touch #roster { right: calc(10px + env(safe-area-inset-right)); top: calc(84px + env(safe-area-inset-top)); font-size: 12px; min-width: 120px; padding: 4px 8px; }
     body.touch #roster em { font-size: 11px; }
     /* Улица — слева под таймером: в центре сверху на узком экране мешают кнопки. */
