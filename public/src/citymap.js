@@ -465,15 +465,24 @@ export class CityMap {
 
   // Маршрут от машины до места (x, z): до ближайшего к нему места на улице (у дома — лучше на улице
   // его адреса), на своей полосе; дальше до самого места — пунктиром на карте. false — туда не проехать.
+  // Место в другом куске графа (окраина, связанная с городом дорогой за краем карты) — маршрут до ближайшего
+  // к нему места своего куска, дальше пунктир напрямик.
   go(x, z, name, street = null) {
-    const end = this.world.navEnd(x, z, street, SNAP);
+    const w = this.world, part = w.partAt(this.car.pos.x, this.car.pos.y);
+    let end = w.navEnd(x, z, street, SNAP, part), cut = false;
+    if (!end && w.navEnd(x, z, street, SNAP)) {
+      const n = w.nearestInPart(x, z, part);
+      end = n >= 0 ? w.navEnd(...w.nodes[n], null, 60, part) : null;
+      cut = !!end;
+    }
     if (!end) return this.#info('Туда не проехать — выберите место у дороги'), false;
     const route = this.route(end);
     if (!route) return this.#info('Маршрут не найден'), false;
     const [ex, ez] = route[route.length - 1];
     this.target = { x: ex, z: ez, place: [x, z], name, end, route };
     this.onRoute(route, this.target);
-    this.draw();
+    if (cut) this.#info('Дорога туда — за краем карты: маршрут до ближайшего места, дальше напрямик');
+    else this.draw();
     return true;
   }
 
