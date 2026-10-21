@@ -45,6 +45,9 @@ const M = {
   warmBrick: lambert('#c65d3c'),
   signalRed: lambert('#d23a2a'),
   marble: lambert('#f1e6da'),
+  rust: lambert('#a35a3a'),
+  peach: lambert('#e9c6b3'),
+  slateDark: lambert('#5a5c60'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -485,6 +488,9 @@ function tri(b, h, depth, mat, y, z) {
   const s = new THREE.Shape([new THREE.Vector2(-b, 0), new THREE.Vector2(b, 0), new THREE.Vector2(0, h)]);
   return mesh(new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: false }), mat, 0, y, z);
 }
+
+// Полукруг радиуса r толщиной d лицом в +z (щипец, тимпан арки), центр — середина основания.
+const halfDisc = (r, d, mat) => mesh(new THREE.CylinderGeometry(r, r, d, 14, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(-Math.PI / 2), mat);
 
 // Арочное окно лицом в +z (archWindow смотрит в +x).
 const archWindowZ = (w, h) => {
@@ -1715,7 +1721,6 @@ function stadium(pl) {
 function station(L, W, f) {
   const g = new THREE.Group();
   const H = 11, stone = M.marble, red = M.terra;
-  const half = (r, d, mat) => mesh(new THREE.CylinderGeometry(r, r, d, 14, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(-Math.PI / 2), mat);
   g.add(box(L, 4.2, W, M.darkBrick, 0, -3, 0));
   g.add(box(L - 0.2, H - 1.2, W - 0.2, stone, 0, 1.2, 0));
   g.add(box(L + 0.4, 0.6, W + 0.4, M.white, 0, H, 0));
@@ -1730,7 +1735,7 @@ function station(L, W, f) {
     for (let x = -L / 2 + pw + 2; x < L / 2 - pw - 1; x += 3.6) {
       if (!inWing(x)) continue;
       face(archWindowZ(1.6, 5).translateX(x).translateY(1.8));
-      const q = half(1.6, 0.5, stone);
+      const q = halfDisc(1.6, 0.5, stone);
       q.position.set(x, H + 0.6, 0);
       face(q);
       face(mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.2, 12).rotateX(Math.PI / 2), M.glass, x, H + 1.3, 0.3));
@@ -1741,7 +1746,7 @@ function station(L, W, f) {
       const x = e * (L / 2 - pw / 2);
       face(box(pw, H + 2.6, 1.2, stone, x, -3, 0.3));
       for (const y of [2, 6.8]) face(box(1.4, 2.6, 0.2, M.glass, x, y, 0.95));
-      const q = half(pw / 2, 0.6, stone);
+      const q = halfDisc(pw / 2, 0.6, stone);
       q.position.set(x, H - 0.4 + 0.4, 0.3);
       face(q);
       face(mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.2, 12).rotateX(Math.PI / 2), M.glass, x, H + 1.2, 0.7));
@@ -1751,7 +1756,7 @@ function station(L, W, f) {
     face(box(cw + 0.5, 0.6, 2, M.white, xc, Hc, 0.5));
     face(archWindowZ(4, 6).translateX(xc).translateY(2.2).translateZ(1.32));
     for (const dx of [-4.5, 4.5]) for (const y of [2.5, 7.5, 11.5]) face(box(1.2, 2, 0.2, M.glass, xc + dx, y, 1.32));
-    const q = half(3.2, 0.6, stone);
+    const q = halfDisc(3.2, 0.6, stone);
     q.position.set(xc, Hc + 0.6, 0.6);
     face(q);
     face(mesh(new THREE.CylinderGeometry(1, 1, 0.2, 16).rotateX(Math.PI / 2), M.white, xc, Hc + 1.8, 0.95));
@@ -1772,6 +1777,139 @@ function station(L, W, f) {
   merged.add(sign('ВОКЗАЛ', 6, 0.9, xc, Hc - 3.4, f * (W / 2 + 1.36), f, '#ebe5da'));
   merged.add(sign('ИЖЕВСК', 6, 0.9, xc, Hc - 3.4, -f * (W / 2 + 1.36), -f, '#ebe5da'));
   return merged;
+}
+
+// Генеральский дом (Милиционная, 4; по фото): двухэтажный охристый дом начала XIX века по контуру,
+// белые тяги, карниз, лопатки на углах и наличники, рыжая скатная кровля; на фасаде к улице —
+// чугунный балкон на кованых кронштейнах. (fx, fz) — направление к улице.
+function general(pl, fx, fz) {
+  const g = new THREE.Group(), H = 8.6;
+  g.add(prism(pl, -3, 3.6, M.stone));
+  g.add(prism(pl, 0.6, H - 0.6, M.ochre));
+  g.add(prism(pl, 3.9, 0.35, M.white, 0.12));
+  g.add(prism(pl, H, 0.5, M.white, 0.3));
+  g.add(insetRoof(pl, 5, 2.4, H + 0.5, M.rust));
+  contourWindows(g, pl, [[1.2, 1.8], [4.9, 2]], { step: 3.4, w: 1.3 });
+  let front = null;
+  contourEdges(pl, (e) => {
+    if (e.ox * fx + e.oz * fz > 0.6 && (!front || e.len > front.len)) front = e;
+    if (e.len < 2) return;
+    for (const t of [0.4, e.len - 0.4]) g.add(onEdge(box(0.8, H - 0.6, 0.25, M.white, 0, 0.6, 0), e, t, 0.1));
+  });
+  if (front) {
+    const b = new THREE.Group(), w = 7;
+    b.add(box(w, 0.25, 1.5, M.stone, 0, 4.3, 0.75));
+    b.add(box(w, 0.08, 0.08, M.dark, 0, 5.3, 1.45));
+    for (let i = 0; i <= 14; i++) b.add(box(0.05, 1, 0.05, M.dark, -w / 2 + (i * w) / 14, 4.55, 1.45));
+    for (const x of [-w / 2 + 0.6, -w / 6, w / 6, w / 2 - 0.6]) {
+      const k = box(0.1, 1.2, 0.1, M.dark, 0, 0, 0);
+      k.position.set(x, 3.75, 0.65);
+      k.rotation.x = 0.85;
+      b.add(k);
+    }
+    g.add(onEdge(b, front, front.len * 0.35));
+  }
+  return mergeByMaterial(g);
+}
+
+// Пригородный вокзал (по фото): розово-бежевый корпус с тёмно-красным цоколем, ряд высоких арочных
+// окон с белыми лопатками, над карнизом — полукруглые щипцы с круглыми окошками; ближе к середине —
+// высокий объём с полукруглым верхом и огромным арочным витражом. К площади (f = ±1 по z) — надпись
+// «ПРИГОРОДНЫЙ ВОКЗАЛ» и козырёк на тёмно-красных столбах, к путям — «ИЖЕВСК».
+function suburban(L, W, f) {
+  const g = new THREE.Group(), H = 10, wall = M.peach;
+  g.add(box(L, 4, W, M.darkBrick, 0, -3, 0));
+  g.add(box(L - 0.2, H - 1, W - 0.2, wall, 0, 1, 0));
+  g.add(box(L + 0.4, 0.5, W + 0.4, M.white, 0, H, 0));
+  g.add(box(L - 0.6, 0.8, W - 0.6, M.silver, 0, H + 0.5, 0));
+  const xc = -L * 0.12, cw = 9;
+  for (const s of [-1, 1]) {
+    const z = s * (W / 2 - 0.08);
+    const face = (obj) => { if (s < 0) obj.rotation.y = Math.PI; obj.position.z = z + s * obj.position.z; g.add(obj); return obj; };
+    let k = 0;
+    for (let x = -L / 2 + 2.5; x < L / 2 - 2; x += 4.2, k++) {
+      if (Math.abs(x - xc) < cw / 2 + 1.2) continue;
+      face(archWindowZ(2.2, 6).translateX(x).translateY(1.6));
+      face(box(0.7, H - 1, 0.25, M.white, x + 2.1, 1, 0.1));
+      if (k % 2) continue;
+      const q = halfDisc(1.3, 0.4, wall);
+      q.position.set(x, H + 0.5, 0);
+      face(q);
+      face(mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.2, 12).rotateX(Math.PI / 2), M.glass, x, H + 1.1, 0.2));
+    }
+    face(box(cw, H + 5, 1, wall, xc, -3, 0.4));
+    face(archWindowZ(4.4, 9).translateX(xc).translateY(1.6).translateZ(0.92));
+    const rim = halfDisc(cw / 2 + 0.3, 0.4, M.white);
+    rim.position.set(xc, H + 2, 0.5);
+    face(rim);
+    const top = halfDisc(cw / 2, 0.6, wall);
+    top.position.set(xc, H + 2, 0.6);
+    face(top);
+  }
+  // Козырёк входа со стороны площади.
+  g.add(box(8, 0.5, 4.2, M.white, xc, 3.8, f * (W / 2 + 2.1)));
+  g.add(box(8.1, 0.25, 4.3, M.terra, xc, 3.75, f * (W / 2 + 2.1)));
+  for (const x of [-3.4, 3.4]) g.add(box(0.6, 3.8, 0.6, M.terra, xc + x, 0, f * (W / 2 + 3.7)));
+  const merged = mergeByMaterial(g);
+  merged.add(sign('ПРИГОРОДНЫЙ ВОКЗАЛ', 11, 0.9, xc, H - 2.4, f * (W / 2 + 1.06), f, '#e8c7b6'));
+  merged.add(sign('ИЖЕВСК', 5, 0.9, xc, H - 2.4, -f * (W / 2 + 1.06), -f, '#e8c7b6'));
+  return merged;
+}
+
+// Театр кукол (Ломоносова, 9; по фото): светлый корпус с тёмным каменным низом, белыми тягами,
+// арочными окнами-витражами и рядом окошек с треугольными навершиями под карнизом. На фасаде к улице —
+// сказочная краснокирпичная башня с белыми углами: арка входа, кованый балкон, три арочки, розетка,
+// зубчатый парапет, зелёный шатёр с флюгером и две башенки. (fx, fz) — направление к улице.
+function puppets(pl, fx, fz) {
+  const g = new THREE.Group(), H = 12;
+  g.add(prism(pl, -3, 5, M.slateDark));
+  g.add(prism(pl, 2, H - 2, M.beige));
+  g.add(prism(pl, 2, 0.6, M.white, 0.35));
+  g.add(prism(pl, H, 0.5, M.white, 0.2));
+  const small = (h) => {
+    const o = new THREE.Group();
+    o.add(box(1.7, h + 0.4, 0.12, M.white, 0, -0.2, 0));
+    o.add(box(1.3, h, 0.16, M.glass, 0, 0, 0.02));
+    o.add(tri(1.05, 0.6, 0.15, M.white, h + 0.2, -0.05));
+    return o;
+  };
+  contourWindows(g, pl, [[H - 2.8, 1.3]], { step: 3, make: small });
+  contourWindows(g, pl, [[4.4, 3.2]], { step: 7, make: (h) => archWindowZ(1.3, h) });
+  let front = null;
+  contourEdges(pl, (e) => { if (e.ox * fx + e.oz * fz > 0.6 && (!front || e.len > front.len)) front = e; });
+  if (!front) contourEdges(pl, (e) => { if (!front || e.len > front.len) front = e; });
+  const t = new THREE.Group(), w = 6.5, Ht = 13;
+  t.add(box(w, Ht + 3, w, M.warmBrick, 0, -3, -w / 2 + 2));
+  for (const x of [-w / 2, w / 2]) t.add(box(0.8, Ht, 0.8, M.white, x, 0, 2));
+  t.add(halfDisc(1.8, 0.2, M.white).translateY(3.2).translateZ(2.02));
+  t.add(halfDisc(1.4, 0.2, M.darkBrick).translateY(3.2).translateZ(2.08));
+  t.add(box(2.8, 3.2, 0.2, M.darkBrick, 0, 0, 2.08));
+  t.add(box(w + 1, 0.35, 1.8, M.white, 0, 5.4, 2.9));
+  t.add(box(w + 1, 0.9, 0.08, M.dark, 0, 5.75, 3.75));
+  for (const x of [-1.6, 0, 1.6]) {
+    t.add(box(0.9, 1.5, 0.2, M.dark, x, 6.4, 2.06));
+    t.add(halfDisc(0.45, 0.2, M.dark).translateX(x).translateY(7.9).translateZ(2.06));
+  }
+  t.add(mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.2, 18).rotateX(Math.PI / 2), M.white, 0, 10.4, 2.06));
+  t.add(mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.25, 8).rotateX(Math.PI / 2), M.signalRed, 0, 10.4, 2.12));
+  t.add(box(w + 0.6, 0.6, w + 0.6, M.white, 0, Ht, -w / 2 + 2));
+  for (let i = 0; i < 4; i++) for (const k of [-1, 1]) {
+    const m = box(0.7, 0.7, 0.4, M.white, 0, Ht + 0.6, 0);
+    const a = (i * Math.PI) / 2, r = w / 2 + 0.1, u = k * w * 0.25;
+    m.position.set(Math.sin(a) * r + Math.cos(a) * u, Ht + 0.95, -w / 2 + 2 + Math.cos(a) * r - Math.sin(a) * u);
+    m.rotation.y = a;
+    t.add(m);
+  }
+  t.add(cone(w * 0.45, 8, M.teal, 0, Ht + 0.6, -w / 2 + 2, 8));
+  t.add(cyl(0.05, 1.5, M.gold, 0, Ht + 8.6, -w / 2 + 2, 4));
+  t.add(box(1, 0.6, 0.06, M.gold, 0.4, Ht + 9.5, -w / 2 + 2));
+  for (const x of [-w / 2, w / 2]) {
+    t.add(cyl(0.6, 1.6, M.white, x, Ht + 0.6, 2, 8));
+    t.add(cone(0.8, 2.8, M.teal, x, Ht + 2.2, 2, 8));
+  }
+  for (let i = 0; i < 4; i++) t.add(box(16, 0.25, 1, M.stone, 0, -0.25 + i * 0.25, 7 - i * 1)); // ступени
+  g.add(onEdge(t, front, front.len * 0.3, 0.5));
+  return mergeByMaterial(g);
 }
 
 function plantTower() {
@@ -2073,10 +2211,18 @@ export function buildLandmarks(world) {
         obj = place(plantMain(toLocal(p, f), t.x - f.cx, t.z - f.cz), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
-      case 'station': {
-        // «ВОКЗАЛ» — к привокзальной площади на западе, «ИЖЕВСК» — к путям на востоке.
+      case 'station':
+      case 'suburban': {
+        // Надписи «ВОКЗАЛ» / «ПРИГОРОДНЫЙ ВОКЗАЛ» — к привокзальной площади на западе, «ИЖЕВСК» — к путям на востоке.
         const f = fit(p, longestEdgeAngle(p)), side = Math.sin(f.angle) > 0 ? 1 : -1; // знак (−1, 0)·(локальная z)
-        obj = place(station(f.L, f.W, side), f.cx, baseY(world, p), f.cz, f.angle);
+        obj = place({ station, suburban }[lm.key](f.L, f.W, side), f.cx, baseY(world, p), f.cz, f.angle);
+        break;
+      }
+      case 'general':
+      case 'puppets': {
+        const [fx, fz] = lm.key === 'general' ? toStreet(world, lm, /Милиционная/, -1, 0) : toStreet(world, lm, /Ломоносова/, 0, 1);
+        const f = fit(p, 0);
+        obj = place({ general, puppets }[lm.key](toLocal(p, f), fx, fz), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
       case 'stadium': {

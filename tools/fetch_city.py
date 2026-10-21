@@ -263,6 +263,9 @@ LANDMARKS = {
     "water_tower": ("way", 94987736, "Водонапорная башня 1915 года", "replace"),
     "stadium": ("relation", 9095830, "Центральный республиканский стадион", "replace"),
     "station": ("way", 48500412, "Железнодорожный вокзал", "replace"),
+    "suburban": ("way", 48500411, "Пригородный вокзал", "replace"),
+    "general": ("way", 168292306, "Генеральский дом", "replace"),
+    "puppets": ("way", 48560212, "Театр кукол", "replace"),
 }
 LANDMARK_BY_ELEMENT = {(t, i): key for key, (t, i, _, _) in LANDMARKS.items()}
 
