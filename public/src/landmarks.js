@@ -4,8 +4,20 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { World } from './world.js';
 import { grandLayout } from './walks.js';
+import { NIGHT, GlowBuilder, glowMaterial } from './night.js';
 
 const lambert = (color, extra = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
+// Стекло фонаря: днём чуть светится, ночью — в полную (NIGHT — общий uniform, смена дня и ночи без перекомпиляции).
+function nightLit(color, emissive) {
+  const m = lambert(color, { emissive });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uNight = NIGHT;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uNight;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= 0.15 + 0.85 * uNight;');
+  };
+  return m;
+}
 const M = {
   brick: lambert('#a8452f'),
   white: lambert('#f2eee4'),
@@ -54,7 +66,7 @@ const M = {
   redGranite: lambert('#8c4a3e'),
   stair: lambert('#a89f95'),
   iron: lambert('#1e2325'),
-  lantern: lambert('#f1e2b0', { emissive: '#3b2e08' }),
+  lantern: nightLit('#f1e2b0', '#ffd27a'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -2507,6 +2519,93 @@ function railMaterial() {
   return railMat;
 }
 
+// Клумба-узор на газоне у лестницы (по фото): кайма из белого камня, по зелени — ромбы из красных цветов с жёлтой
+// серединой, между ними круги из лиловых, вдоль — волна из белых. Текстура на всю клумбу (u — вдоль, LEN м).
+let bedMat = null;
+const BED_LEN = 36, BED_W = 4.5;
+function flowerBedMaterial() {
+  if (bedMat) return bedMat;
+  const W = 1024, H = Math.round((W * BED_W) / BED_LEN), c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d');
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  g.fillStyle = '#4f7d34';
+  g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 3000; i++) { // трава неровная
+    g.fillStyle = rnd() < 0.5 ? '#5a8a3b' : '#44702c';
+    g.fillRect(rnd() * W, rnd() * H, 2, 2);
+  }
+  // Цветы — фигура path цветом colors[0] и мелкие точки остальных внутри (clip): издали узор, вблизи — цветник.
+  const flowers = (path, colors, n) => {
+    g.save();
+    path();
+    g.clip();
+    g.fillStyle = colors[0];
+    g.fillRect(0, 0, W, H);
+    for (let i = 0; i < n; i++) {
+      g.fillStyle = colors[Math.floor(rnd() * colors.length)];
+      g.beginPath();
+      g.arc(rnd() * W, rnd() * H, 1.4 + rnd() * 1.2, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.restore();
+  };
+  const step = W / 6, m = H / 2, r = H * 0.36;
+  for (let i = 0; i < 6; i++) {
+    const x = step * (i + 0.5);
+    const diamond = (k) => () => { g.beginPath(); g.moveTo(x - r * 1.5 * k, m); g.lineTo(x, m - r * k); g.lineTo(x + r * 1.5 * k, m); g.lineTo(x, m + r * k); g.closePath(); };
+    flowers(diamond(1), ['#c8202a', '#e0303a', '#a3151f'], 2600);
+    flowers(diamond(0.4), ['#f4c430', '#ffd84a'], 600);
+    for (const dx of [-step / 2, step / 2]) {
+      if (x + dx < 0 || x + dx > W) continue;
+      flowers(() => { g.beginPath(); g.arc(x + dx, m, r * 0.55, 0, Math.PI * 2); }, ['#8a4fc0', '#a56ad6', '#6f3aa0'], 700);
+    }
+  }
+  flowers(() => {
+    g.beginPath();
+    for (let x = 0; x <= W; x += 4) g.lineTo(x, m + Math.sin((x / step) * Math.PI * 2) * r * 1.15 - 3);
+    for (let x = W; x >= 0; x -= 4) g.lineTo(x, m + Math.sin((x / step) * Math.PI * 2) * r * 1.15 + 3);
+    g.closePath();
+  }, ['#f4f1e6', '#fff'], 1500);
+  g.strokeStyle = '#e8e4d8';
+  g.lineWidth = 5;
+  g.strokeRect(2.5, 2.5, W - 5, H - 5);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  bedMat = new THREE.MeshLambertMaterial({ map: t, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  return bedMat;
+}
+
+// Клумба s0…s1 × v0…v1 в системе лестницы — сетка по рельефу через ~1 м, чуть над землёй.
+function flowerBed(world, lay, s0, s1, v0, v1) {
+  const ns = Math.max(2, Math.ceil(s1 - s0)), nv = 4, pos = [], uv = [], idx = [];
+  for (let i = 0; i <= ns; i++) {
+    for (let j = 0; j <= nv; j++) {
+      const sv = s0 + ((s1 - s0) * i) / ns, vv = v0 + ((v1 - v0) * j) / nv;
+      pos.push(sv, world.terrain(...lay.at(sv, vv)) + 0.06, vv);
+      uv.push(((s1 - s0) * i) / ns / BED_LEN, j / nv);
+    }
+  }
+  const row = nv + 1, flip = v1 < v0; // с другой стороны лестницы — обход наоборот, иначе грани вниз
+  for (let i = 0; i < ns; i++) {
+    for (let j = 0; j < nv; j++) {
+      const a = i * row + j, b = a + row, c = b + 1, d = a + 1;
+      idx.push(...(flip ? [a, b, c, a, c, d] : [a, c, b, a, d, c]));
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const m = mesh(geo, flowerBedMaterial());
+  m.castShadow = false;
+  return m;
+}
+
 // Брусок в системе лестницы (x — вдоль оси s, z — поперёк v): s0…s1 × v0…v1, верх линейно от top0 до top1, низ —
 // bot или [низ у s0, низ у s1] (поручень на марше — наклонный и снизу).
 function slab(s0, s1, v0, v1, top0, top1, bot, mat) {
@@ -2531,11 +2630,15 @@ function grandStairs(world, lay) {
   const g = new THREE.Group(), { pieces, r, t } = lay;
   const low = (s0, s1, v0, v1) => Math.min(...[[s0, v0], [s1, v0], [s0, v1], [s1, v1]].map(([s, v]) => world.terrain(...lay.at(s, v)))) - 0.4;
   const CH = 0.45, CT = 0.3, RH = 0.95; // борт: толщина, выше ступеней; ограждение: высота
-  const lantern = (s, v, y) => {
+  // Фонарь на y; ночью — ореол у стекла и пятно света на ступенях (floor — их высота у фонаря).
+  const glow = new GlowBuilder();
+  const lantern = (s, v, y, floor = y) => {
     g.add(cyl(0.16, 0.45, M.iron, s, y, v, 8));
     g.add(cyl(0.06, 2.9, M.iron, s, y, v, 6));
     g.add(box(0.3, 0.42, 0.3, M.lantern, s, y + 2.9, v));
     g.add(cone(0.27, 0.22, M.iron, s, y + 3.32, v, 4));
+    glow.halo(s, y + 3.11, v, 1.2, '#ffcf87');
+    glow.pool(s, floor + 0.04, v, 4.5, '#8a6a3c');
   };
   const top = (pc, s) => (pc.n ? pc.y0 + r + ((pc.y1 - pc.y0 - r) * (s - pc.s0)) / (pc.s1 - pc.s0) : pc.y0) + CT;
   pieces.forEach((pc, k) => {
@@ -2552,7 +2655,7 @@ function grandStairs(world, lay) {
       for (const sg of [-1, 1]) {
         const v0 = sg * h, v1 = sg * (h + 1.1);
         g.add(slab(pc.s0 - 0.4, pc.s1 + 0.6, v0, v1, y, y, low(pc.s0 - 0.4, pc.s1 + 0.6, v0, v1), M.redGranite));
-        lantern(pc.s0 + 0.2, sg * (h + 0.55), y);
+        lantern(pc.s0 + 0.2, sg * (h + 0.55), y, pc.y0);
         const q = [[pc.s0 - 0.4, v0], [pc.s1 + 0.6, v0], [pc.s1 + 0.6, v1], [pc.s0 - 0.4, v1]].map(([s, v]) => lay.at(s, v));
         world.addCollider(q, [], y);
       }
@@ -2578,14 +2681,21 @@ function grandStairs(world, lay) {
         const s = pc.s0 + (j * len) / posts;
         g.add(box(0.1, RH, 0.1, M.iron, s, top(pc, s), vm));
       }
-      lantern(pc.s0, vm, t0);
+      lantern(pc.s0, vm, t0, pc.y0);
       // Сквозь ограждение не проехать (сверху, в прыжке, — можно).
       const q = [[pc.s0, v0], [pc.s1, v0], [pc.s1, v1], [pc.s0, v1]].map(([s, v]) => lay.at(s, v));
       world.addCollider(q, [], Math.max(t0, t1) + RH);
     }
   });
   const last = pieces[pieces.length - 1];
-  for (const sg of [-1, 1]) lantern(last.s1, sg * (last.w / 2 + CH / 2), top(last, last.s1));
+  for (const sg of [-1, 1]) lantern(last.s1, sg * (last.w / 2 + CH / 2), top(last, last.s1), last.y1);
+  const gm = new THREE.Mesh(glow.build(), glowMaterial());
+  gm.geometry.boundingSphere.set(new THREE.Vector3(lay.L / 2, (lay.y0 + lay.y1) / 2, 0), lay.L / 2 + 10);
+  gm.castShadow = gm.receiveShadow = false;
+  g.add(gm);
+  // Клумбы на газонах по бокам — от площадки над нижним маршем до верха.
+  const b0 = pieces[1] ? pieces[1].s1 + 0.5 : 0, b1 = last.s1 - 1, in0 = lay.w / 2 + CH + 1.2;
+  if (b1 - b0 > 6) for (const sg of [-1, 1]) g.add(flowerBed(world, lay, b0, b1, sg * in0, sg * (in0 + BED_W)));
   return place(g, lay.ax, 0, lay.az, Math.atan2(lay.uz, lay.ux));
 }
 
