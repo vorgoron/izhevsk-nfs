@@ -654,10 +654,10 @@ export class CityMap {
 
 // «улица Пушкинская» → «ул. Пушкинская»: подпись короче, на улице помещается чаще.
 const SHORT = { улица: 'ул.', проспект: 'пр.', переулок: 'пер.', проезд: 'пр-д', бульвар: 'б-р', площадь: 'пл.', шоссе: 'ш.', набережная: 'наб.', тракт: 'тр.' };
-const short = (name) => name.replace(/[а-яё]+/gi, (w) => SHORT[w.toLowerCase()] ?? w);
+export const short = (name) => name.replace(/[а-яё]+/gi, (w) => SHORT[w.toLowerCase()] ?? w);
 
 // «Пушкинская улица», «210» → «Пушкинская ул., 210»; без номера — null.
-const address = (street, num) => (num ? (street ? `${short(street)}, ${num}` : `дом ${num}`) : null);
+export const address = (street, num) => (num ? (street ? `${short(street)}, ${num}` : `дом ${num}`) : null);
 
 export const routeLen = (r) => r.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - r[i - 1][0], p[1] - r[i - 1][1]) : 0), 0);
 const fmtDist = (d) => (d < 1000 ? `${Math.round(d / 10) * 10} м` : `${(d / 1000).toFixed(1)} км`);

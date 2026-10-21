@@ -36,6 +36,7 @@ import { track } from './analytics.js';
 import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
 import { Cameras } from './cameras.js';
 import { StopSigns } from './yields.js';
+import { Taxi } from './taxi.js';
 import { Drift } from './drift.js';
 import { RouteGuide } from './guide.js';
 import { CityMap } from './citymap.js';
@@ -494,6 +495,11 @@ async function main() {
       if (raceLenEl.hidden) { raceLenEl.hidden = false; markLen(); }
       else startRace(raceLen);
     },
+    // Такси: заказ — пассажир на остановке рядом; ещё раз — отменить. В гонке заказов нет.
+    taxi: () => {
+      resume();
+      notice(race.state === 'running' || race.state === 'countdown' ? 'Во время гонки заказов нет' : taxi.toggle(car));
+    },
     camera: () => { camMode = (camMode + 1) % 4; cine.shot = null; cine.left = 0; },
     night: () => dayNight.toggle(),
     quality: (q) => {
@@ -542,6 +548,7 @@ async function main() {
   let copied = 0; // таймер надписи «ссылка скопирована», 0 — не показываем
   let citymap = null; // большая карта и аккаунт — создаются после меню (меню уже спрашивает их состояние)
   let account = null;
+  let taxi = null; // такси — после карты (taxi.js)
   const resume = () => { menu.close(); sound.setPaused(false); };
   // Выбор длины гонки (race.js LENGTHS); последняя выбранная — в localStorage.
   const raceLenEl = $('race-len');
@@ -573,7 +580,7 @@ async function main() {
     state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, quality: Q.label, qName, night: dayNight.label, debug: debug.on, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
-      money: formatMoney(wallet.balance), hopper: car.hopper > 0,
+      money: formatMoney(wallet.balance), hopper: car.hopper > 0, taxi: taxi?.active ? 'отменить заказ' : 'найти пассажира',
       nitro: !car.nitroLevel ? 'не установлено — в автосалон' : car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
     setName: (v) => net.setName(v),
     account: { state: () => account ?? { status: 'out' }, start: () => account.start(), send: (e) => account.send(e), signOut: () => account.signOut() },
@@ -615,11 +622,13 @@ async function main() {
     teleport: (x, z) => { respawnAt(x, z); citymap.reroute(); },
   });
   citymap.onClose = () => { sound.setPaused(menu.isOpen); menu.sync(); };
+  taxi = new Taxi(world, scene, citymap, $('taxi'));
+  game.taxi = taxi;
   game.citymap = citymap;
   $('menu-btn').addEventListener('click', actions.menu);
   $('race-btn').addEventListener('click', actions.race);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
-    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night', KeyI: 'debug' }; // Y — «Н» в русской раскладке
+    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night', KeyI: 'debug', KeyJ: 'taxi' }; // Y — «Н» в русской раскладке, J — «О»
 
   let starting = true;
   const keys = new Set();
@@ -1116,7 +1125,7 @@ async function main() {
   function navigate(dt) {
     const t = citymap.target;
     if (!t) return;
-    if (Math.hypot(t.x - car.pos.x, t.z - car.pos.y) < 25) {
+    if (t !== taxi.target && Math.hypot(t.x - car.pos.x, t.z - car.pos.y) < 25) { // у такси «приехали» — taxi.js
       citymap.clear();
       notice(`Приехали${t.name ? `: ${t.name}` : ''}`);
       return;
@@ -1125,6 +1134,16 @@ async function main() {
     const { d } = guide.locate(car.pos.x, car.pos.y);
     offRoute = d > 45 ? offRoute + dt : 0;
     if (offRoute > 2) { offRoute = 0; citymap.reroute(); }
+  }
+  // Такси (taxi.js): пассажир сел / довёз — плата; началась гонка (и общая, по сети) — заказ отменяется.
+  function taxiTick(dt) {
+    if (!taxi.active) return;
+    if (race.state === 'running' || race.state === 'countdown') { taxi.cancel(); notice('Гонка — заказ такси отменён'); menu.sync(); return; }
+    const ev = taxi.update(dt, car);
+    if (!ev) return;
+    if (ev.kind === 'drop') { wallet.earn(ev.pay, ev.text); track('taxi_done', { pay: ev.pay }); }
+    else notice(ev.text);
+    menu.sync();
   }
   // Сообщение плашкой по центру сверху (там же, где деньги).
   function notice(text) {
@@ -1429,6 +1448,7 @@ async function main() {
     const route = race.state === 'running' || race.state === 'countdown' ? race.route : navRoute;
     if (route !== guide.route) guide.set(route, route === navRoute ? '#4ab3ff' : '#ffd23f');
     guide.update(car);
+    taxiTick(dt);
     navigate(dt);
     updateCamera(dt);
     // Дальше конца тумана всё одного цвета с горизонтом — не рисуем: дальняя плоскость = конец тумана

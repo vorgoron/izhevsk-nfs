@@ -142,6 +142,12 @@
     #race-btn kbd { margin-left: 8px; opacity: .7; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.3); border-radius: 4px;
       padding: 0 5px; font-family: inherit; font-size: 12px; font-weight: 600; }
     body.no-race #race { display: none; }
+    /* Заказ такси — под кнопкой «Гонка» (в гонке заказов нет). */
+    #taxi { left: 24px; top: 72px; font-size: 17px; line-height: 1.35; background: rgba(0,0,0,.35); padding: 6px 12px; border-radius: 8px; max-width: 46vw; }
+    #taxi b { font-size: 26px; font-variant-numeric: tabular-nums; }
+    #taxi .lbl { opacity: .8; font-size: 14px; margin-right: 6px; }
+    #taxi small { opacity: .85; font-size: 13px; }
+    #taxi[hidden], body.in-garage #taxi { display: none; }
     /* Выбор длины гонки: N / 🏁 открывает, 1–3 или касание — старт. */
     #race-len { position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 20; background: rgba(12,14,16,.82);
       border: 1px solid rgba(255,255,255,.25); border-radius: 14px; padding: 14px 16px; color: #fff; text-align: center; }
@@ -453,6 +459,8 @@
     body.touch #fuelwarn small { font-size: 14px; }
     body.touch #race { left: calc(146px + env(safe-area-inset-left)); top: calc(8px + env(safe-area-inset-top)); font-size: 13px; line-height: 1.35; }
     body.touch #race b { font-size: 24px; }
+    body.touch #taxi { left: calc(146px + env(safe-area-inset-left)); top: calc(52px + env(safe-area-inset-top)); font-size: 13px; padding: 4px 10px; }
+    body.touch #taxi b { font-size: 20px; }
     body.touch #race-btn { left: calc(146px + env(safe-area-inset-left)); top: calc(8px + env(safe-area-inset-top)); font-size: 14px; padding: 6px 12px;
       -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
     body.touch #race-btn kbd { display: none; }
@@ -526,6 +534,7 @@
   <div id="camwarn" class="hud" hidden></div>
   <div id="flash"></div>
   <div id="drift" class="hud"></div>
+  <div id="taxi" class="hud" hidden></div>
   <div id="radio-pick"></div>
   <div id="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">участники OpenStreetMap</a> · рельеф <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a> (Mapzen, SRTM)</div>
   <div id="rotate"><div><div style="font-size:56px">📱↻</div>Поверните телефон горизонтально</div></div>

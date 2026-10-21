@@ -33,6 +33,7 @@ export class Menu {
       <h2>Пауза <small data-v="money"></small></h2>
       <button data-act="menu" class="go">Продолжить <kbd>Esc</kbd></button>
       <button data-act="race">Новая гонка <b data-v="race"></b><kbd>N</kbd></button>
+      <button data-act="taxi">Такси <b data-v="taxi"></b><kbd>J</kbd></button>
       <button data-act="respawn">На дорогу <kbd>R</kbd></button>
       <button data-act="nitro">Нитро в баллон <b data-v="nitro"></b></button>
       <button data-act="garage">Автосалон — машины и улучшения <kbd>G</kbd></button>
@@ -196,12 +197,13 @@ export class Menu {
       nitro: s.nitro,
       debug: s.debug ? 'вкл' : 'выкл',
       ads: this.adSent ? 'заявка отправлена' : 'оставить заявку',
+      taxi: s.taxi,
     };
     s.invite = s.online || s.city;
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'quality', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account', 'ads'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'quality', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account', 'ads', 'taxi'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     for (const b of this.el.querySelectorAll('[data-q]')) b.classList.toggle('off', b.dataset.q !== s.qName);
