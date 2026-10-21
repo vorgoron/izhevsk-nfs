@@ -3,11 +3,13 @@
 import * as THREE from 'three';
 import {
   buildTerrainChunk, buildRoadChunk, buildBuildingChunk, buildTreeChunk, buildRailChunk, buildPoleChunk, buildBillboardChunk,
-  buildStopChunk, stopMaterials, buildFenceChunk, fenceMaterials,
+  buildStopChunk, stopMaterials, buildFenceChunk, fenceMaterials, buildWalkChunk, walkMaterials,
   drawMinimapTile, MINIMAP_SCALE, roadMaterials, buildingMaterials, treeMaterials, poleMaterials, billboardMaterials,
 } from './build.js';
 import { buildPropChunk, propMaterials } from './props.js';
 import { buildShopChunk, SHOP_NEAR } from './shops.js';
+
+const WALK_FAR = 600; // м: дальше квадрата тротуары-геометрия прячутся (остаётся полоса на текстуре земли)
 
 
 export class ChunkManager {
@@ -24,7 +26,8 @@ export class ChunkManager {
     this.loaded = new Map(); // ключ → { group, terrain }
     this.breakables = null;  // выставляет main.js: столбы и щиты квадратов ломаются
     this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials(),
-      ads: billboardMaterials(renderer), stops: stopMaterials(renderer), fences: fenceMaterials(renderer), props: propMaterials(renderer) };
+      ads: billboardMaterials(renderer), stops: stopMaterials(renderer), fences: fenceMaterials(renderer), props: propMaterials(renderer),
+      walks: walkMaterials(renderer) };
   }
 
   #key(ci, cj) { return ci * 10000 + cj; }
@@ -57,10 +60,12 @@ export class ChunkManager {
     // Мелкое — в отдельной подгруппе: её прячем целиком по расстоянию (update), не трогая видимость самих мешей.
     const detail = new THREE.Group();
     group.add(detail);
-    group.userData = { ci, cj, trees: [], shops: null, detail };
+    group.userData = { ci, cj, trees: [], shops: null, detail, walks: null };
     const tag = (o, label) => ((o.userData.perf = label), o); // разбивка треугольников в `?perf`
     group.add(tag(buildTerrainChunk(w, info, this.texSize, this.renderer), 'рельеф'));
     if (info.data.runs.length) group.add(tag(buildRoadChunk(w, info.data.runs, this.mats.roads), 'дороги'));
+    const walks = buildWalkChunk(w, info, this.mats.walks);
+    if (walks) detail.add((group.userData.walks = tag(walks, 'тротуары')));
     if (info.data.buildings.length) group.add(tag(buildBuildingChunk(w, info.data.buildings, this.mats.buildings), 'дома'));
     const rails = info.data.rails.length ? buildRailChunk(w, info, this.mats.roads.rail, this.mats.roads.concrete, this.mats.roads.trackbed, this.mats.roads.crossing) : null;
     if (rails) detail.add(tag(rails, 'рельсы'));
@@ -101,6 +106,7 @@ export class ChunkManager {
       if (this.mats.ads.faces.includes(o.material)) { o.geometry.dispose(); this.mats.ads.meshes.delete(o); return; }
       if (!o.isInstancedMesh) o.geometry.dispose();
       else o.dispose();
+      if (Array.isArray(o.material)) return; // тротуары: общие материалы (walkMaterials)
       if (o.material.map && !this.mats.roads.owns(o.material) && o.material !== this.mats.buildings.walls
         && o.material !== this.mats.stops.sign && !this.mats.fences.owns(o.material) && !this.mats.props.owns(o.material)) {
         o.material.map.dispose();
@@ -119,6 +125,8 @@ export class ChunkManager {
       const { ci, cj, trees, detail } = group.userData;
       const d = this.#dist(ci, cj, px, pz);
       detail.visible = detail.visible ? d < this.detailFar + 40 : d < this.detailFar;
+      const walks = group.userData.walks;
+      if (walks) walks.visible = walks.visible ? d < WALK_FAR + 40 : d < WALK_FAR;
       if (!trees.length) continue;
       const cur = trees[0].geometry === trees[0].userData.lod[1];
       const far = cur ? d > this.treeNear - 60 : d > this.treeNear;

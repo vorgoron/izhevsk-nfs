@@ -5,6 +5,7 @@ import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
 import { SPECIES, LEAF, treeGeometry, LEAF_GLSL } from './trees.js';
 import { shopColors, shopLine } from './shops.js';
+import { CURB_H, CURB_W } from './walks.js';
 
 const AREA_COLORS = {
   water: '#3d6f8e', park: '#4f6b3a', grass: '#6c8448', sand: '#cdbb8a', industrial: '#7a7670', paved: '#9a968e',
@@ -57,12 +58,15 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
     g.stroke();
   };
   for (const w of data.waterways) stroke(w.p, w.w, AREA_COLORS.water); // речки и ручьи
-  // Тротуары (SIDEWALK, world.js): плитка по обе стороны улицы, на крупных — газон между ней и проезжей частью.
-  // Сначала вся плитка, потом газоны — газон соседней улицы не ложится на тротуар этой; асфальт — поверх.
-  const walks = data.lines.filter((r) => SIDEWALK[r.k] && !r.br && !r.tu).map((r) => [r.n.map((i) => world.nodes[i]), r.w, SIDEWALK[r.k]]);
-  for (const [p, w, [lawn, walk]] of walks) stroke(p, w + 2 * (lawn + walk), '#a9a59c');
-  for (const [p, w, [lawn]] of walks) if (lawn) stroke(p, w + 2 * lawn, '#62793f');
-  for (const p of data.paths) stroke(p, 2.2, '#a7a196');
+  // Газон между проезжей частью и тротуаром (SIDEWALK, world.js) на крупных улицах.
+  for (const r of data.lines) {
+    const sw = !r.br && !r.tu && SIDEWALK[r.k];
+    if (sw?.[0]) stroke(r.n.map((i) => world.nodes[i]), r.w + 2 * sw[0], '#62793f');
+  }
+  // Тропы — на текстуре; плитка и тротуары — геометрией (buildWalkChunk), здесь под ней узкая полоса тем же
+  // цветом: видна только издали, где меш дорожек уже спрятан.
+  for (const p of data.paths) if (p.k === 't') stroke(p.p, p.w, '#a39b88');
+  for (const s of world.walks.chunk(info.ci, info.cj)) stroke([[s.ax, s.az], [s.bx, s.bz]], Math.max(0.6, 2 * s.h - 1), s.strip.k === 'c' ? '#46484b' : '#a9a59c');
   // Асфальт под дорожными мешами закрывает щели на перекрёстках; пути — поверх него.
   for (const r of data.lines) stroke(r.n.map((i) => world.nodes[i]), r.w + 0.6, '#3b3c3e');
   for (const r of data.rails) stroke(r.p, r.k === 'tram' ? 2.4 : 3.2, '#4d4038');
@@ -1601,7 +1605,8 @@ export function buildTreeChunk(world, info, mats) {
   // Городские лиственные: липа, клён, тополь, берёза.
   const leafy = () => { const u = rand(); return u < 0.3 ? 'birch' : u < 0.6 ? 'lime' : u < 0.82 ? 'maple' : 'poplar'; };
   // Деревья из OSM (и ряды natural=tree_row) — не на полотне: ряд в OSM бывает нарисован по оси или разделительной.
-  const offRoad = (x, z) => !(world.nearestRoad(x, z, 3)?.d < 1.5);
+  // И не на тротуарах (walks.js).
+  const offRoad = (x, z) => !(world.nearestRoad(x, z, 3)?.d < 1.5) && !world.walks.near(x, z, TREE_WALK);
   for (const [x, z] of data.trees) if (free(x, z) && offRoad(x, z)) put(leafy(), x, z);
   for (const a of data.areas) {
     if (a.k !== 'park') continue;
@@ -1617,8 +1622,7 @@ export function buildTreeChunk(world, info, mats) {
     for (let i = 0; i < n && count < MAX_TREES; i++) {
       const x = minx + rand() * (maxx - minx), z = minz + rand() * (maxz - minz);
       if (!pointInPoly(x, z, a.p) || (a.holes || []).some((h) => pointInPoly(x, z, h)) || !free(x, z)) continue;
-      const r = world.nearestRoad(x, z, 3);
-      if (r && r.d < 1.5) continue;
+      if (!offRoad(x, z)) continue;
       // Лес — ели, сосны и берёзы, парк — в основном лиственные.
       const u = rand();
       if (a.f) put(u < 0.45 ? 'spruce' : u < 0.75 ? 'pine' : 'birch', x, z, true);
@@ -1643,6 +1647,7 @@ export function buildTreeChunk(world, info, mats) {
             const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
             const nr = world.nearestRoad(x, z, 4);
             if ((nr && nr.d < 1.8) || world.isWater(x, z) || !free(x, z) || inBuilding(x, z) || !offJunctions(x, z)) continue;
+            if (world.walks.near(x, z, TREE_WALK)) continue;
             put(rand() < 0.12 ? 'spruce' : leafy(), x, z);
           }
         }
@@ -1717,6 +1722,8 @@ export function poleMaterials() {
 
 const POLE_STEP = { primary: 32, secondary: 34, tertiary: 36, residential: 42, unclassified: 42 }; // м вдоль улицы
 const POLE_OFF = 1.0;   // м от края полотна
+const POLE_PUSH = 6;    // м: настолько дальше можно отодвинуть столб с тротуара
+const TREE_WALK = 0.8;  // м: дерево не ближе к краю тротуара
 const POLE_END = 7;     // м: у концов улицы (перекрёстки) не ставим
 const roadPrefix = new WeakMap(); // улица → длина от начала до каждого узла
 
@@ -1754,10 +1761,15 @@ export function buildPoleChunk(world, info, mats) {
       const dx = (bx - ax) / L, dz = (bz - az) / L;
       for (let s = phase + Math.ceil((s0 - phase) / step) * step; s < s0 + L; s += step) {
         if (s < POLE_END || s > total - POLE_END) continue;
-        const t = s - s0, off = road.w / 2 + POLE_OFF;
+        const t = s - s0;
         for (const side of sides) {
-          // Справа от направления (dx, dz) — (−dz, dx), как полосы в traffic.js.
-          const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
+          // Справа от направления (dx, dz) — (−dz, dx), как полосы в traffic.js. На тротуаре (walks.js) не ставим —
+          // отодвигаем за него, но не дальше POLE_PUSH.
+          let off = road.w / 2 + POLE_OFF;
+          const at = (o) => [ax + dx * t - dz * o * side, az + dz * t + dx * o * side];
+          while (off < road.w / 2 + POLE_OFF + POLE_PUSH && world.walks.near(...at(off), 0.3)) off += 0.5;
+          const [x, z] = at(off);
+          if (world.walks.near(x, z, 0.3)) continue;
           const nr = world.nearestRoad(x, z, 4);
           if ((nr && nr.d < 0.6) || world.isWater(x, z) || !free(x, z) || inBuilding(x, z)) continue;
           const y = world.terrain(x, z);
@@ -2034,7 +2046,7 @@ export function buildBillboardChunk(world, info, mats) {
         // Края щита: стойка — на земле, не у дороги; щит не в доме и не под путепроводом.
         const ex = -dz * side * (BB.w / 2 + 0.2), ez = dx * side * (BB.w / 2 + 0.2);
         const nr = world.nearestRoad(x, z, 4);
-        if ((nr && nr.d < 2) || world.isWater(x, z) || !free(x, z)) continue;
+        if ((nr && nr.d < 2) || world.isWater(x, z) || !free(x, z) || world.walks.near(x, z, 0.3)) continue;
         const y = world.terrain(x, z);
         const ok = [[x, z], [x + ex, z + ez], [x - ex, z - ez]]
           .every(([px, pz]) => !inBuilding(px, pz) && world.ground(px, pz) < world.terrain(px, pz) + 2);
@@ -2521,4 +2533,160 @@ export function drawMinimapTile(world, info, S = MINIMAP_SCALE) {
     g.stroke();
   }
   return c;
+}
+
+// ---------------------------------------------------------------- тротуары и дорожки (walks.js)
+
+function walkTileTexture(renderer, steps) {
+  const S = 128, cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  g.fillStyle = steps ? '#a19d95' : '#aaa69d';
+  g.fillRect(0, 0, S, S);
+  let seed = steps ? 7 : 3;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 900; i++) {
+    g.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)';
+    g.fillRect(rnd() * S, rnd() * S, 2, 2);
+  }
+  if (steps) {
+    // Ступени по 0,32 м (текстура — 1 м вдоль, повтор ×3,125 задаётся в uv): тёмная тень под кромкой.
+    g.fillStyle = 'rgba(0,0,0,0.28)';
+    g.fillRect(0, S - 18, S, 18);
+    g.fillStyle = 'rgba(255,255,255,0.18)';
+    g.fillRect(0, 0, S, 6);
+  } else {
+    // Плитка 0,5 × 0,25 м вперевязку.
+    g.fillStyle = 'rgba(60,58,54,0.35)';
+    for (let r = 0; r < 4; r++) {
+      g.fillRect(0, r * 32, S, 2);
+      for (let c = 0; c < 2; c++) g.fillRect(((c * 64 + (r % 2) * 32) % S), r * 32, 2, 32);
+    }
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+
+// Велодорожка: асфальт, белые линии по краям и значок велосипеда раз в CYCLE_TILE м. Текстура — вся ширина
+// дорожки (u 0…1) на CYCLE_TILE м вдоль; пиксели квадратные при ширине 2,5 м, у других значок чуть сжат.
+const CYCLE_TILE = 40;
+function cycleTexture(renderer) {
+  const W = 128, H = 2048, ppm = W / 2.5, cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#46484b';
+  g.fillRect(0, 0, W, H);
+  let seed = 11;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 6000; i++) {
+    g.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.05)';
+    g.fillRect(rnd() * W, rnd() * H, 2, 2);
+  }
+  g.fillStyle = '#d9d9d2';
+  g.fillRect(0.12 * ppm, 0, 0.08 * ppm, H);
+  g.fillRect(W - 0.2 * ppm, 0, 0.08 * ppm, H);
+  // Значок: велосипед боком, колёсами поперёк дорожки — стоит прямо для того, кто едет навстречу оси v.
+  g.save();
+  g.translate(W / 2, H / 2);
+  g.scale(ppm, ppm);
+  g.strokeStyle = '#e6e6df';
+  g.lineWidth = 0.07;
+  g.lineCap = g.lineJoin = 'round';
+  g.beginPath();
+  for (const cx of [-0.5, 0.5]) { g.moveTo(cx + 0.32, 0.12); g.arc(cx, 0.12, 0.32, 0, Math.PI * 2); }
+  // Рама: заднее колесо — каретка — руль — переднее; седло и руль.
+  g.moveTo(-0.5, 0.12); g.lineTo(-0.05, 0.12); g.lineTo(0.3, -0.28); g.lineTo(-0.2, -0.28); g.lineTo(-0.05, 0.12);
+  g.moveTo(0.3, -0.28); g.lineTo(0.5, 0.12);
+  g.moveTo(-0.2, -0.28); g.lineTo(-0.26, -0.4); g.moveTo(-0.36, -0.4); g.lineTo(-0.14, -0.4);
+  g.moveTo(0.3, -0.28); g.lineTo(0.26, -0.44); g.lineTo(0.38, -0.46);
+  g.stroke();
+  g.restore();
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+
+export function walkMaterials(renderer) {
+  return [
+    new THREE.MeshLambertMaterial({ map: walkTileTexture(renderer, false) }),
+    new THREE.MeshLambertMaterial({ map: walkTileTexture(renderer, true) }),
+    new THREE.MeshLambertMaterial({ color: '#c4c0b8', side: THREE.DoubleSide }), // бордюр, бока, торцы
+    new THREE.MeshLambertMaterial({ map: cycleTexture(renderer) }),
+  ];
+}
+
+// Меш дорожек квадрата: плитка, лестницы, бордюры, велодорожки — одна геометрия с группами материалов.
+// Ширина по сторонам своя в каждой точке (hl, hr): слитые тротуары шире, у велодорожки тротуар уже.
+export function buildWalkChunk(world, info, mats) {
+  const segs = world.walks.chunk(info.ci, info.cj);
+  if (!segs.length) return null;
+  const parts = [{ p: [], uv: [] }, { p: [], uv: [] }, { p: [], uv: [] }, { p: [], uv: [] }];
+  const tri = (part, a, b, c, ua, ub, uc) => {
+    part.p.push(...a, ...b, ...c);
+    part.uv.push(...(ua || [0, 0]), ...(ub || [0, 0]), ...(uc || [0, 0]));
+  };
+  const quad = (part, a, b, c, d, ua, ub, uc, ud) => { tri(part, a, b, c, ua, ub, uc); tri(part, a, c, d, ua, uc, ud); };
+  const T = (x, z) => world.terrain(x, z) - 0.05;
+  for (const sg of segs) {
+    const { strip, i } = sg, P = strip.pts, a = P[i - 1], b = P[i], k = strip.k;
+    const top = parts[k === 's' ? 1 : k === 'c' ? 3 : 0], curb = parts[2];
+    const vs = k === 's' ? 1 / 0.32 : k === 'c' ? 1 / CYCLE_TILE : 1;
+    // Поперечные точки: край, внутренний край бордюра — слева и справа.
+    const cross = (p) => {
+      const nx = -p.dz * p.m, nz = p.dx * p.m, ch = p.curb ? CURB_H : 0, il = p.hl - CURB_W, ir = p.hr - CURB_W;
+      return {
+        L: [p.x + nx * p.hl, p.y + ch, p.z + nz * p.hl], Li: [p.x + nx * il, p.y + ch, p.z + nz * il],
+        Ri: [p.x - nx * ir, p.y + ch, p.z - nz * ir], R: [p.x - nx * p.hr, p.y + ch, p.z - nz * p.hr],
+        Lt: [p.x + nx * il, p.y, p.z + nz * il], Rt: [p.x - nx * ir, p.y, p.z - nz * ir],
+      };
+    };
+    const A = cross(a), B = cross(b);
+    // Плитка — по сетке города (u, v — метры x, z): на пересечении две дорожки лежат одной площадкой без шва.
+    // Ступени — вдоль, велодорожка — доля ширины поперёк (значок посередине).
+    const u = (p, q, left) => {
+      if (k === 'f') return [q[0], q[2]];
+      const o = left ? -(p.hl - CURB_W) : p.hr - CURB_W;
+      return [k === 'c' ? (o + p.hl) / (p.hl + p.hr) : o, p.s * vs];
+    };
+    // Внутри пересечения (оба конца) — плитка на всю ширину, без бордюров и боков: края лежат на другой дорожке.
+    if (a.jn && b.jn) {
+      quad(top, A.L, B.L, B.R, A.R, u(a, A.L, true), u(b, B.L, true), u(b, B.R, false), u(a, A.R, false));
+      continue;
+    }
+    // Покрытие между бордюрами.
+    quad(top, A.Lt, B.Lt, B.Rt, A.Rt, u(a, A.Lt, true), u(b, B.Lt, true), u(b, B.Rt, false), u(a, A.Rt, false));
+    // Бордюры — верх (на CURB_H выше плитки, где бордюр есть). Внутренняя грань в 5 см не видна — без неё
+    // треугольников на треть меньше.
+    quad(curb, A.L, B.L, B.Li, A.Li);
+    quad(curb, A.Ri, B.Ri, B.R, A.R);
+    // Бока до земли.
+    const dn = (q) => [q[0], T(q[0], q[2]), q[2]];
+    quad(curb, A.L, dn(A.L), dn(B.L), B.L);
+    quad(curb, A.R, B.R, dn(B.R), dn(A.R));
+    // Торцы там, где плита обрывается (не внутри другой дорожки).
+    if ((i === 1 || !P[i - 2].on) && !a.jn) quad(curb, A.L, A.R, dn(A.R), dn(A.L));
+    if ((i === P.length - 1 || !P[i + 1].on) && !b.jn) quad(curb, B.L, dn(B.L), dn(B.R), B.R);
+  }
+  const n = parts.reduce((t, pt) => t + pt.p.length / 3, 0);
+  const geo = new THREE.BufferGeometry(), pos = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+  let at = 0;
+  parts.forEach((pt, gi) => {
+    if (!pt.p.length) return;
+    geo.addGroup(at, pt.p.length / 3, gi);
+    pos.set(pt.p, at * 3);
+    uv.set(pt.uv, at * 2);
+    at += pt.p.length / 3;
+  });
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mats);
+  mesh.receiveShadow = true;
+  return mesh;
 }

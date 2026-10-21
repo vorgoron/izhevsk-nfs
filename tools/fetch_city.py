@@ -139,6 +139,21 @@ PATHS = {"footway", "path", "steps", "cycleway", "track", "bridleway", "corridor
 FOOTBRIDGE_STYLE = {
     106782602: {"level": [0, 0], "stairs": 1},  # с Центральной площади над Карла Маркса к Максима Горького
 }
+PATH_KIND = {"footway": "f", "cycleway": "c", "steps": "s"}  # иначе "t" — тропа
+PATH_W = {"footway": 2.2, "cycleway": 2.5, "steps": 2.2, "path": 1.6, "track": 3.0, "bridleway": 1.6}
+
+
+def path_width(hw, tags):
+    """Ширина дорожки, м: width из OSM (в разумных пределах), иначе по виду."""
+    try:
+        w = float(tags.get("width", "").replace(",", ".").rstrip(" m"))
+        if 0.8 <= w <= 12:
+            return round(w, 1)
+    except ValueError:
+        pass
+    return PATH_W.get(hw, 2.0)
+
+
 FOOTBRIDGE_W = {"footway": 3.0, "path": 2.5, "steps": 2.5, "cycleway": 3.0, "track": 3.5, "pedestrian": 6.0}
 
 
@@ -1812,9 +1827,16 @@ def build_city():
             continue
         if hw and tags.get("area") != "yes":
             if hw in PATHS:
+                # Подземные переходы и коридоры в зданиях на земле не рисуем.
+                if tags.get("tunnel") not in (None, "no") or tags.get("indoor") not in (None, "no") or hw == "corridor":
+                    continue
                 pts = ring_xy(nds) if nds[0] != nds[-1] else [project(*nodes[n]) for n in nds]
                 if inside(pts):
-                    paths.append(pts)
+                    # k — вид: плитка (footway), велодорожка, лестница, грунтовая тропа (path, track…);
+                    # w — ширина; sw — тротуар вдоль улицы (footway=sidewalk); x — переход через дорогу (footway=crossing).
+                    paths.append({"p": pts, "k": PATH_KIND.get(hw, "t"), "w": path_width(hw, tags),
+                                  **({"sw": 1} if tags.get("footway") == "sidewalk" else {}),
+                                  **({"x": 1} if tags.get("footway") == "crossing" else {})})
                 continue
             if hw in ("construction", "proposed", "platform", "bus_stop", "raceway", "elevator"):
                 continue
