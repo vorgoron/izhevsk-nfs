@@ -41,6 +41,8 @@ const M = {
   slab: lambert('#d3d1c9'),
   limestone: lambert('#d9d3c7'),
   salmon: lambert('#e98c78'),
+  darkBrick: lambert('#7a2e1e'),
+  warmBrick: lambert('#c65d3c'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -1560,6 +1562,57 @@ function plantMain(pl, tx, tz) {
   return mergeByMaterial(g);
 }
 
+// Водонапорная башня 1915 года (Бородина, 4; по фото): шестигранный ствол из красного кирпича, чуть
+// сужается кверху; на гранях — тёмные кирпичные арки, узкие стрельчатые окна и круглые внизу; наверху —
+// уширенный ярус на кирпичных напусках с окошками, зубчатый парапет и лёгкое ограждение.
+// r — радиус по вершинам, a — поворот так, чтобы вершины легли на контур.
+function waterTower(r, a) {
+  const g = new THREE.Group(), H = 22, Ht = 4.5, rt = r * 0.9, brick = M.warmBrick;
+  const hex = (r0, r1, y0, h, mat) => {
+    const m = mesh(new THREE.CylinderGeometry(r1, r0, h, 6), mat, 0, y0 + h / 2, 0);
+    m.rotation.y = a;
+    return m;
+  };
+  g.add(hex(r + 0.3, r + 0.3, -3, 3.6, M.stone));
+  g.add(hex(r, rt, 0.6, H, brick));
+  g.add(hex(rt, rt + 0.6, H + 0.6, 0.9, M.darkBrick));               // напуски
+  g.add(hex(rt + 0.6, rt + 0.6, H + 1.5, Ht, brick));
+  g.add(hex(rt + 0.75, rt + 0.75, H + 1.5 + Ht, 0.4, M.darkBrick));
+  for (let i = 0; i < 6; i++) {
+    const th = a + Math.PI / 6 + (i * Math.PI) / 3, sx = Math.sin(th), sz = Math.cos(th);
+    const face = (obj, ap, y) => { obj.position.set(sx * ap, y, sz * ap); obj.rotation.y = th; g.add(obj); return obj; };
+    const ap = (rr) => rr * Math.cos(Math.PI / 6);
+    const wf = r * 0.75; // ширина грани с запасом на сужение
+    // Тёмные арки-пояски: внизу, посередине и под напусками.
+    for (const [y, w] of [[4.6, wf], [12.5, wf * 0.95], [H - 2.2, wf * 0.9]]) {
+      const rr = r + (rt - r) * (y / H) + 0.02;
+      face(mesh(new THREE.TorusGeometry(w * 0.42, 0.18, 4, 12, Math.PI), M.darkBrick), ap(rr), y);
+      face(box(w * 0.95, 0.25, 0.2, M.darkBrick, 0, 0, 0), ap(rr), y - 0.3);
+    }
+    const rr = (y) => r + (rt - r) * (y / H) + 0.05;
+    if (i % 2 === 0) face(mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.2, 14).rotateX(Math.PI / 2), M.glass), ap(rr(2.5)), 2.5);
+    for (const y of i % 2 ? [7, 15] : [10, 17.5]) {
+      face(box(0.6, 2.2, 0.2, M.glass, 0, 0, 0), ap(rr(y)), y);
+      face(mesh(new THREE.ConeGeometry(0.42, 0.8, 4).rotateY(Math.PI / 4).scale(1, 1, 0.3), M.glass), ap(rr(y)), y + 1.1 + 0.4);
+    }
+    face(box(0.9, 1.3, 0.2, M.glass, 0, 0, 0), ap(rt + 0.62), H + 2.8);
+    // Зубцы парапета и стойки ограждения на вершинах.
+    for (const k of [-0.3, 0, 0.3]) {
+      const z = box(0.9, 0.9, 0.5, brick, 0, 0, 0);
+      z.position.set(sx * ap(rt + 0.5) + Math.cos(th) * k * r, H + 1.9 + Ht, sz * ap(rt + 0.5) - Math.sin(th) * k * r);
+      z.rotation.y = th;
+      g.add(z);
+    }
+    const tv = a + (i * Math.PI) / 3;
+    g.add(cyl(0.05, 1.1, M.dark, Math.sin(tv) * (rt + 0.2), H + 1.9 + Ht, Math.cos(tv) * (rt + 0.2), 4));
+  }
+  const rail = mesh(new THREE.CylinderGeometry(rt + 0.2, rt + 0.2, 0.06, 6, 1, true), doubleSided(M.dark), 0, H + 2.95 + Ht, 0);
+  rail.rotation.y = a;
+  g.add(rail);
+  g.add(hex(rt + 0.4, rt + 0.4, H + 1.85 + Ht, 0.1, M.stone));         // кровля
+  return mergeByMaterial(g);
+}
+
 function plantTower() {
   const g = new THREE.Group();
   const pink = M.pink, white = M.white;
@@ -1857,6 +1910,11 @@ export function buildLandmarks(world) {
       case 'plant': {
         const f = fit(p, 0), t = world.city.landmarks.find((q) => q.key === 'plant_tower') || { x: f.cx, z: f.cz };
         obj = place(plantMain(toLocal(p, f), t.x - f.cx, t.z - f.cz), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'water_tower': {
+        const c = circleFit(p);
+        obj = place(waterTower(c.R, Math.atan2(p[0][0] - c.cx, p[0][1] - c.cz)), c.cx, baseY(world, p), c.cz);
         break;
       }
       case 'plant_tower':
