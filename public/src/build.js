@@ -1564,8 +1564,23 @@ function junctions(world) {
 function spotChecks(world, data) {
   // Возле достопримечательностей ничего не ставим: закрывает модели.
   const POINT_CLEAR = { wheel: 27 }; // колесо широкое: деревья врезались бы в нижние кабинки
-  const clear = (world.city.landmarks || []).map((l) => [l.x, l.z, l.p
-    ? Math.max(...l.p.map(([x, z]) => Math.hypot(x - l.x, z - l.z))) + 6 : POINT_CLEAR[l.key] ?? 12]);
+  // У здания с контуром — 6 м от самого контура (круг по дальней вершине у длинного корпуса завода
+  // вычищал всё в 180 м вокруг), у точечной — радиус.
+  const CONTOUR_CLEAR = 6;
+  const clear = (world.city.landmarks || []).map((l) => {
+    if (!l.p) return { x: l.x, z: l.z, r: POINT_CLEAR[l.key] ?? 12 };
+    const xs = l.p.map((q) => q[0]), zs = l.p.map((q) => q[1]);
+    return { p: l.p, bb: [Math.min(...xs) - CONTOUR_CLEAR, Math.min(...zs) - CONTOUR_CLEAR, Math.max(...xs) + CONTOUR_CLEAR, Math.max(...zs) + CONTOUR_CLEAR] };
+  });
+  const nearLandmark = (x, z, c) => {
+    if (!c.p) return Math.hypot(x - c.x, z - c.z) <= c.r;
+    if (x < c.bb[0] || x > c.bb[2] || z < c.bb[1] || z > c.bb[3]) return false;
+    if (pointInPoly(x, z, c.p)) return true;
+    for (let i = 0, j = c.p.length - 1; i < c.p.length; j = i++) {
+      if (World.closest({ ax: c.p[j][0], az: c.p[j][1], bx: c.p[i][0], bz: c.p[i][1] }, x, z).d < CONTOUR_CLEAR) return true;
+    }
+    return false;
+  };
   // Не на рельсах: трамвайные и железнодорожные пути квадрата ± 3.5 м от оси.
   const railSegs = [];
   for (const r of data.rails) for (let i = 1; i < r.p.length; i++) railSegs.push({ ax: r.p[i - 1][0], az: r.p[i - 1][1], bx: r.p[i][0], bz: r.p[i][1] });
@@ -1581,7 +1596,7 @@ function spotChecks(world, data) {
     }
     return true;
   });
-  const free = (x, z) => clear.every(([cx, cz, r]) => Math.hypot(x - cx, z - cz) > r) && offRails(x, z) && offBridges(x, z);
+  const free = (x, z) => !clear.some((c) => nearLandmark(x, z, c)) && offRails(x, z) && offBridges(x, z);
   const inBuilding = (x, z) => data.buildings.some((b) => {
     const p = b.p;
     if (Math.abs(p[0][0] - x) > 80 || Math.abs(p[0][1] - z) > 80) return false;

@@ -1598,7 +1598,69 @@ def gibdd_cams(inside):
 UNPAVED = {"unpaved", "ground", "gravel", "dirt", "compacted", "sand", "grass", "fine_gravel", "pebblestone",
            "clay", "mud", "earth", "grass/trees", "concrete:plates"}  # плиты — тоже не асфальт: тряско
 TREE_ROW_STEP = 7  # м между деревьями ряда
+# Полосы деревьев, которых нет в OSM, но они видны на снимке и делают место узнаваемым:
+# (здание way, сторона фасада, от и до — м от фасада, шаг сетки, узел-проход, полуширина прохода).
+TREE_BELTS = [
+    (90895162, "north", 7, 22, 5, 5294741728, 7),  # сквер перед главным корпусом завода, проход к башне; ближе 6 м к достопримечательности деревья не ставятся
+]
 BUMP_KIND = {"bump": 0, "hump": 1, "cushion": 1, "table": 2}
+
+
+def tree_belts(trees, roads, road_nodes, buildings):
+    """Сетка деревьев перед фасадом здания из TREE_BELTS (с небольшим разбросом), кроме прохода, дорог и домов."""
+    for wid, side, d0, d1, step, gap_node, gap in TREE_BELTS:
+        if wid not in ways or gap_node not in nodes:
+            continue
+        pts = ring_xy(ways[wid][0])
+        cx = sum(p[0] for p in pts) / len(pts)
+        cz = sum(p[1] for p in pts) / len(pts)
+        want = {"north": (0, -1), "south": (0, 1), "west": (-1, 0), "east": (1, 0)}[side]
+        best = None
+        for (ax, az), (bx, bz) in zip(pts, pts[1:] + pts[:1]):
+            L = math.hypot(bx - ax, bz - az)
+            if L < 1e-6:
+                continue
+            ex, ez = (bx - ax) / L, (bz - az) / L
+            ox, oz = ez, -ex
+            if ox * ((ax + bx) / 2 - cx) + oz * ((az + bz) / 2 - cz) < 0:
+                ox, oz = -ox, -oz  # нормаль — наружу
+            if ox * want[0] + oz * want[1] > 0.7 and (not best or L > best[0]):
+                best = (L, ax, az, ex, ez, ox, oz)
+        if not best:
+            continue
+        L, ax, az, ex, ez, ox, oz = best
+        gx, gz = project(*nodes[gap_node])
+        tg = (gx - ax) * ex + (gz - az) * ez
+        segs = []
+        for r in roads:
+            q = [road_nodes[n] for n in r["n"]]
+            for (px, pz), (qx, qz) in zip(q, q[1:]):
+                if min(px, qx) < max(ax, ax + ex * L) + d1 + 20 and max(px, qx) > min(ax, ax + ex * L) - d1 - 20 \
+                        and min(pz, qz) < max(az, az + ez * L) + d1 + 20 and max(pz, qz) > min(az, az + ez * L) - d1 - 20:
+                    segs.append((px, pz, qx, qz, r["w"] / 2 + 2))
+        near = [b["p"] for b in buildings if abs(b["p"][0][0] - ax - ex * L / 2) < L / 2 + d1 + 60
+                and abs(b["p"][0][1] - az - ez * L / 2) < L / 2 + d1 + 60]
+        added = 0
+        for i in range(int(L // step) + 1):
+            for j in range(int((d1 - d0) // step) + 1):
+                h = ((i * 73856093) ^ (j * 19349663) ^ wid) & 0xFFFF
+                t = i * step + step / 2 + ((h & 0xFF) / 255 - 0.5) * step * 0.5
+                d = d0 + j * step + ((h >> 8) / 255 - 0.5) * step * 0.5
+                if t < 1 or t > L - 1 or abs(t - tg) < gap:
+                    continue
+                x, z = ax + ex * t + ox * d, az + ez * t + oz * d
+                if any(seg_dist(x, z, *sg[:4]) < sg[4] for sg in segs) or any(point_in(x, z, p) for p in near):
+                    continue
+                trees.append([round(x, 2), round(z, 2)])
+                added += 1
+        print(f"tree belt {wid}: {added} trees")
+
+
+def seg_dist(x, z, ax, az, bx, bz):
+    dx, dz = bx - ax, bz - az
+    L2 = dx * dx + dz * dz or 1
+    t = max(0, min(1, ((x - ax) * dx + (z - az) * dz) / L2))
+    return math.hypot(x - ax - t * dx, z - az - t * dz)
 
 
 def along(pts, step):
@@ -1903,6 +1965,8 @@ def build_city():
         for x, z in along(pts, TREE_ROW_STEP):
             if xmin < x < xmax and zmin < z < zmax:
                 trees.append([round(x, 2), round(z, 2)])
+
+    tree_belts(trees, roads, road_nodes, buildings)
 
     add_point_fuel_stations(fuel, areas, buildings, roads, road_nodes, inside)
     # Здания на АЗС без этажности — магазин и навес в один этаж, а не выдуманные 6 этажей.
