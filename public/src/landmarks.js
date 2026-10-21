@@ -40,6 +40,7 @@ const M = {
   blueGlass: new THREE.MeshPhongMaterial({ color: '#4a84c6', specular: '#e4f0ff', shininess: 80 }),
   slab: lambert('#d3d1c9'),
   limestone: lambert('#d9d3c7'),
+  salmon: lambert('#e98c78'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -917,12 +918,12 @@ function hipRoof(L, W, h, y0, mat) {
 }
 
 // Надпись золотыми буквами на табличке; смотрит в сторону f по z.
-function sign(text, w, h, x, y, z, f) {
+function sign(text, w, h, x, y, z, f, bg = '#f2eee4') {
   const c = document.createElement('canvas');
   c.width = 1024;
   c.height = 96;
   const g = c.getContext('2d');
-  g.fillStyle = '#f2eee4';
+  g.fillStyle = bg;
   g.fillRect(0, 0, 1024, 96);
   g.fillStyle = '#b8892a';
   g.font = 'bold 64px serif';
@@ -1337,6 +1338,94 @@ function drama(pl) {
   return merged;
 }
 
+// Национальный театр Удмуртии (Горького, 73; по фото): светлый пятиэтажный корпус по контуру,
+// на фасаде к улице — розовая середина с белыми лопатками, фронтоном с круглым окном и красной
+// кровлей, по бокам две белые башни с вертикальными витражами (северная — шире и выше,
+// с мачтой связи над корпусом), перед серединой — серый козырёк с закруглёнными краями и золотой
+// надписью «УДМУРТ ТЕАТР». (fx, fz) — направление к улице.
+function national(pl, fx, fz) {
+  const g = new THREE.Group();
+  const H = 18, wall = M.white;
+  g.add(prism(pl, -3, 4, M.stone));
+  g.add(prism(pl, 1, H - 1, wall));
+  g.add(prism(pl, H, 0.7, M.stone, 0.35));
+  let front = null;
+  contourEdges(pl, (e) => { if (e.ox * fx + e.oz * fz > 0.6 && (!front || e.len > front.len)) front = e; });
+  if (!front) contourEdges(pl, (e) => { if (!front || e.len > front.len) front = e; });
+  const rows = [[1.6, 2], [5.2, 2], [8.6, 2], [12, 2], [15.2, 1.8]];
+  contourWindows(g, pl, rows, { step: 3.4, w: 1.4, skip: (e) => e === front });
+  // s — метр фасада от северного конца (север — меньший z).
+  const L = front.len, at = (s) => (front.ez > 0 ? s : L - s);
+  const piece = (obj, s, d = 0) => g.add(onEdge(obj, front, at(s), d));
+  const T1 = Math.min(11, L * 0.2), C0 = T1, C1 = C0 + Math.min(20, L * 0.38), T2 = C1 + 6;
+  for (let s = T2 + 1.7; s < L - 1; s += 3.4) {
+    for (const [y, h] of rows) {
+      piece(box(1.8, h + 0.35, 0.12, M.white, 0, y - 0.18, 0), s, 0.06);
+      piece(box(1.4, h, 0.16, M.glass, 0, y, 0), s, 0.08);
+    }
+  }
+  // Башни: белые объёмы чуть вперёд, с витражом во всю высоту и уступом наверху.
+  const tower = (w, h, gw) => {
+    const q = new THREE.Group();
+    q.add(box(w, h + 3, 3, wall, 0, -3, -1));
+    q.add(box(gw, h - 5, 0.2, M.glass, 0, 2.5, 0.55));
+    for (let y = 2.5 + 1.6; y < h - 2.5; y += 1.6) q.add(box(gw, 0.12, 0.3, M.white, 0, y, 0.6));
+    for (const x of [-gw / 6, gw / 6]) q.add(box(0.12, h - 5, 0.3, M.white, x, 2.5, 0.6));
+    q.add(box(w + 0.6, 0.6, 3.6, M.stone, 0, h, -1));
+    q.add(box(w - 2, 2.2, 2, wall, 0, h + 0.6, -1.4));
+    q.add(box(w - 1.6, 0.3, 2.4, M.stone, 0, h + 2.8, -1.4));
+    return q;
+  };
+  piece(tower(T1, H + 6, T1 * 0.55), T1 / 2, 1.5);
+  piece(tower(6, H + 3, 2.2), (C1 + T2) / 2, 1.5);
+  // Розовая середина.
+  const cw = C1 - C0, c = new THREE.Group(), Hc = H + 1;
+  c.add(box(cw, Hc + 3, 2, M.salmon, 0, -3, -0.6));
+  for (let i = 0; i <= 6; i++) c.add(box(0.8, Hc - 5, 0.3, M.white, -cw / 2 + 1.5 + (i * (cw - 3)) / 6, 5, 0.5));
+  for (let i = 0; i < 6; i++) {
+    const x = -cw / 2 + 1.5 + ((i + 0.5) * (cw - 3)) / 6;
+    for (const y of [5.6, 9, 12.4, 15.6]) {
+      c.add(box(1.7, 2.3, 0.12, M.white, x, y - 0.15, 0.42));
+      c.add(box(1.3, 2, 0.16, M.glass, x, y, 0.46));
+    }
+  }
+  c.add(box(cw + 0.6, 0.7, 2.6, M.white, 0, Hc, -0.6));
+  const tri = (b, h, depth, mat, y, z) => {
+    const s = new THREE.Shape([new THREE.Vector2(-b, 0), new THREE.Vector2(b, 0), new THREE.Vector2(0, h)]);
+    return mesh(new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: false }), mat, 0, y, z);
+  };
+  const pb = cw * 0.36;
+  c.add(tri(cw / 2 + 0.3, 4.2, 14, M.terra, Hc + 0.6, -14));          // кровля в глубину
+  c.add(tri(pb + 0.6, 3.6, 0.5, M.white, Hc + 0.7, 0.1));             // рама фронтона
+  c.add(tri(pb - 0.4, 2.8, 0.2, M.salmon, Hc + 1.1, 0.55));             // тимпан
+  c.add(mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.2, 16).rotateX(Math.PI / 2), M.white, 0, Hc + 2.2, 0.75));
+  c.add(cyl(0.8, 10, M.tin, -cw * 0.25, Hc + 3, -8, 4, 0.15));      // мачта связи: решётчатая пирамидка
+  for (let i = 0; i < 4; i++) { // панели антенн
+    const a = (i * Math.PI) / 2, ant = box(0.5, 1.4, 0.15, M.white, -cw * 0.25 + Math.sin(a) * 0.35, Hc + 10.6, -8 + Math.cos(a) * 0.35);
+    ant.rotation.y = a;
+    c.add(ant);
+  }
+  // Козырёк: прямой фронт с надписью и закруглённые края, серая лента, под ней белые опоры.
+  const cd = 6.5, half = cw / 2 - 3, Y = 4.6;
+  c.add(box(2 * (half + cd), 1.4, 2.2, M.silver, 0, Y, 1.1));
+  c.add(box(2 * half, 1.4, cd, M.silver, 0, Y, 2.2 + cd / 2));
+  for (const sgn of [-1, 1]) {
+    const geo = new THREE.CylinderGeometry(cd, cd, 1.4, 16, 1, false, sgn < 0 ? -Math.PI / 2 : 0, Math.PI / 2);
+    c.add(mesh(geo, M.silver, sgn * half, Y + 0.7, 2.2));
+  }
+  for (const x of [-half - cd * 0.5, -half * 0.35, half * 0.35, half + cd * 0.5]) {
+    const z = Math.abs(x) > half ? 2.2 + cd * 0.75 : 2.2 + cd - 0.6;
+    c.add(box(0.9, 0.8, 0.9, M.terra, x, -0.2, z));
+    c.add(box(0.8, Y, 0.8, M.white, x, 0, z));
+  }
+  c.add(box(cw - 2, Y - 0.6, 0.2, M.glass, 0, 0.6, 0.5));
+  for (let i = 0; i < 4; i++) c.add(box(8, 0.25, 0.8, M.stone, 0, -0.25 + i * 0.25, 2.6 + 3 * 0.8 - i * 0.8)); // ступени
+  piece(c, (C0 + C1) / 2, 1);
+  const merged = mergeByMaterial(g);
+  merged.add(onEdge(sign('УДМУРТ ТЕАТР', 2 * half - 2, 1.0, 0, Y + 0.2, 0, 1, '#9fa8ae'), front, at((C0 + C1) / 2), 1 + 2.2 + cd + 0.03));
+  return merged;
+}
+
 // Музейно-выставочный комплекс Калашникова (по фото): объём по контуру — светлые каменные пилоны
 // с тёмным стеклом между ними, плоская кровля с выносом, круглый стеклянный фонарь в центре.
 // У угла к улице Бородина — высокий вход: зелёные стальные стойки, полуциркульный навес
@@ -1582,6 +1671,19 @@ function udmurtFlag() {
 
 // ---------------------------------------------------------------- сборка
 
+// Направление от достопримечательности на ближайшую точку улицы с именем re; нет улицы — (fx, fz).
+function toStreet(world, lm, re, fx, fz) {
+  let best = null;
+  for (const s of world.segmentsNear(lm.x, lm.z, 200)) {
+    if (!re.test(s.road.name)) continue;
+    const c = World.closest(s, lm.x, lm.z);
+    if (!best || c.d < best.d) best = c;
+  }
+  if (!best) return [fx, fz];
+  const d = Math.hypot(best.px - lm.x, best.pz - lm.z) || 1;
+  return [(best.px - lm.x) / d, (best.pz - lm.z) / d];
+}
+
 export function buildLandmarks(world) {
   const group = new THREE.Group();
   const animated = [];
@@ -1661,18 +1763,12 @@ export function buildLandmarks(world) {
         obj = place({ opera, arsenal, drama }[lm.key](toLocal(p, f)), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
-      case 'kalashnikov': {
-        // Вход — к улице Бородина: направление на её ближайшую точку.
-        let best = null;
-        for (const s of world.segmentsNear(lm.x, lm.z, 200)) {
-          if (!/Бородина/.test(s.road.name)) continue;
-          const c = World.closest(s, lm.x, lm.z);
-          if (!best || c.d < best.d) best = c;
-        }
-        let fx = -0.6, fz = 0.8;
-        if (best) { const d = Math.hypot(best.px - lm.x, best.pz - lm.z) || 1; fx = (best.px - lm.x) / d; fz = (best.pz - lm.z) / d; }
+      case 'kalashnikov':
+      case 'national': {
+        // Вход — к улице Бородина / фасад — к Горького.
+        const [fx, fz] = lm.key === 'kalashnikov' ? toStreet(world, lm, /Бородина/, -0.6, 0.8) : toStreet(world, lm, /Горького/, 1, 0);
         const f = fit(p, 0);
-        obj = place(kalashnikov(toLocal(p, f), fx, fz), f.cx, baseY(world, p), f.cz, 0);
+        obj = place({ kalashnikov, national }[lm.key](toLocal(p, f), fx, fz), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
       case 'rotunda':

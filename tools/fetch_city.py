@@ -258,6 +258,7 @@ LANDMARKS = {
     "opera": ("way", 152841852, "Театр оперы и балета", "replace"),
     "kalashnikov": ("way", 29032752, "Музей Калашникова", "replace"),
     "drama": ("way", 53845854, "Русский драматический театр", "replace"),
+    "national": ("way", 53845841, "Национальный театр Удмуртии", "replace"),
 }
 LANDMARK_BY_ELEMENT = {(t, i): key for key, (t, i, _, _) in LANDMARKS.items()}
 
