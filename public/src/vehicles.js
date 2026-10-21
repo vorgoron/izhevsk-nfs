@@ -144,13 +144,28 @@ export const MODELS = {
     taper: 0.8, corner: 0.13, cornerR: 0.7, // покатая крыша, сильно скруглённые углы
     windows: [[2, -0.3], [-0.42, -1.2], [-1.28, -2]], frame: '#1a1b1d', doors: [1.0, -0.36, -1.4],
     crease: [[0.8, 0.46], [-1.68, 0.8]], // косая выштамповка на дверях — «икс» сбоку
-    wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76, alloy: true },
+    wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76, alloy: true, rim: 15 },
     bumper: 'paint', bumperH: 0.26, grille: '#1b1c1f', trim: '#1a1b1d', lights: 'vesta',
     colors: ['#e9e9e6', '#c63a2a', '#1e1f22', '#8c9196', '#2c5aa0', '#e07a1f', '#5a3a6b', '#3b5f4a'],
     stats: { kmh: 190, accel: 1.0, grip: 1.06, eco: 0.85 },
   },
 };
 export const DEFAULT_MODEL = 'm412';
+
+// Диски — у всех машин: два слота в конце options (стиль и диаметр покупаются отдельно, как детали; wheel — показывать
+// в гараже и у процедурных машин). Штатный диаметр — wheels.rim (дюймы, по умолчанию 13), больше — до +6". Вид — в
+// rimWheel: колесо того же размера, шина ниже и шире. Новые стили — только в конец (номер варианта уходит в сеть).
+export const RIM_STYLES = [['stock', 'штатные'], ['steel', 'штампованные', 3000], ['star', '«звезда»', 8000], ['spoke5', '5 спиц', 12000],
+  ['turbo', '«турбина»', 15000], ['bbs', 'сетка, золото', 20000]];
+const RIM_UP_PRICE = [0, 4000, 9000, 15000, 22000, 30000, 40000];
+for (const spec of Object.values(MODELS)) {
+  const base = spec.wheels.rim ?? 13;
+  spec.options = [...(spec.options ?? []),
+    { key: 'rim', name: 'Диски', wheel: true, variants: RIM_STYLES },
+    { key: 'rsize', name: 'Диаметр', wheel: true, variants: RIM_UP_PRICE.map((p, i) => [String(base + i), `R${base + i}`, ...(p ? [p] : [])]) }];
+}
+// Детали, которые видно в гараже: у машин из glb — все, у процедурных — только диски.
+export const shownOptions = (spec) => (spec.options ?? []).filter((o) => spec.mesh || o.wheel);
 
 // ---------------------------------------------------------------- геометрия
 
@@ -313,7 +328,9 @@ function mirrorX(geo) {
 
 // Колесо вокруг своего центра одной геометрией с вершинными цветами. left — для левого борта (x < 0):
 // у колеса с диском из модели (hub) диск снаружи, его отражаем.
-function wheelGeometry(spec, seg, left = false) {
+function wheelGeometry(spec, seg, left = false, options) {
+  const base = spec.wheels.rim ?? 13, style = options?.rim ?? 'stock', size = +(options?.rsize ?? base);
+  if (style !== 'stock' || size !== base) return rimWheel(spec, seg, style === 'stock' ? (spec.wheels.alloy ? 'spoke5' : 'steel') : style, size, left);
   const m = spec.mesh;
   if (!m || !m.wheel) return merge(wheelParts(spec.wheels, seg)); // в модели нет колеса — процедурное
   if (m.hub) return (left ? m.wheelL : m.wheel).clone();
@@ -448,6 +465,41 @@ export function vehicleParts(spec, { wheelsInDetail = false, options } = {}) {
   return { paint: merge(paint, form), detail: merge(detail, form), lights: merge(lights, form), wheels, length: front - rear };
 }
 
+// Купленные диски (слоты rim, rsize): шина, обод и лицо диска по стилю. Колесо снаружи того же радиуса, что штатное
+// (крупнее — вылезало из тесных арок готовых моделей), обод — по диаметру, резина — что осталось (низкий профиль).
+// На дюйм шире на 4 % — внутрь машины (left — левый борт), внешняя боковина на месте, иначе торчит из-за крыла.
+// Спицы шире шины — видны с обеих сторон, зеркалить не надо. userData.rim — радиус обода (ободок шин, setGear).
+const RIM_COLORS = { steel: ['#7d8288', '#8f949a'], star: ['#c4c8cc', '#c4c8cc'], spoke5: ['#c4c8cc', '#d4d8dc'], turbo: ['#b9bec4', '#d0d4d8'], bbs: ['#c9cdd2', '#c9a227'] };
+function rimWheel(spec, seg, style, size, left) {
+  const { r: R } = spec.wheels, up = size - (spec.wheels.rim ?? 13);
+  const w = 0.22 * (1 + 0.04 * up), rr = Math.min(R - 0.035, size * 0.0127 * (R / 0.29));
+  const disc = (rad, width, n = seg * 2) => new THREE.CylinderGeometry(rad, rad, width, n).rotateZ(Math.PI / 2);
+  // Плоская деталь на лице диска: ширина вдоль оси колеса — чуть больше шины.
+  const spoke = (len, thick, at, angle, tilt = 0) => new THREE.BoxGeometry(w + 0.012, len, thick).rotateX(tilt).translate(0, at, 0).rotateX(angle);
+  const [barrel, face] = RIM_COLORS[style], DARK = '#2a2c30';
+  const parts = [[disc(R, w), '#151618'], [disc(rr, w + 0.004), barrel]];
+  if (style === 'steel') {
+    parts.push([disc(rr * 0.94, w + 0.006), face], [disc(rr * 0.32, w + 0.016, 16), '#c4c8cc']);
+    for (let i = 0; i < 6; i++) parts.push([disc(rr * 0.11, w + 0.01, 8).translate(0, Math.cos(i * Math.PI / 3) * rr * 0.62, Math.sin(i * Math.PI / 3) * rr * 0.62), DARK]);
+  } else if (style === 'turbo') {
+    parts.push([disc(rr * 0.94, w + 0.006), face], [disc(rr * 0.3, w + 0.016, 16), '#e4e7ea']);
+    for (let i = 0; i < 14; i++) parts.push([spoke(rr * 0.5, 0.025, rr * 0.62, (i * 2 * Math.PI) / 14, 0.55), '#7d838a']);
+  } else {
+    // Спицы на тёмной подложке: «звезда» — 5 широких, «5 спиц» — 5 пар тонких, сетка — 10 спиц крест-накрест.
+    parts.push([disc(rr * 0.9, w + 0.006), DARK], [disc(rr * 0.24, w + 0.016, 16), face]);
+    const n = style === 'bbs' ? 10 : 5;
+    for (let i = 0; i < n; i++) {
+      const a = (i * 2 * Math.PI) / n;
+      if (style === 'star') parts.push([spoke(rr * 0.82, 0.075, rr * 0.48, a), face]);
+      else if (style === 'spoke5') for (const d of [-0.11, 0.11]) parts.push([spoke(rr * 0.84, 0.03, rr * 0.48, a + d), face]);
+      else for (const t of [-0.45, 0.45]) parts.push([spoke(rr * 0.85, 0.022, rr * 0.5, a, t), face]);
+    }
+  }
+  const g = merge(parts).translate((left ? 1 : -1) * (w - 0.22) / 2, 0, 0);
+  g.userData.rim = rr;
+  return g;
+}
+
 // Колесо вокруг своего центра: шина и штампованный диск с колпаком; alloy — литой диск со спицами.
 function wheelParts({ r, alloy }, seg) {
   const disc = (k, w, n = 8) => new THREE.CylinderGeometry(r * k, r * k, w, n).rotateZ(Math.PI / 2);
@@ -478,7 +530,7 @@ export function buildPlayerModel(key, color, options) {
   g.add(body);
   g.userData.body = body;
   g.userData.wheels = [];
-  const wheelGeo = [wheelGeometry(spec, 14), wheelGeometry(spec, 14, true)];
+  const wheelGeo = [wheelGeometry(spec, 14, false, options), wheelGeometry(spec, 14, true, options)];
   for (const w of parts.wheels) {
     const pivot = new THREE.Group();
     pivot.position.set(w.x, w.y, w.z);
@@ -588,9 +640,9 @@ export function setGear(model, { engine = 0, tires = 0, nitro = 0, hopper = 0 } 
     for (const wh of ud.wheels) {
       const geo = wh.w.children[0].geometry;
       geo.boundingBox ?? geo.computeBoundingBox();
-      const s = Math.sign(wh.pivot.position.x), r = geo.boundingBox.max.y;
+      const s = Math.sign(wh.pivot.position.x), ring = geo.userData.rim ? geo.userData.rim + 0.012 : geo.boundingBox.max.y * 0.7; // купленные диски — по ободу
       const x = s < 0 ? geo.boundingBox.min.x - 0.002 : geo.boundingBox.max.x + 0.002;
-      add(wh.w, new THREE.TorusGeometry(r * 0.7, 0.007, 4, 32).rotateY(Math.PI / 2).translate(x, 0, 0), tires === 2 ? '#ff3b30' : '#ffd23f', 0);
+      add(wh.w, new THREE.TorusGeometry(ring, 0.007, 4, 32).rotateY(Math.PI / 2).translate(x, 0, 0), tires === 2 ? '#ff3b30' : '#ffd23f', 0);
     }
   }
 }

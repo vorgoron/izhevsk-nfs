@@ -5,7 +5,7 @@
 // а оплачиваются вместе кнопкой «Купить» в корзине. Цвета бесплатные. Улучшения — для своей машины или той, что
 // в корзине. Не купил и уехал — возвращаешься на ту машину, на которой заехал, с купленными деталями; корзина
 // с машинами и улучшениями остаётся до следующего захода (пока открыта игра).
-import { MODELS, DEFAULT_MODEL, pickOptions } from './vehicles.js';
+import { MODELS, DEFAULT_MODEL, pickOptions, shownOptions } from './vehicles.js';
 import { formatMoney } from './money.js';
 import { UPGRADES, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './shop.js';
 import { PAINTS, paintOf, paintKey } from './paints.js';
@@ -220,7 +220,7 @@ export class Garage {
       : 'Покрытия — металлик, перламутр, хамелеон, плёнки';
     const opts = this.el.querySelector('.opts');
     opts.innerHTML = '';
-    for (const slot of (spec.mesh && spec.options) || []) { // модель не загрузилась — процедурная, деталей нет
+    for (const slot of shownOptions(spec)) { // у процедурных машин (или glb не загрузился) — только диски
       const row = document.createElement('div');
       row.className = 'opt';
       row.innerHTML = `<span>${slot.name}</span>`;
@@ -328,7 +328,7 @@ export class Garage {
     }
     const paint = paintOf(this.choice.color), pk = paint && paintKey(this.choice.model, paint.key);
     if (paint && !this.wallet.owns(pk)) { out.sum += paint.price; out.keys.push([pk, paint.price, `Покрытие: ${paint.name}`]); }
-    for (const slot of (spec.mesh && spec.options) || []) {
+    for (const slot of shownOptions(spec)) {
       const [v, label, price] = slot.variants.find(([x]) => x === this.choice.options[slot.key]) ?? [];
       const key = optionKey(this.choice.model, slot.key, v);
       if (price && !this.wallet.owns(key)) { out.sum += price; out.keys.push([key, price, `${slot.name}: ${label}`]); }
