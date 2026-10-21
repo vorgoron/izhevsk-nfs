@@ -1419,6 +1419,7 @@ async function main() {
       cullAt = now + 500;
       cullPos.copy(cp);
       landmarks.group.userData.cull(cp.x, cp.z, camera.far);
+      signals.cull(cp.x, cp.z, Math.min(camera.far, Q.carsFar + 100)); // светофоры — до 400 / 320 / 250 м
     }
     skyDome.update(dt, camera);
     dayNight.update(dt);

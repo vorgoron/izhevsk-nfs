@@ -235,11 +235,11 @@ export class Breakables {
   // Светофоры (signals.js): столб и корпус — общая матрица от основания, лампы — свои матрицы в мире.
   addSignals(signals) {
     const items = [];
-    const meshes = [signals.poles, signals.housings, ...signals.lamps];
-    signals.list.forEach((_, i) => {
-      signals.poles.getMatrixAt(i, _m);
+    for (const ap of signals.list) {
+      if (!ap.cell) continue; // столба нет
+      const meshes = ap.cell.meshes, i = ap.slot; // [столб с корпусом, лампы ×3] его ячейки
+      meshes[0].getMatrixAt(i, _m);
       const e = _m.elements;
-      if (e[0] === 0 && e[5] === 0) return; // столба нет
       const x = e[12], y = e[13], z = e[14], a = Math.atan2(e[8], e[10]);
       let saved = null;
       items.push({
@@ -251,10 +251,9 @@ export class Breakables {
         show: () => meshes.forEach((mesh, k) => showInstance(mesh, i, saved[k])),
         make: () => {
           const g = new THREE.Group();
-          g.add(new THREE.Mesh(signals.poles.geometry, signals.poles.material));
-          g.add(new THREE.Mesh(signals.housings.geometry, signals.housings.material));
+          g.add(new THREE.Mesh(meshes[0].geometry, meshes[0].material));
           const inv = saved[0].clone().invert();
-          for (let k = 2; k < meshes.length; k++) { // лампы — погасшие
+          for (let k = 1; k < meshes.length; k++) { // лампы — погасшие
             const l = new THREE.Mesh(meshes[k].geometry, this.lampOff);
             new THREE.Matrix4().multiplyMatrices(inv, saved[k]).decompose(l.position, l.quaternion, l.scale);
             g.add(l);
@@ -262,7 +261,7 @@ export class Breakables {
           return g;
         },
       });
-    });
+    }
     this.#add(signals, items);
   }
 

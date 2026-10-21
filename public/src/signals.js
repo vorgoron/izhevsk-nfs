@@ -1,6 +1,7 @@
 // Светофоры из OSM (highway=traffic_signals). Узлы-светофоры рядом друг с другом — один
 // перекрёсток с общим циклом: две фазы по осям, жёлтый, всё красное. Трафик стоит на красный.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { World } from './world.js';
 
 const CLUSTER = 35;               // м: светофоры ближе — один перекрёсток
@@ -8,6 +9,7 @@ const GREEN = [14, 12], YELLOW = 3, ALL_RED = 1.5;
 const PED_GREEN = 7;              // одиночный пешеходный светофор: «зелёный» для пешеходов
 const ON = { red: '#ff2a1a', yellow: '#ffc21a', green: '#33ff66' };
 const OFF = '#1e1f21';
+const CELL = 600;                 // м: ячейка мешей светофоров
 // Выезды из дворов у перекрёстка не сдвигают стоп-линию (но на них столб не ставим).
 const MINOR = new Set(['service', 'living_street']);
 
@@ -120,49 +122,69 @@ export class Signals {
     return part === 0 ? 'green' : 'yellow';
   }
 
+  // Светофоры — по ячейкам CELL м: у каждой свои InstancedMesh со сферой границ, поэтому ячейки вне взгляда
+  // отсекаются, а дальние прячет cull(). Раньше на весь город было по одному мешу с frustumCulled = false —
+  // все ~400 светофоров (90 тыс. треугольников) рисовались каждый кадр. Столб с корпусом — одна геометрия
+  // (материал общий); лампы — по мешу на цвет, цвет у инстанса. У подхода: ap.cell — ячейка, ap.slot — номер в ней.
   #buildMeshes(scene) {
     const pole = new THREE.CylinderGeometry(0.07, 0.09, 3.3, 6).translate(0, 1.65, 0);
     const housing = new THREE.BoxGeometry(0.38, 1.15, 0.3).translate(0, 3.55, 0);
+    const body = mergeGeometries([pole.toNonIndexed(), housing.toNonIndexed()]);
     const poleMat = new THREE.MeshLambertMaterial({ color: '#2a2d30' });
-    const list = this.ctrls.flatMap((c) => c.approaches);
-    this.list = list;
-    const n = list.length;
-    this.poles = new THREE.InstancedMesh(pole, poleMat, n);
-    this.housings = new THREE.InstancedMesh(housing, poleMat, n);
-    const lampGeo = new THREE.SphereGeometry(0.13, 8, 5); // 64 треугольника: ламп в городе тысячи, и рисуются все
-    this.lamps = ['red', 'yellow', 'green'].map(() => new THREE.InstancedMesh(lampGeo, new THREE.MeshBasicMaterial(), n));
+    const lampGeo = new THREE.SphereGeometry(0.13, 8, 5); // 64 треугольника: ламп в городе тысячи
+    const lampMats = [0, 1, 2].map(() => new THREE.MeshBasicMaterial());
     const LAMP_Y = { red: 3.92, yellow: 3.55, green: 3.18 };
+    this.list = this.ctrls.flatMap((c) => c.approaches);
+    this.group = new THREE.Group();
+    scene.add(this.group);
 
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    const q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
     const p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), local = new THREE.Vector3();
-    const off = new THREE.Color(OFF);
-    list.forEach((ap, i) => {
-      const e = ap.e;
+    const byCell = new Map();
+    for (const ap of this.list) {
       const pp = this.#polePos(ap);
-      if (!pp) { // поставить негде — светофор работает, но без столба
-        this.poles.setMatrixAt(i, m.makeScale(0, 0, 0));
-        this.housings.setMatrixAt(i, m);
-        for (const l of this.lamps) { l.setMatrixAt(i, m); l.setColorAt(i, off); }
-        return;
-      }
-      const [x, z] = pp;
+      if (!pp) continue; // поставить негде — светофор работает, но без столба
+      const [x, z] = pp, e = ap.e;
       ap.pole = pp; // для камер (cameras.js)
       const y = this.world.terrain(x, z);
       q.setFromAxisAngle(up, Math.atan2(-e.dx, -e.dz));
-      m.compose(p.set(x, y, z), q, one);
-      this.poles.setMatrixAt(i, m);
-      this.housings.setMatrixAt(i, m);
-      ['red', 'yellow', 'green'].forEach((k, j) => {
+      const base = new THREE.Matrix4().compose(p.set(x, y, z), q, one);
+      const lamps = ['red', 'yellow', 'green'].map((k) => {
         local.set(0, LAMP_Y[k], 0.16).applyQuaternion(q);
-        this.lamps[j].setMatrixAt(i, new THREE.Matrix4().makeTranslation(x + local.x, y + local.y, z + local.z));
-        this.lamps[j].setColorAt(i, off);
+        return new THREE.Matrix4().makeTranslation(x + local.x, y + local.y, z + local.z);
       });
-    });
-    for (const mesh of [this.poles, this.housings, ...this.lamps]) {
-      mesh.frustumCulled = false;
-      scene.add(mesh);
+      const key = Math.floor(x / CELL) * 100000 + Math.floor(z / CELL);
+      if (!byCell.has(key)) byCell.set(key, []);
+      byCell.get(key).push({ ap, base, lamps, x, z });
     }
-    this.poles.castShadow = this.housings.castShadow = true;
+    const off = new THREE.Color(OFF);
+    this.cells = [];
+    for (const items of byCell.values()) {
+      const n = items.length, g = new THREE.Group();
+      const meshes = [new THREE.InstancedMesh(body, poleMat, n), ...lampMats.map((m) => new THREE.InstancedMesh(lampGeo, m, n))];
+      const cell = { meshes, group: g, x: 0, z: 0, r: 0 };
+      items.forEach(({ ap, base, lamps, x, z }, i) => {
+        ap.cell = cell;
+        ap.slot = i;
+        meshes[0].setMatrixAt(i, base);
+        lamps.forEach((m, j) => { meshes[1 + j].setMatrixAt(i, m); meshes[1 + j].setColorAt(i, off); });
+        cell.x += x / n;
+        cell.z += z / n;
+      });
+      for (const { x, z } of items) cell.r = Math.max(cell.r, Math.hypot(x - cell.x, z - cell.z));
+      for (const m of meshes) {
+        m.computeBoundingSphere();
+        g.add(m);
+      }
+      meshes[0].castShadow = true;
+      this.group.add(g);
+      this.cells.push(cell);
+    }
+  }
+
+  // Ячейки дальше far от (x, z) — не рисовать (main.js, раз в 0,5 с).
+  cull(x, z, far) {
+    for (const c of this.cells) c.group.visible = Math.hypot(c.x - x, c.z - z) - c.r < far;
   }
 
   // Проезд игрока на красный: пересёк стоп-линию подхода, по полосе которого едет, когда там красный.
@@ -196,14 +218,18 @@ export class Signals {
   update(dt) {
     this.time += dt;
     const c = new THREE.Color();
-    let dirty = false;
-    this.list.forEach((ap, i) => {
+    for (const ap of this.list) {
+      if (!ap.cell) continue;
       const st = this.state(ap);
-      if (ap.last === st) return;
+      if (ap.last === st) continue;
       ap.last = st;
-      dirty = true;
-      ['red', 'yellow', 'green'].forEach((k, j) => this.lamps[j].setColorAt(i, c.set(k === st ? ON[k] : OFF)));
-    });
-    if (dirty) for (const l of this.lamps) l.instanceColor.needsUpdate = true;
+      ap.cell.dirty = true;
+      ['red', 'yellow', 'green'].forEach((k, j) => ap.cell.meshes[1 + j].setColorAt(ap.slot, c.set(k === st ? ON[k] : OFF)));
+    }
+    for (const cell of this.cells) {
+      if (!cell.dirty) continue;
+      cell.dirty = false;
+      for (let j = 1; j < 4; j++) cell.meshes[j].instanceColor.needsUpdate = true;
+    }
   }
 }
