@@ -2246,8 +2246,8 @@ function deryabinBust() {
   g.add(mesh(new THREE.SphereGeometry(0.26, 8, 6), M.bronze, 0, 5.05, 0));
   for (const x of [-3.2, 3.2]) {
     g.add(cyl(0.12, 4, M.dark, x, 0, 0.6, 6));
-    g.add(box(1.4, 0.08, 0.08, M.dark, x, 3.6, 0.6));
-    for (const dx of [-0.65, 0, 0.65]) g.add(box(0.28, 0.42, 0.28, M.cream, x + dx, dx ? 3.7 : 4, 0.6));
+    g.add(box(0.08, 0.08, 1.4, M.dark, x, 3.6, 0.6)); // перекладина — поперёк линии фонарей (по отзыву)
+    for (const dz of [-0.65, 0, 0.65]) g.add(box(0.28, 0.42, 0.28, M.cream, x, dz ? 3.7 : 4, 0.6 + dz));
   }
   return mergeByMaterial(g);
 }
