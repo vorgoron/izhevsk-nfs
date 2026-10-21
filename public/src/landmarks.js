@@ -1278,9 +1278,9 @@ function statue(s = 1) {
 }
 
 // Театр оперы и балета (по фото): белый модернизм 1970-х. Низкий стилобат по всему контуру
-// (с юга — терраса буквой П), на нём главный объём; южный фасад — ряд высоких пилонов-лопаток
+// (у фасада — терраса буквой П), на нём главный объём; фасад — ряд высоких пилонов-лопаток
 // со стеклом между ними, на пилонах — тёмные скульптуры; над залом — глухая сценическая коробка.
-// pl — контур в системе fit(p, 0): +z — юг.
+// pl — контур в системе fit, фасад — к +z (в городе он смотрит на север, см. buildLandmarks).
 function opera(pl) {
   const g = new THREE.Group();
   const H0 = 1.2, H = 15;
@@ -1291,11 +1291,11 @@ function opera(pl) {
   g.add(prism(main, H0, H - H0, M.white));
   g.add(prism(main, H, 0.9, M.white, 0.35));
   g.add(prism(main, H + 0.9, 0.3, M.dark));
-  // Сценическая коробка — над северной частью главного объёма.
+  // Сценическая коробка — над задней частью главного объёма.
   const xs = main.map((q) => q[0]), mx0 = Math.min(...xs), mx1 = Math.max(...xs);
   const mz0 = Math.min(...main.map((q) => q[1])), mz1 = Math.max(...main.map((q) => q[1]));
   g.add(box((mx1 - mx0) * 0.42, 28, (mz1 - mz0) * 0.36, M.concrete, (mx0 + mx1) / 2, H0, mz0 + (mz1 - mz0) * 0.38));
-  // Южный фасад: пилоны, стекло между ними, скульптуры на каждом втором пилоне.
+  // Фасад: пилоны, стекло между ними, скульптуры на каждом втором пилоне.
   const south = (e) => e.oz > 0.6 && e.len > 5;
   contourEdges(main, (e) => {
     if (!south(e)) return;
@@ -2443,11 +2443,17 @@ export function buildLandmarks(world) {
         obj = place(mosque(toLocal(p, f), f), f.cx, baseY(world, p), f.cz, f.angle);
         break;
       }
-      case 'opera':
+      case 'opera': {
+        // Главный фасад с пилонами — на север (по отзыву из игры): модель строится лицом на юг по контуру,
+        // повёрнутому на 180°, и ставится с поворотом на π.
+        const f = fit(p, 0);
+        obj = place(opera(toLocal(p, f).map(([x, z]) => [-x, -z])), f.cx, baseY(world, p), f.cz, Math.PI);
+        break;
+      }
       case 'arsenal':
       case 'drama': {
         const f = fit(p, 0);
-        obj = place({ opera, arsenal, drama }[lm.key](toLocal(p, f)), f.cx, baseY(world, p), f.cz, 0);
+        obj = place({ arsenal, drama }[lm.key](toLocal(p, f)), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
       case 'kalashnikov':
