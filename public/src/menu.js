@@ -3,7 +3,7 @@
 // чтобы переключатели в меню показывали текущее состояние.
 
 import { Wheel } from './wheel.js';
-import { AD_LIMITS } from './adrequest.js';
+import { AD_LIMITS, validContact } from './adrequest.js';
 
 const CAMERAS = ['сзади', 'из салона', 'сверху', 'кино'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
@@ -16,7 +16,7 @@ export class Menu {
   // shared (гонка общая — в своей комнате на связи). money — баланс, nitro — цена долива баллона (или «полный»),
   // hopper — стоит ли «Кузнечик» (трюки).
   // account — вход по почте (account.js): { state() → { status, email, error }, start(), send(email), signOut() }.
-  // adRequest — отправить заявку на рекламу { who, contact, what } → Promise (adrequest.js).
+  // adRequest — отправить заявку на рекламу { who, contact, phone, what } → Promise (adrequest.js).
   constructor({ actions, state, volume, radio, setName, account, adRequest }) {
     this.account = account;
     this.actions = actions;
@@ -104,7 +104,8 @@ export class Menu {
       <p class="hint">Ваш плакат на рекламных щитах вдоль улиц Ижевска в игре: нажатие на него ведёт на ваш сайт.
         Оставьте заявку — свяжемся и расскажем о местах и ценах.</p>
       <input data-ad="who" maxlength="${AD_LIMITS.who}" autocomplete="organization" placeholder="Компания или имя">
-      <input data-ad="contact" maxlength="${AD_LIMITS.contact}" autocomplete="tel" placeholder="Телефон, почта или Telegram">
+      <input data-ad="contact" maxlength="${AD_LIMITS.contact}" autocomplete="email" placeholder="Почта, Telegram (@имя) или ВКонтакте (vk.com/…)">
+      <input data-ad="phone" type="tel" maxlength="${AD_LIMITS.phone}" autocomplete="tel" placeholder="Телефон — по желанию">
       <textarea data-ad="what" maxlength="${AD_LIMITS.what}" rows="3" placeholder="Что рекламировать и где (улицы, район) — по желанию"></textarea>
       <p class="hint" data-ad="text"></p>
       <button data-ad="send" class="go">Отправить заявку</button>
@@ -132,15 +133,19 @@ export class Menu {
     el.querySelector('[data-acc=send]').addEventListener('click', () => account.send(email.value));
     email.addEventListener('keydown', (e) => { if (e.key === 'Enter') account.send(email.value); });
     el.querySelector('[data-acc=out]').addEventListener('click', () => account.signOut());
-    // Заявка на рекламу: нужны имя и контакт; ушла — поля чистятся, пишем спасибо.
+    // Заявка на рекламу: нужны имя и контакт (почта, Telegram или ВКонтакте), телефон — по желанию; ушла — поля чистятся.
     const ad = (k) => el.querySelector(`[data-ad=${k}]`);
     ad('send').addEventListener('click', () => {
-      const v = { who: ad('who').value.trim(), contact: ad('contact').value.trim(), what: ad('what').value.trim() };
+      const v = Object.fromEntries(['who', 'contact', 'phone', 'what'].map((k) => [k, ad(k).value.trim()]));
       if (!v.who || !v.contact) { this.adStatus('Укажите компанию или имя и как с вами связаться.'); return; }
+      if (!validContact(v.contact)) {
+        this.adStatus('Для связи нужна почта, Telegram (@имя или t.me/имя) или ВКонтакте (vk.com/…).');
+        return;
+      }
       ad('send').disabled = true;
       this.adStatus('Отправляю…');
       adRequest(v).then(() => {
-        for (const k of ['who', 'contact', 'what']) ad(k).value = '';
+        for (const k of ['who', 'contact', 'phone', 'what']) ad(k).value = '';
         this.adStatus('Заявка отправлена — спасибо! Свяжемся с вами.');
         this.adSent = true;
         this.sync();

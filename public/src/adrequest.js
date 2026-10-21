@@ -1,10 +1,18 @@
 // Заявка на рекламу на щитах (меню → «Реклама на щитах», щит «Место свободно»): запись в Realtime Database
-// adRequests/<push id> { who, contact, what, t }. Читать заявки может только владелец проекта (консоль Firebase) —
+// adRequests/<push id> { who, contact, phone?, what?, t }. Читать заявки может только владелец проекта (консоль Firebase) —
 // правило на чтение не дано. Firebase грузится только при отправке: отдельное приложение 'ads' с анонимным входом
 // в памяти (в общем городе SDK мультиплеера не загружен).
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
 
-export const AD_LIMITS = { who: 80, contact: 80, what: 1000 };
+export const AD_LIMITS = { who: 80, contact: 80, phone: 30, what: 1000 };
+
+// Контакт для связи — обязательно почта, Telegram (@имя, t.me/имя) или ВКонтакте (vk.com/…); телефон — по желанию.
+const CONTACT = [
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+  /^(@|(https?:\/\/)?(t\.me|telegram\.me)\/)[a-z0-9_]{4,32}$/i,
+  /^(https?:\/\/)?(m\.)?vk\.(com|ru)\/[a-z0-9_.]{2,}\/?$/i,
+];
+export const validContact = (s) => CONTACT.some((re) => re.test(s.trim()));
 
 let ready = null;
 async function connect() {
@@ -15,11 +23,11 @@ async function connect() {
   return { db, base: db.getDatabase(app) };
 }
 
-// fields — { who, contact, what }; обрезаются до AD_LIMITS. Ошибка — исключение.
+// fields — { who, contact, phone, what }; обрезаются до AD_LIMITS, пустые необязательные не пишутся. Ошибка — исключение.
 export async function sendAdRequest(fields) {
   ready ??= connect().catch((e) => { ready = null; throw e; });
   const { db, base } = await ready;
   const v = Object.fromEntries(Object.entries(AD_LIMITS).map(([k, n]) => [k, String(fields[k] ?? '').trim().slice(0, n)]));
-  if (!v.what) delete v.what;
+  for (const k of ['phone', 'what']) if (!v[k]) delete v[k];
   await db.push(db.ref(base, 'adRequests'), { ...v, t: db.serverTimestamp() });
 }
