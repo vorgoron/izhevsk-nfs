@@ -2665,6 +2665,7 @@ export function buildWalkChunk(world, info, mats) {
   const T = (x, z) => world.terrain(x, z) - 0.05;
   for (const sg of segs) {
     const { strip, i } = sg, P = strip.pts, a = P[i - 1], b = P[i], k = strip.k;
+    if (strip.grand) continue; // парадная лестница — своей моделью (landmarks.js)
     const top = parts[k === 's' ? 1 : k === 'c' ? 3 : 0], curb = parts[2];
     const vs = k === 's' ? 1 / 0.32 : k === 'c' ? 1 / CYCLE_TILE : 1;
     // Поперечные точки: край, внутренний край бордюра — слева и справа.

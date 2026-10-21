@@ -21,6 +21,16 @@ const MIN_HALF = 0.5;         // м: уже полуширины тротуар 
 const THIN_Y = 0.04, THIN_MAX = 20; // прореживание: точка на прямой ближе (м) — лишняя, но отрезок не длиннее
 const JOIN_R = 1.5;           // м: на пересечении дорожек высота — общая, по рельефу в этом радиусе
 
+// Парадные лестницы (по фото): в OSM — только ось (highway=steps, ширины нет), остальное задано здесь. Лестница —
+// линия steps, у которой конец ближе всего к точке в R м от достопримечательности lm в сторону dir (к входу).
+// w — ширина маршей, w0 — нижнего марша и площадки над ним (шире, с гранитными тумбами). Меш — в landmarks.js
+// (grandStairs), здесь — раскладка маршей и площадок и плита, по которой едут (пандус по кромкам ступеней).
+export const GRAND_STAIRS = [{ lm: 'mikhailovsky', dir: [-1, 0], R: 30, w: 11, w0: 15 }];
+const RISER = 0.15, TREAD = 0.5; // м: высота и глубина ступени
+const FIRST = 6;                 // ступеней в нижнем марше
+const LANDING = 8;               // м: примерная длина площадки между маршами (рельеф пологий — площадок несколько)
+const GRAND_EDGE = 0.5;          // м: от концов оси OSM до первой и последней ступени
+
 export class Walks {
   constructor(world) {
     this.world = world;
@@ -29,6 +39,20 @@ export class Walks {
     this.byChunk = new Map(); // ключ квадрата → отрезки для меша
     this.ready = new Set();   // квадраты, у которых посчитаны все свои дорожки
     this.id = 0;
+    for (const g of GRAND_STAIRS) {
+      const lm = (world.city.landmarks || []).find((q) => q.key === g.lm);
+      if (!lm) continue;
+      const ex = lm.x + g.dir[0] * g.R, ez = lm.z + g.dir[1] * g.R;
+      let best = null, bd = 15;
+      for (const p of world.city.paths) {
+        if (p.k !== 's') continue;
+        for (const [x, z] of [p.p[0], p.p[p.p.length - 1]]) {
+          const d = Math.hypot(x - ex, z - ez);
+          if (d < bd) { bd = d; best = p; }
+        }
+      }
+      if (best) best.grand = g;
+    }
     // Отрезки дорожек OSM (кроме троп): придуманный тротуар не ставим, где свой есть; тротуары впритык вдоль
     // (в OSM часто две-три линии рядом) — один: старший (rank: шире, при равной — раньше в city.json) расширяется
     // на соседние, младшие там не строятся; тротуар рядом с велодорожкой сужается до неё.
@@ -134,7 +158,7 @@ export class Walks {
     for (const p of data.paths) {
       if (p.k === 't' || p.x || this.done.has(p)) continue; // переход — на дороге «зебра», не тротуар
       this.done.set(p, true);
-      this.#add(this.#strip(p.p, p.w, p.k, null, p.rank, 0, p));
+      this.#add(p.grand ? grandStrip(this.world, p) : this.#strip(p.p, p.w, p.k, null, p.rank, 0, p));
     }
     for (const r of data.lines) {
       const sw = !r.br && !r.tu && SIDEWALK[r.k];
@@ -157,7 +181,7 @@ export class Walks {
     let y = -Infinity;
     for (const s of this.grid.get(this.#key(x, z)) || []) {
       const c = World.closest(s, x, z);
-      if (c.d > s.h) continue;
+      if (c.d > s.h || (s.sq && (c.t === 0 || c.t === 1))) continue;
       const v = s.ya + (s.yb - s.ya) * c.t;
       if (v <= lim) y = Math.max(y, v);
     }
@@ -315,7 +339,10 @@ export class Walks {
     for (let i = 1; i < P.length; i++) {
       const a = P[i - 1], b = P[i];
       if (!a.on || !b.on) continue;
-      const seg = { strip, i, ax: a.x, az: a.z, bx: b.x, bz: b.z, ya: a.y, yb: b.y, h: strip.h };
+      const seg = { strip, i, ax: a.x, az: a.z, bx: b.x, bz: b.z, ya: a.y, yb: b.y, h: b.hw ?? strip.h };
+      // У парадной лестницы концы отрезков ровные: полукруг радиусом в полширины (7,5 м) у площадки над нижним
+      // маршем лежал на её высоте поверх марша и края проезжей части — машины перед лестницей ехали накренившись.
+      if (strip.grand) seg.sq = true;
       const [ci, cj] = this.world.chunkAt((a.x + b.x) / 2, (a.z + b.z) / 2), ck = ci * 10000 + cj;
       (this.byChunk.get(ck) || this.byChunk.set(ck, []).get(ck)).push(seg);
       const pad = strip.h;
@@ -327,6 +354,62 @@ export class Walks {
       }
     }
   }
+}
+
+// Раскладка парадной лестницы (считается один раз): ось снизу вверх, высоты концов — как у плиты (по рельефу
+// поперёк всей ширины). Ступеней — по перепаду высот; нижний марш — FIRST ступеней, остальные — поровну на
+// несколько маршей. Площадка тянется, пока рельеф не догонит её уровень, — тогда следующий марш (поровну
+// расставленные площадки ниже склона у вершины, ступени там тонули в земле). Куски { s0, s1, y0, y1, n, w }:
+// n ступеней (0 — площадка), s — вдоль оси от нижнего конца.
+export function grandLayout(world, p) {
+  if (p.layout) return p.layout;
+  const g = p.grand, T = (x, z) => world.terrain(x, z);
+  let [a, b] = [p.p[0], p.p[p.p.length - 1]];
+  if (T(...a) > T(...b)) [a, b] = [b, a];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+  const at = (s, v) => [a[0] + ux * s - uz * v, a[1] + uz * s + ux * v];
+  const end = (s) => Math.max(...[-1, -0.5, 0, 0.5, 1].map((k) => T(...at(s, (k * g.w) / 2)))) + WALK_LIFT;
+  const y0 = end(0), y1 = end(L);
+  const n = Math.max(FIRST + 1, Math.round((y1 - y0) / RISER)), r = (y1 - y0) / n, up = n - FIRST;
+  const run = L - 2 * GRAND_EDGE;
+  // Верхних маршей k (не меньше 3 ступеней в каждом); площадок k — над нижним маршем и между верхними.
+  const k = Math.max(1, Math.min(Math.floor(up / 3), Math.round((run - n * TREAD) / LANDING)));
+  const t = Math.min(TREAD, (run - k * 1.5) / n);
+  const sizes = Array.from({ length: k }, (_, i) => Math.round((up * (i + 1)) / k) - Math.round((up * i) / k));
+  const pieces = [];
+  let s = GRAND_EDGE, y = y0;
+  const flight = (m, w) => { pieces.push({ s0: s, s1: s + m * t, y0: y, y1: y + m * r, n: m, w }); s += m * t; y += m * r; };
+  // Площадка — до места, где рельеф поднимается до её уровня, но не короче 1,5 м и так, чтобы остальные марши
+  // (с площадками по 1,5 м) уложились до верхнего конца.
+  const landing = (w, i) => {
+    const need = sizes.slice(i).reduce((a, m) => a + m * t, 0) + (k - 1 - i) * 1.5;
+    let q = s + 1.5;
+    while (q < L && end(q + 0.25) < y + 0.02) q += 0.25;
+    q = Math.max(s + 1.5, Math.min(q, L - GRAND_EDGE - need));
+    pieces.push({ s0: s, s1: q, y0: y, y1: y, n: 0, w });
+    s = q;
+  };
+  flight(FIRST, g.w0);
+  for (let i = 0; i < k; i++) {
+    landing(i ? g.w : g.w0, i);
+    flight(sizes[i], g.w);
+  }
+  if (s < L - 0.1) pieces.push({ s0: s, s1: L, y0: y, y1: y, n: 0, w: g.w }); // верхняя площадка до конца оси
+  p.layout = { ax: a[0], az: a[1], ux, uz, L, y0, y1, r, t, pieces, at, w: g.w, w0: g.w0 };
+  return p.layout;
+}
+
+// Плита, по которой едут по парадной лестнице: пандус по кромкам ступеней, на площадках — ровно. Меша нет (grand).
+function grandStrip(world, p) {
+  const lay = grandLayout(world, p), pts = [];
+  const pt = (s, y, w) => { const [x, z] = lay.at(s, 0); pts.push({ x, z, y, on: true, hw: w / 2 }); };
+  pt(0, lay.y0, lay.w0);
+  for (const pc of lay.pieces) {
+    if (pc === lay.pieces[0]) pt(pc.s0, pc.y0, pc.w);
+    pt(pc.s1, pc.y1, pc.w);
+  }
+  if (lay.pieces[lay.pieces.length - 1].s1 < lay.L - 0.05) pt(lay.L, lay.y1, lay.w);
+  return { pts, k: 's', h: Math.max(lay.w, lay.w0) / 2, road: null, grand: true };
 }
 
 // Линия, сдвинутая влево (off > 0) от ломаной, с митрой на изломах (не больше 2).

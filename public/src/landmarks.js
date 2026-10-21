@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { World } from './world.js';
+import { grandLayout } from './walks.js';
 
 const lambert = (color, extra = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
 const M = {
@@ -51,6 +52,9 @@ const M = {
   coral: lambert('#e7765c'),
   tuff: lambert('#cc9c95'),
   redGranite: lambert('#8c4a3e'),
+  stair: lambert('#a89f95'),
+  iron: lambert('#1e2325'),
+  lantern: lambert('#f1e2b0', { emissive: '#3b2e08' }),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -2476,6 +2480,115 @@ function udmurtFlag() {
 // ---------------------------------------------------------------- сборка
 
 // Направление от достопримечательности на ближайшую точку улицы с именем re; нет улицы — (fx, fz).
+// ---------------------------------------------------------------- парадная лестница
+
+// Чугунное ограждение: решётка с розетками на прозрачном фоне, 1,2 м на текстуру (alphaTest — сливается в общий меш).
+let railMat = null;
+function railMaterial() {
+  if (railMat) return railMat;
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 96;
+  const g = c.getContext('2d');
+  g.strokeStyle = '#1e2325';
+  g.lineWidth = 5;
+  g.strokeRect(2.5, 2.5, 123, 91);
+  g.lineWidth = 3;
+  for (const x of [32, 96]) { g.beginPath(); g.arc(x, 48, 22, 0, Math.PI * 2); g.stroke(); }
+  for (const x of [32, 96]) { g.beginPath(); g.arc(x, 48, 9, 0, Math.PI * 2); g.stroke(); }
+  g.beginPath();
+  for (const x of [0, 64, 128]) { g.moveTo(x, 4); g.lineTo(x, 92); }
+  for (const x of [32, 96]) { g.moveTo(x, 4); g.lineTo(x, 26); g.moveTo(x, 70); g.lineTo(x, 92); }
+  g.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  railMat = new THREE.MeshLambertMaterial({ map: t, alphaTest: 0.5, side: THREE.DoubleSide });
+  return railMat;
+}
+
+// Брусок в системе лестницы (x — вдоль оси s, z — поперёк v): s0…s1 × v0…v1, верх линейно от top0 до top1, низ —
+// bot или [низ у s0, низ у s1] (поручень на марше — наклонный и снизу).
+function slab(s0, s1, v0, v1, top0, top1, bot, mat) {
+  const [b0, b1] = Array.isArray(bot) ? bot : [bot, bot];
+  if (v0 > v1) [v0, v1] = [v1, v0]; // иначе брусок наизнанку: видна внутренняя грань, она мерцает со ступенями
+  const P = [[s0, b0, v0], [s1, b1, v0], [s1, b1, v1], [s0, b0, v1], [s0, top0, v0], [s1, top1, v0], [s1, top1, v1], [s0, top0, v1]];
+  const pos = [];
+  for (const [a, b, c, d] of [[0, 1, 2, 3], [4, 7, 6, 5], [0, 4, 5, 1], [1, 5, 6, 2], [2, 6, 7, 3], [3, 7, 4, 0]]) {
+    pos.push(...P[a], ...P[b], ...P[c], ...P[a], ...P[c], ...P[d]);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return mesh(geo, mat);
+}
+
+// Парадная лестница к Свято-Михайловскому собору (по фото): внизу широкий марш между гранитными тумбами,
+// площадка, выше — марши с площадками между гранитными бортами, на бортах чугунное ограждение с фонарями.
+// Раскладка и плита, по которой едут, — walks.js (grandLayout); здесь меш и стенки ограждения. Ступени и борта
+// уходят под землю до самой низкой точки рельефа под ними — на склоне не висят.
+function grandStairs(world, lay) {
+  const g = new THREE.Group(), { pieces, r, t } = lay;
+  const low = (s0, s1, v0, v1) => Math.min(...[[s0, v0], [s1, v0], [s0, v1], [s1, v1]].map(([s, v]) => world.terrain(...lay.at(s, v)))) - 0.4;
+  const CH = 0.45, CT = 0.3, RH = 0.95; // борт: толщина, выше ступеней; ограждение: высота
+  const lantern = (s, v, y) => {
+    g.add(cyl(0.16, 0.45, M.iron, s, y, v, 8));
+    g.add(cyl(0.06, 2.9, M.iron, s, y, v, 6));
+    g.add(box(0.3, 0.42, 0.3, M.lantern, s, y + 2.9, v));
+    g.add(cone(0.27, 0.22, M.iron, s, y + 3.32, v, 4));
+  };
+  const top = (pc, s) => (pc.n ? pc.y0 + r + ((pc.y1 - pc.y0 - r) * (s - pc.s0)) / (pc.s1 - pc.s0) : pc.y0) + CT;
+  pieces.forEach((pc, k) => {
+    const h = pc.w / 2;
+    if (pc.n) {
+      for (let i = 1; i <= pc.n; i++) {
+        const a = pc.s0 + (i - 1) * t, b = i === pc.n ? pc.s1 : a + t;
+        g.add(slab(a, b, -h, h, pc.y0 + i * r, pc.y0 + i * r, low(a, b, -h, h), M.stair));
+      }
+    } else g.add(slab(pc.s0, pc.s1, -h, h, pc.y0, pc.y0, low(pc.s0, pc.s1, -h, h), M.stair));
+    if (k === 0) {
+      // Нижний марш — между тумбами вровень с площадкой над ним, на тумбах — фонари.
+      const y = pieces[1].y0 + 0.5;
+      for (const sg of [-1, 1]) {
+        const v0 = sg * h, v1 = sg * (h + 1.1);
+        g.add(slab(pc.s0 - 0.4, pc.s1 + 0.6, v0, v1, y, y, low(pc.s0 - 0.4, pc.s1 + 0.6, v0, v1), M.redGranite));
+        lantern(pc.s0 + 0.2, sg * (h + 0.55), y);
+        const q = [[pc.s0 - 0.4, v0], [pc.s1 + 0.6, v0], [pc.s1 + 0.6, v1], [pc.s0 - 0.4, v1]].map(([s, v]) => lay.at(s, v));
+        world.addCollider(q, [], y);
+      }
+      return;
+    }
+    // Борта — красный гранит; выше нижней площадки на них ограждение, у начала каждого куска — фонарь.
+    for (const sg of [-1, 1]) {
+      const v0 = sg * h, v1 = sg * (h + CH), vm = sg * (h + CH / 2);
+      const t0 = top(pc, pc.s0), t1 = top(pc, pc.s1);
+      g.add(slab(pc.s0, pc.s1, v0, v1, t0, t1, low(pc.s0, pc.s1, v0, v1), M.redGranite));
+      if (k === 1) continue;
+      const panel = new THREE.BufferGeometry(), len = pc.s1 - pc.s0, u1 = len / 1.2;
+      panel.setAttribute('position', new THREE.Float32BufferAttribute([pc.s0, t0, vm, pc.s1, t1, vm, pc.s1, t1 + RH, vm, pc.s0, t0 + RH, vm], 3));
+      panel.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, sg, 0, 0, sg, 0, 0, sg, 0, 0, sg], 3));
+      panel.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, u1, 0, u1, 1, 0, 1], 2));
+      panel.setIndex([0, 1, 2, 0, 2, 3]);
+      const pm = mesh(panel, railMaterial());
+      pm.castShadow = false; // тень решётки была бы сплошной плитой
+      g.add(pm);
+      g.add(slab(pc.s0, pc.s1, vm - 0.05, vm + 0.05, t0 + RH, t1 + RH, [t0 + RH - 0.06, t1 + RH - 0.06], M.iron)); // поручень
+      const posts = Math.max(1, Math.round(len / 2.5));
+      for (let j = 0; j < posts; j++) {
+        const s = pc.s0 + (j * len) / posts;
+        g.add(box(0.1, RH, 0.1, M.iron, s, top(pc, s), vm));
+      }
+      lantern(pc.s0, vm, t0);
+      // Сквозь ограждение не проехать (сверху, в прыжке, — можно).
+      const q = [[pc.s0, v0], [pc.s1, v0], [pc.s1, v1], [pc.s0, v1]].map(([s, v]) => lay.at(s, v));
+      world.addCollider(q, [], Math.max(t0, t1) + RH);
+    }
+  });
+  const last = pieces[pieces.length - 1];
+  for (const sg of [-1, 1]) lantern(last.s1, sg * (last.w / 2 + CH / 2), top(last, last.s1));
+  return place(g, lay.ax, 0, lay.az, Math.atan2(lay.uz, lay.ux));
+}
+
 function toStreet(world, lm, re, fx, fz) {
   let best = null;
   for (const s of world.segmentsNear(lm.x, lm.z, 200)) {
@@ -2493,6 +2606,12 @@ export function buildLandmarks(world) {
   const animated = [];
   const markers = []; // { name, x, z } для HUD и миникарты
   const far = []; // { obj, x, z, r } — для отсечения по расстоянию
+  const keep = (obj) => {
+    group.add(flatten(obj));
+    obj.traverse((o) => { if (o.userData.update) animated.push(o.userData.update); });
+    const box = new THREE.Box3().setFromObject(obj), c = box.getCenter(new THREE.Vector3());
+    far.push({ obj, x: c.x, z: c.z, r: box.getSize(new THREE.Vector3()).length() / 2 });
+  };
 
   for (const lm of world.city.landmarks || []) {
     let obj = null;
@@ -2700,14 +2819,12 @@ export function buildLandmarks(world) {
         break; // только перекраска (в buildBuildings)
     }
     if (p && lm.mode === 'replace' && lm.key !== 'stadium') world.addCollider(p); // у стадиона внутри поле
-    if (obj) {
-      group.add(flatten(obj));
-      obj.traverse((o) => { if (o.userData.update) animated.push(o.userData.update); });
-      const box = new THREE.Box3().setFromObject(obj), c = box.getCenter(new THREE.Vector3());
-      far.push({ obj, x: c.x, z: c.z, r: box.getSize(new THREE.Vector3()).length() / 2 });
-    }
+    if (obj) keep(obj);
     if (lm.key !== 'plant') markers.push({ name: lm.name, x: lm.x, z: lm.z }); // корпус — под меткой башни
   }
+
+  // Парадные лестницы (walks.js, GRAND_STAIRS) — в координатах города, не в системе храма.
+  for (const p of world.city.paths) if (p.grand) keep(grandStairs(world, grandLayout(world, p)));
 
   group.userData.update = (t) => animated.forEach((fn) => fn(t));
   // Дальше конца тумана модель не видна, но рисовалась бы: прячем по расстоянию до её края.
