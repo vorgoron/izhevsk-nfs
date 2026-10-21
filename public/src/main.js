@@ -182,11 +182,7 @@ async function main() {
   scene.add(model);
   const car = new Car(world, model, tuned(wallet, choice.model));
   // Тюнинг на машине: в гараже — и то, что в корзине, в городе — купленное.
-  // Другим игрокам — только купленное (net.setGear).
-  const showGear = (g) => {
-    setGear(car.model, g.isOpen ? g.gear() : tuned(wallet, g.choice.model));
-    net.setGear(tuned(wallet, g.choice.model));
-  };
+  const showGear = (g) => setGear(car.model, g.isOpen ? g.gear() : tuned(wallet, g.choice.model));
   const setVehicle = (key, color, options) => {
     scene.remove(car.model);
     car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
@@ -198,6 +194,7 @@ async function main() {
     car.setModel(m, tuned(wallet, key));
     showGear(garage);
     net.setVehicle(key, color, options);
+    net.setGear(tuned(wallet, key)); // другим игрокам — только купленное
     nitroFx.attach(m);
     jetFx.attach(m);
     exhaustFx.attach(m);
@@ -596,7 +593,12 @@ async function main() {
     onChange: () => menu.sync(),
   });
   // Покупки могли приехать из аккаунта — характеристики своей машины пересчитываем.
-  wallet.onChange = () => { account.save(); car.setModel(car.model, tuned(wallet, garage.choice.model)); showGear(garage); };
+  wallet.onChange = () => {
+    account.save();
+    car.setModel(car.model, tuned(wallet, garage.choice.model));
+    showGear(garage);
+    net.setGear(tuned(wallet, garage.choice.model));
+  };
   game.account = account;
   // Большая карта: значки — заправки, достопримечательности, камеры, другие игроки; маршрут гонки — жёлтым.
   citymap = new CityMap({
