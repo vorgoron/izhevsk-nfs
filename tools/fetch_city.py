@@ -367,8 +367,9 @@ def building_style(tags, wid, h, pts):
         if mat == "brick":
             return 1
         return 0 if mat in ("panel", "concrete") or r < 0.45 else 1
-    # Двух-трёхэтажные многоквартирные — в Ижевске в основном послевоенные (Орджоникидзе, соцгорода).
-    if 2 <= n <= 3 and w >= 8 and b in ("apartments", "residential", "dormitory"):
+    # Двух-четырёхэтажные многоквартирные — в Ижевске в основном послевоенные (Орджоникидзе, соцгорода),
+    # с четырёхскатной крышей.
+    if 2 <= n <= 4 and w >= 8 and b in ("apartments", "residential", "dormitory"):
         return 11
     if n >= 3 and w > 9 and b in ("apartments", "residential", "yes", "dormitory"):
         return 2 if r < 0.6 else 1

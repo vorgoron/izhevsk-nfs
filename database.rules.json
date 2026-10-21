@@ -34,6 +34,17 @@
         }
       }
     },
+    "adRequests": {
+      "$id": {
+        ".write": "auth != null && !data.exists()",
+        ".validate": "newData.hasChildren(['who', 'contact', 't'])",
+        "who": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80" },
+        "contact": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80" },
+        "what": { ".validate": "newData.isString() && newData.val().length <= 1000" },
+        "t": { ".validate": "newData.val() === now" },
+        "$other": { ".validate": false }
+      }
+    },
     "users": {
       "$uid": {
         "progress": {

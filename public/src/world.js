@@ -50,7 +50,7 @@ const UTURN_R = 4;    // м: радиус дуги разворота, если 
 export const SIDEWALK = { primary: [2, 3], secondary: [1.5, 3], tertiary: [1, 2.5], residential: [0, 2], unclassified: [0, 2] };
 // Лежачие полицейские (bumps в city.json): вид → [длина вдоль дороги, высота], м. Приподнятый переход (2) —
 // ровная площадка с пандусами BUMP_RAMP м.
-export const BUMP = [[0.6, 0.06], [3.5, 0.08], [7, 0.1]];
+export const BUMP = [[0.9, 0.09], [4, 0.11], [7, 0.12]];
 export const BUMP_RAMP = 1.5;
 const BUMP_CELL = 25;
 // Где ставить знаки у точек на дорогах: м до точки по ходу и от края полотна.
@@ -1581,7 +1581,35 @@ export class World {
     }
     this.graph = adj;
     this.nav = nav;
+    // Куски графа: окраины (СНТ, посёлки у края области) связаны с городом дорогами за краем выгрузки OSM —
+    // в игре это острова. part — номер куска у узла; навигатор ведёт только в свой кусок (navEnd).
+    this.part = new Map();
+    let n = 0;
+    for (const start of adj.keys()) {
+      if (this.part.has(start)) continue;
+      const stack = [start];
+      this.part.set(start, n);
+      while (stack.length) for (const [b] of adj.get(stack.pop())) if (!this.part.has(b)) { this.part.set(b, n); stack.push(b); }
+      n++;
+    }
     return adj;
+  }
+
+  // Кусок графа, в котором машина: улица под ней (до 60 м), иначе ближайший узел.
+  partAt(x, z) {
+    const end = this.navEnd(x, z, null, 60);
+    return this.part.get(end ? end.seg.road.n[end.seg.i - 1] : this.nearestGraphNode(x, z));
+  }
+
+  // Ближайший к точке узел куска part (или -1).
+  nearestInPart(x, z, part) {
+    let best = -1, bd = Infinity;
+    for (const [id, p] of this.part) {
+      if (p !== part) continue;
+      const [nx, nz] = this.nodes[id], d = (nx - x) ** 2 + (nz - z) ** 2;
+      if (d < bd) { bd = d; best = id; }
+    }
+    return best;
   }
 
   nearestGraphNode(x, z) {
@@ -1595,11 +1623,13 @@ export class World {
   }
 
   // Куда навигатору подъехать к точке (дом, место на карте): ближайшее к ней место на улице из графа
-  // навигатора, не дальше maxD; улица адреса street (если есть рядом) — предпочтительнее. null — нет улиц.
-  navEnd(x, z, street = null, maxD = 300) {
+  // навигатора, не дальше maxD; улица адреса street (если есть рядом) — предпочтительнее. part — только из этого
+  // куска графа (partAt). null — нет улиц.
+  navEnd(x, z, street = null, maxD = 300, part = null) {
     let best = null, named = null;
     for (const s of this.segmentsNear(x, z, maxD)) {
       if (!this.nav.get(s.road.n[s.i - 1])?.some((e) => e[2] === s.road)) continue;
+      if (part != null && this.part.get(s.road.n[s.i - 1]) !== part) continue;
       const c = World.closest(s, x, z);
       if (c.d > maxD) continue;
       const end = { ...c, seg: s };

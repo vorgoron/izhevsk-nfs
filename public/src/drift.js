@@ -1,12 +1,16 @@
 // Дрифт: очки за езду боком — угол заноса × скорость × время, множитель растёт, пока дрифт не прерывается.
 // Дрифт кончился (полсекунды без заноса) — очки уходят в кошелёк рублями; удар о стену или машину — сорван.
+// Цена подобрана к остальным: секунды четыре заноса — как kickflip (~500 ₽), длинный — не больше MAX_PAY
+// (раньше за 0,5 очка/с и ×5 кругами по площади легко набегало 20 000 ₽ — дороже победы в гонке).
 const MIN_SPEED = 8;     // м/с
 const MIN_ANGLE = 12;    // градусов между курсом и движением
 const MAX_ANGLE = 70;    // боком сильнее — уже разворот, очков не прибавляет
 const GAP = 0.6;         // с без заноса — дрифт кончился
 const MULT_EVERY = 2.5;  // с непрерывного дрифта на +1 к множителю, до MULT_MAX
-const MULT_MAX = 5;
-const MIN_PAY = 100;     // меньше — не считается
+const MULT_MAX = 3;
+const RATE = 0.12;       // очков за градус × м/с × с
+const MIN_PAY = 50;      // меньше — не считается
+const MAX_PAY = 2000;    // больше за один дрифт не дают
 
 export class Drift {
   constructor(el) {
@@ -31,7 +35,7 @@ export class Drift {
     if (!car.air && vf > 0 && v > MIN_SPEED && angle > MIN_ANGLE && !car.sink) {
       this.time += dt;
       this.gap = 0;
-      this.points += Math.min(angle, MAX_ANGLE) * v * dt * 0.5 * this.mult;
+      this.points = Math.min(MAX_PAY, this.points + Math.min(angle, MAX_ANGLE) * v * dt * RATE * this.mult);
     } else if (this.points) {
       this.gap += dt;
       if (this.gap > GAP) {
@@ -40,7 +44,10 @@ export class Drift {
         if (paid) this.#show(`ДРИФТ ${paid.toLocaleString('ru-RU')}`, 'done');
       }
     }
-    if (this.points >= MIN_PAY / 2) this.#show(`ДРИФТ ${Math.round(this.points).toLocaleString('ru-RU')}${this.mult > 1 ? ` ×${this.mult}` : ''}`, 'on');
+    if (this.points >= MIN_PAY / 2) {
+      const tail = this.points >= MAX_PAY ? ' макс' : this.mult > 1 ? ` ×${this.mult}` : '';
+      this.#show(`ДРИФТ ${Math.round(this.points).toLocaleString('ru-RU')}${tail}`, 'on');
+    }
     else if (this.state === 'on') this.#hide();
     return paid;
   }

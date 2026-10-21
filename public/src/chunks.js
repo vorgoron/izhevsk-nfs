@@ -71,6 +71,7 @@ export class ChunkManager {
     if (ads) for (const o of ads.slice(1)) this.mats.ads.meshes.add(o); // плакаты — для нажатия по ним
     const stops = buildStopChunk(w, info, this.mats.stops);
     if (stops) group.add(...stops.map((o) => tag(o, 'остановки')));
+    for (const o of stops || []) if (o.userData.stop) this.breakables?.addStop(o);
     const fences = buildFenceChunk(w, info, this.mats.fences);
     if (fences) group.add(...fences.map((o) => tag(o, 'заборы')));
     for (const o of fences || []) if (o.userData.pieces) this.breakables?.addFences(o);

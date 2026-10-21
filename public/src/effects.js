@@ -5,7 +5,8 @@ import * as THREE from 'three';
 const SPARKS = 400, SPARK_LIFE = 0.45, SPARK_RATE = 260; // шт, с, шт/с
 
 export class NitroFX {
-  constructor(scene) {
+  // lines — «линии скорости» по краям экрана (только у своей машины).
+  constructor(scene, { lines = true } = {}) {
     this.scene = scene;
     // Пламя: два конуса (внешний оранжевый, внутренний бело-голубой), смотрят назад.
     const cone = (r, l, color, opacity) => new THREE.Mesh(
@@ -35,7 +36,7 @@ export class NitroFX {
     this.next = 0;
     this.carry = 0;
     this.t = 0;
-    this.lines = speedLines();
+    this.lines = lines ? speedLines() : null;
   }
 
   // Новая машина: пламя — в её выхлопную трубу (слева сзади, под бампером).
@@ -97,7 +98,7 @@ export class NitroFX {
     g.attributes.position.needsUpdate = true;
     g.attributes.color.needsUpdate = true;
 
-    this.lines.update(dt, on, Math.abs(car.speed));
+    this.lines?.update(dt, on, Math.abs(car.speed));
   }
 }
 

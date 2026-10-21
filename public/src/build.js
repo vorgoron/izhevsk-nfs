@@ -1122,8 +1122,9 @@ export function buildingMaterials(renderer) {
 }
 
 // Двускатная крыша частного дома: по прямоугольнику наименьшей площади вокруг контура,
-// конёк вдоль длинной стороны, свес, фронтоны на торцах (цвета стен).
-function gableRoof(pts, top, wallCol, roofCol, rp, rc) {
+// конёк вдоль длинной стороны, свес, фронтоны на торцах (цвета стен). hip — вальмовая (четырёхскатная): конёк
+// короче на полширины с каждого конца, на торцах вместо фронтонов — треугольные скаты.
+function gableRoof(pts, top, wallCol, roofCol, rp, rc, hip = false) {
   let best = null;
   for (let i = 0; i < pts.length; i++) {
     const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % pts.length];
@@ -1156,12 +1157,19 @@ function gableRoof(pts, top, wallCol, roofCol, rp, rc) {
     for (const v of [a, b, c]) { rp.push(...v); rc.push(col.r, col.g, col.b); }
   };
   const yr = top + H, ye = top - ov * (H / half); // свес чуть ниже карниза
+  // Концы конька: у вальмовой — на полширины внутрь (скат торца с тем же уклоном), не дальше середины.
+  const sm = (s0 + s1) / 2, r0 = hip ? Math.min(sm, s0 + half) : s0 - ov, r1 = hip ? Math.max(sm, s1 - half) : s1 + ov;
   for (const t of [t0 - ov, t1 + ov]) {
-    const a = P(s0 - ov, t, ye), b = P(s1 + ov, t, ye), c = P(s1 + ov, tm, yr), d = P(s0 - ov, tm, yr);
+    const a = P(s0 - ov, t, ye), b = P(s1 + ov, t, ye), c = P(r1, tm, yr), d = P(r0, tm, yr);
     tri(a, b, c, roofCol);
     tri(a, c, d, roofCol);
   }
-  for (const s of [s0, s1]) tri(P(s, t0, top), P(s, t1, top), P(s, tm, yr), wallCol);
+  if (hip) {
+    tri(P(s0 - ov, t0 - ov, ye), P(s0 - ov, t1 + ov, ye), P(r0, tm, yr), roofCol);
+    tri(P(s1 + ov, t0 - ov, ye), P(s1 + ov, t1 + ov, ye), P(r1, tm, yr), roofCol);
+  } else {
+    for (const s of [s0, s1]) tri(P(s, t0, top), P(s, t1, top), P(s, tm, yr), wallCol);
+  }
 }
 
 // Доля прямоугольника наименьшей площади вокруг контура, занятая самим контуром (1 — прямоугольник).
@@ -1423,11 +1431,11 @@ export function buildBuildingChunk(world, list, mats) {
       gableRoof(pts, top, col, new THREE.Color(b.rc ?? HOUSE_ROOFS[(hash >> 3) % HOUSE_ROOFS.length]).multiplyScalar(k), rp, rc);
       continue;
     }
-    // Малоэтажный послевоенный: прямоугольный — двускатная крыша, Г/П-образный — вальмовая (скаты от
-    // каждой стены), иначе ниже — плоская.
+    // Малоэтажный послевоенный (как на Орджоникидзе) — крыша вальмовая, четырёхскатная: прямоугольный — по
+    // прямоугольнику с коньком, Г/П-образный — скаты от каждой стены; не вышло — ниже плоская.
     if (b.s === 11 && !holes.length) {
       const roofCol = new THREE.Color(b.rc ?? LOWRISE_ROOFS[(hash >> 3) % LOWRISE_ROOFS.length]).multiplyScalar(k);
-      if (rectFill(pts) > 0.85) { gableRoof(pts, top, col, roofCol, rp, rc); continue; }
+      if (rectFill(pts) > 0.85) { gableRoof(pts, top, col, roofCol, rp, rc, true); continue; }
       if (hipRoof(pts, top, roofCol, rp, rc)) continue;
     }
 
@@ -1788,9 +1796,11 @@ export function buildPoleChunk(world, info, mats) {
 // сторона показывает строки 0…P, обратная 1…P+1), смена — сдвигом offset.y, у всех щитов разом, как роллерный
 // щит. Нажатие на плакат — ссылка рекламодателя (url) или действие игры (act, main.js). share — доля щитов.
 export const ADVERTISERS = [
-  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.4 },
-  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.3 },
-  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.3 },
+  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.35 },
+  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.25 },
+  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.25 },
+  // «Место свободно» — заявка на рекламу (меню → «Реклама на щитах», adrequest.js).
+  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.15 },
 ];
 const AD_W = 1024, AD_H = 512;
 const AD_SHOW = 8, AD_ROLL = 0.9; // с: плакат стоит, затем прокрутка
@@ -1900,6 +1910,37 @@ function daurFmAd(g) {
   adText(g, 'слушай за рулём', 110, 310, 76, 800, left);
   g.fillStyle = '#111';
   adText(g, 'радио — в меню игры', 110, 420, 54, 700, left);
+}
+
+// Свободное место: белый щит с пунктирной рамкой, как настоящий «Аренда» — и тёмный «Ваша реклама».
+function freeAd(g) {
+  g.fillStyle = '#f4f1ea';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.strokeStyle = '#2c5d8f';
+  g.lineWidth = 10;
+  g.setLineDash([36, 20]);
+  g.strokeRect(30, 30, AD_W - 60, AD_H - 60);
+  g.setLineDash([]);
+  g.textAlign = 'center';
+  g.fillStyle = '#15181b';
+  adText(g, 'РЕКЛАМНОЕ МЕСТО', AD_W / 2, 175, 92);
+  g.fillStyle = '#2c5d8f';
+  adText(g, 'СВОБОДНО', AD_W / 2, 300, 128);
+  g.fillStyle = '#15181b';
+  adText(g, 'нажмите на щит — оставьте заявку', AD_W / 2, 400, 48, 700);
+}
+
+function freeYoursAd(g) {
+  g.fillStyle = '#2c5d8f';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = '#ffd23f';
+  g.fillRect(0, AD_H - 90, AD_W, 90);
+  g.textAlign = 'left';
+  g.fillStyle = '#fff';
+  adText(g, 'ВАША РЕКЛАМА', 70, 175, 112);
+  adText(g, 'на щитах по всему Ижевску', 70, 275, 62, 700);
+  g.fillStyle = '#15181b';
+  adText(g, 'нажмите, чтобы разместить', 70, AD_H - 28, 52, 800);
 }
 
 // Щит 6 × 3 м на одной стойке, плакаты с двух сторон; щит — вдоль локальной x, лицевые стороны ±z.
@@ -2086,8 +2127,9 @@ const SIGN = { s: 0.7, y: 2.4 }; // сторона щитка, высота ег
 export function stopMaterials(renderer) {
   const posts = [-1.95, 1.95].flatMap((x) => [PAV.back, 0.7].map((z) =>
     part(new THREE.BoxGeometry(0.08, PAV.h, 0.08).translate(x, 0.12 + PAV.h / 2, z), '#3f6e8c')));
+  // Площадка — отдельно: снесённый павильон падает, а она остаётся.
+  const base = part(new THREE.BoxGeometry(4.6, 0.5, 2.4).translate(0, -0.13, 0.15), '#a19d93'); // низ — в склон
   const frame = mergeGeos([
-    part(new THREE.BoxGeometry(4.6, 0.5, 2.4).translate(0, -0.13, 0.15), '#a19d93'), // площадка, низ — в склон
     ...posts,
     part(new THREE.BoxGeometry(4.3, 0.12, 1.95).translate(0, 2.68, 0.05), '#2e3840'), // крыша
     part(new THREE.BoxGeometry(4.3, 0.26, 0.05).translate(0, 2.6, 1.04), '#2c5d8f'),  // синий козырёк
@@ -2100,7 +2142,7 @@ export function stopMaterials(renderer) {
     ...[-1.95, 1.95].map((x) => new THREE.BoxGeometry(0.02, 2.1, 1.35).translate(x, 1.43, -0.06)),
   ]);
   return {
-    frame, glass,
+    base: mergeGeos([base], ['color']), frame, glass,
     // Стойка с заглушкой и щиток-пластина (кромка серая), лицо — отдельной плоскостью с каждой стороны.
     post: mergeGeos([
       part(new THREE.CylinderGeometry(0.04, 0.045, 2.9, 8).translate(0, 1.35, 0), '#8d9196'),
@@ -2165,9 +2207,18 @@ export function buildStopChunk(world, info, mats) {
     mesh.castShadow = shadow;
     return mesh;
   };
+  // Павильоны и знаки сносятся (breakables.js: addStops) — места и меши с той же матрицей лежат у каркаса и стойки.
   const out = [];
-  if (pavs.length) out.push(inst(mats.frame, mats.frameMat, pavs, true), inst(mats.glass, mats.glassMat, pavs, false));
-  if (signs.length) out.push(inst(mats.post, mats.frameMat, signs, true), ...mats.faces.map((f) => inst(f, mats.sign, signs, false)));
+  if (pavs.length) {
+    const frame = inst(mats.frame, mats.frameMat, pavs, true), glass = inst(mats.glass, mats.glassMat, pavs, false);
+    Object.assign(frame.userData, { spots: pavs, stop: 'pavilion', parts: [glass] });
+    out.push(inst(mats.base, mats.frameMat, pavs, false), frame, glass);
+  }
+  if (signs.length) {
+    const post = inst(mats.post, mats.frameMat, signs, true), faces = mats.faces.map((f) => inst(f, mats.sign, signs, false));
+    Object.assign(post.userData, { spots: signs, stop: 'stopSign', parts: faces });
+    out.push(post, ...faces);
+  }
   return out.length ? out : null;
 }
 

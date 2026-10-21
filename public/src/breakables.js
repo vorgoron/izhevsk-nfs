@@ -1,4 +1,4 @@
-// Ломаемое у дорог: фонарные столбы, светофоры, камеры, рекламные щиты, лёгкие заборы кусками (деревья — тоже здесь, но не ломаются). Машина сносит их ударом быстрее
+// Ломаемое у дорог: фонарные столбы, светофоры, камеры, рекламные щиты, остановки, лёгкие заборы кусками (деревья — тоже здесь, но не ломаются). Машина сносит их ударом быстрее
 // breakV (по нормали), медленнее — упирается, как в стену. Снесённое — отдельный меш на тех же
 // геометриях: падает от удара (поворот вокруг основания под тяжестью), скользит и ложится; экземпляр
 // на месте спрятан. Обратно встаёт, когда игрок уехал далеко. Сбитые машины трафика тоже сносят.
@@ -23,6 +23,10 @@ const KINDS = {
   bollard: { r: 0.12, h: 0.9, tip: 0.1, breakV: 4, loss: 0.2, kick: 0.3, over: 0.2 },
   play: { r: 1.2, h: 2.4, tip: 0.3, breakV: 4, loss: 0.25, kick: 0.2 },
   gate: { r: 0.06, h: 1.1, tip: 0.04, breakV: 1.5, loss: 0.05, kick: 0.3, over: 0.2, hop: 0, lift: 0.04 },
+  // Остановка (build.js: buildStopChunk): павильон — отрезок вдоль него толщиной 2r (4,6 × 1,8 м), опрокидывается
+  // назад или вперёд; знак — стойка, как у знаков из OSM.
+  pavilion: { r: 0.9, h: 2.7, tip: 0.4, breakV: 5, loss: 0.35, kick: 0.15, over: 0.4, hop: 0.3 },
+  stopSign: { r: 0.06, h: 2.9, tip: 0.3, breakV: 1.5, loss: 0.05, kick: 0.35 },
 };
 const CELL = 16;          // м: клетка сетки поиска
 const MAX_DEBRIS = 40;    // больше — самое старое встаёт на место
@@ -159,6 +163,27 @@ export class Breakables {
           const o = new THREE.Mesh(g, mesh.material);
           o.userData.own = g;
           return o;
+        },
+      };
+    }));
+  }
+
+  // Остановки квадрата: каркас павильона или стойка знака (mesh.userData.stop — вид) и меши с той же матрицей
+  // экземпляра (стёкла, лица знака — userData.parts). Павильон — отрезок вдоль своей оси x (4,6 м).
+  addStop(mesh) {
+    const kind = KINDS[mesh.userData.stop], meshes = [mesh, ...mesh.userData.parts];
+    this.#add(mesh, mesh.userData.spots.map(([x, y, z, a], i) => {
+      let saved = null;
+      const ux = Math.cos(a) * 2.3, uz = -Math.sin(a) * 2.3; // ось x экземпляра в мире, полдлины
+      return {
+        kind, x, y, z, a,
+        seg: kind === KINDS.pavilion ? { ax: x - ux, az: z - uz, bx: x + ux, bz: z + uz } : undefined,
+        hide: () => { saved = meshes.map((o) => hideInstance(o, i)); return saved[0]; },
+        show: () => meshes.forEach((o, k) => showInstance(o, i, saved[k])),
+        make: () => {
+          const g = new THREE.Group();
+          for (const o of meshes) g.add(new THREE.Mesh(o.geometry, o.material));
+          return g;
         },
       };
     }));
@@ -338,13 +363,14 @@ export class Breakables {
     it.broken = true;
     const m = it.hide();
     const obj = it.make();
-    obj.traverse((o) => { if (o.isMesh) o.castShadow = !o.material.alphaTest; }); // решётка — без тени-плиты
+    obj.traverse((o) => { if (o.isMesh) o.castShadow = !o.material.alphaTest && !o.material.transparent; }); // решётка и стёкла — без тени-плиты
     this.group.add(obj);
     const sp = Math.hypot(vx, vz), k = it.kind;
     // Падает по ходу удара; основание отлетает с долей скорости, вверх — подскок. Забор — плашмя, поперёк себя.
     let fx = sp > 0.1 ? vx / sp : -nx, fz = sp > 0.1 ? vz / sp : -nz;
     if (it.seg) {
-      const ux = Math.sin(it.a), uz = Math.cos(it.a), sg = Math.sign(fx * uz - fz * ux) || 1;
+      const s = it.seg, L = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1;
+      const ux = (s.bx - s.ax) / L, uz = (s.bz - s.az) / L, sg = Math.sign(fx * uz - fz * ux) || 1;
       fx = uz * sg;
       fz = -ux * sg;
     }
