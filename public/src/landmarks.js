@@ -50,6 +50,7 @@ const M = {
   slateDark: lambert('#5a5c60'),
   coral: lambert('#e7765c'),
   tuff: lambert('#cc9c95'),
+  redGranite: lambert('#8c4a3e'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -2045,6 +2046,88 @@ function armenian(L, W, s) {
   return mergeByMaterial(g);
 }
 
+// Фигура человека ростом ~2 м (на постамент — масштабом): ноги, длинный сюртук, руки, голова;
+// hat — цилиндр, seated — сидит на кубе, колени вперёд. Лицом в +z.
+function figure(mat, { hat = false, seated = false } = {}) {
+  const g = new THREE.Group();
+  // Высоты: низ сюртука, плечи (верх торса), центр головы; у сидящего — от сиденья высотой 0.55.
+  const [coat, top, head] = seated ? [0.55, 1.45, 1.6] : [0.55, 1.9, 2.07];
+  if (seated) {
+    g.add(box(0.8, 0.55, 0.7, mat, 0, 0, -0.1));
+    for (const x of [-0.14, 0.14]) {
+      g.add(box(0.17, 0.17, 0.55, mat, x, 0.45, 0.3));
+      g.add(box(0.15, 0.55, 0.16, mat, x, 0, 0.55));
+    }
+  } else {
+    for (const x of [-0.13, 0.13]) g.add(cyl(0.09, 0.9, mat, x, 0, 0, 8));
+  }
+  g.add(cyl(seated ? 0.36 : 0.32, top - coat - 0.5, mat, 0, coat, 0, 10, 0.24)); // полы сюртука
+  g.add(cyl(0.24, 0.5, mat, 0, top - 0.5, 0, 10, 0.22));
+  g.add(mesh(new THREE.SphereGeometry(0.13, 10, 8), mat, 0, head, 0));
+  for (const x of [-0.3, 0.3]) {
+    const arm = box(0.11, 0.65, 0.11, mat, 0, 0, 0);
+    arm.position.set(x, top - 0.35, seated ? 0.12 : 0);
+    arm.rotation.x = seated ? -0.6 : 0;
+    arm.rotation.z = Math.sign(x) * 0.12;
+    g.add(arm);
+  }
+  if (hat) {
+    g.add(cyl(0.2, 0.03, mat, 0, head + 0.1, 0, 12));
+    g.add(cyl(0.13, 0.28, mat, 0, head + 0.13, 0, 12, 0.14));
+  }
+  return g;
+}
+
+// Памятник ижевским оружейникам (набережная пруда; по фото): две бронзовые фигуры в цилиндрах —
+// стоящий мастер и сидящий рядом — на круглом ступенчатом постаменте из красного гранита с золотыми
+// табличками и надписью «ИЖЕВСКИЕ ОРУЖЕЙНИКИ». Лицом в +z (от пруда).
+function gunsmiths() {
+  const g = new THREE.Group();
+  g.add(cyl(5, 1.4, M.redGranite, 0, -1, 0, 32));
+  g.add(cyl(3.9, 0.5, M.redGranite, 0, 0.4, 0, 32));
+  g.add(mesh(new THREE.CylinderGeometry(3.92, 3.92, 0.3, 32, 1, true), doubleSided(M.gold), 0, 0.65, 0));
+  g.add(cyl(2.7, 1.0, M.redGranite, 0, 0.9, 0, 32));
+  const a = figure(M.bronze, { hat: true }), b = figure(M.bronze, { hat: true, seated: true });
+  a.scale.setScalar(1.9);
+  b.scale.setScalar(1.9);
+  a.position.set(-0.9, 1.9, -0.3);
+  b.position.set(0.8, 1.9, 0.1);
+  g.add(a, b);
+  const merged = mergeByMaterial(g);
+  const c = document.createElement('canvas');
+  c.width = 2048;
+  c.height = 96;
+  const cx = c.getContext('2d');
+  cx.fillStyle = '#8c4a3e';
+  cx.fillRect(0, 0, 2048, 96);
+  cx.fillStyle = '#f1ece2';
+  cx.font = 'bold 64px serif';
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+  cx.fillText('ИЖЕВСКИЕ ОРУЖЕЙНИКИ', 1024, 52);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  merged.add(mesh(new THREE.CylinderGeometry(2.72, 2.72, 0.6, 48, 1, true, Math.PI), new THREE.MeshLambertMaterial({ map: t }), 0, 1.4, 0)); // с π — середина текстуры на +z
+  return merged;
+}
+
+// Памятник С. М. Кирову в аллее парка Кирова (по фото): серебристая фигура в длинной куртке, руки на поясе,
+// на высоком сером прямоугольном постаменте с тёмной табличкой и клумбой вокруг. Лицом в +z.
+function kirovStatue() {
+  const g = new THREE.Group();
+  g.add(box(6, 0.3, 6, M.stone, 0, -0.1, 0));
+  g.add(box(5.4, 0.25, 5.4, M.green, 0, 0.2, 0));
+  g.add(box(2.4, 1, 2.4, M.stone, 0, -1, 0));
+  g.add(box(1.9, 4.6, 1.9, M.stone, 0, 0, 0));
+  g.add(box(2.1, 0.3, 2.1, M.stone, 0, 4.6, 0));
+  g.add(box(0.9, 0.5, 0.05, M.dark, 0, 3.4, 0.96));
+  const f = figure(M.silver);
+  f.scale.setScalar(2.1);
+  f.position.y = 4.9;
+  g.add(f);
+  return mergeByMaterial(g);
+}
+
 function plantTower() {
   const g = new THREE.Group();
   const pink = M.pink, white = M.white;
@@ -2381,6 +2464,15 @@ export function buildLandmarks(world) {
           const j = (i + 1) % p.length;
           world.addCollider([p[i], p[j], q[j], q[i]]);
         }
+        break;
+      }
+      case 'gunsmiths':
+      case 'kirov': {
+        // Оружейники — спиной к пруду (он на западе), Киров — лицом ко входу в парк с улицы Кирова (восток).
+        const m = lm.key === 'gunsmiths' ? gunsmiths() : kirovStatue(), a = lm.key === 'gunsmiths' ? Math.atan2(0.96, 0.29) : Math.PI / 2;
+        m.rotation.y = a;
+        obj = place(new THREE.Group().add(m), lm.x, world.terrain(lm.x, lm.z), lm.z);
+        world.addCollider(square(lm.x, lm.z, lm.key === 'gunsmiths' ? 4 : 1.5));
         break;
       }
       case 'water_tower': {
