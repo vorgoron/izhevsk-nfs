@@ -365,13 +365,13 @@ function archOpening(w, h, big) {
 }
 
 // Арочное окно: белый наличник с «гирькой», тёмное стекло. Фасад в +x, низ окна на y.
-function archWindow(w, h, x, y, z) {
+function archWindow(w, h, x, y, z, seg = 12) {
   const g = new THREE.Group();
   const r = w / 2;
   g.add(box(0.2, h + 0.3, w + 0.6, M.white, 0, -0.3, 0));
-  g.add(mesh(new THREE.CylinderGeometry(r + 0.3, r + 0.3, 0.2, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.white, 0, h - r, 0));
+  g.add(mesh(new THREE.CylinderGeometry(r + 0.3, r + 0.3, 0.2, seg, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.white, 0, h - r, 0));
   g.add(box(0.2, h - r, w, M.glass, 0.08, 0, 0));
-  g.add(mesh(new THREE.CylinderGeometry(r, r, 0.2, 12, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.glass, 0.08, h - r, 0));
+  g.add(mesh(new THREE.CylinderGeometry(r, r, 0.2, seg, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), M.glass, 0.08, h - r, 0));
   g.add(box(0.35, 0.35, w + 0.9, M.white, 0.05, -0.55, 0));
   g.position.set(x, y, z);
   return g;
@@ -547,9 +547,10 @@ function tri(b, h, depth, mat, y, z) {
 const halfDisc = (r, d, mat) => mesh(new THREE.CylinderGeometry(r, r, d, 14, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(-Math.PI / 2), mat);
 
 // Арочное окно лицом в +z (archWindow смотрит в +x).
-const archWindowZ = (w, h) => {
+// seg — сегментов в полукруге: на длинных фасадах с сотней окон хватает 5–6.
+const archWindowZ = (w, h, seg) => {
   const o = new THREE.Group();
-  o.add(archWindow(w, h, 0, 0, 0).rotateY(-Math.PI / 2));
+  o.add(archWindow(w, h, 0, 0, 0, seg).rotateY(-Math.PI / 2));
   return o;
 };
 
@@ -1607,12 +1608,13 @@ function plantMain(pl, tx, tz) {
     for (let k = 0; k < n; k++) {
       const t = (k + 0.5) * (e.len / n);
       if (busy(e, t)) continue;
-      g.add(onEdge(archWindowZ(1.5, 2.8).translateY(1.1), e, t, 0.05));
+      g.add(onEdge(box(0.7, H - 4.8, 0.25, M.white, 0, 4.8, 0), e, t + e.len / n / 2, 0.1)); // лопатки
+      if (e.oz > 0.7) continue; // южный фасад — на закрытую территорию завода: без окон, вдвое легче
+      g.add(onEdge(archWindowZ(1.5, 2.8, 5).translateY(1.1), e, t, 0.05));
       for (const y of [5.4, 8.4]) {
         g.add(onEdge(box(1.8, 2.25, 0.12, M.white, 0, y - 0.15, 0), e, t, 0.06));
         g.add(onEdge(box(1.4, 1.95, 0.16, M.glass, 0, y, 0), e, t, 0.08));
       }
-      g.add(onEdge(box(0.7, H - 4.8, 0.25, M.white, 0, 4.8, 0), e, t + e.len / n / 2, 0.1)); // лопатки
     }
   });
   // Колоннада под башней; вынесена так, чтобы основание башни (16 × 14 вокруг точки) было внутри.
@@ -2001,7 +2003,7 @@ function sobmech(pl, s) {
   g.add(prism(pl, -3, H + 3, M.redBrick));
   g.add(prism(pl, H, 0.5, M.white, 0.25));
   g.add(insetRoof(pl, 5, 2.6, H + 0.5, M.domeGreen));
-  contourWindows(g, pl, [[2.2, 4.2]], { step: 3.2, make: (h) => archWindowZ(1.4, h) });
+  contourWindows(g, pl, [[2.2, 4.2]], { step: 3.2, make: (h) => archWindowZ(1.4, h, 6) });
   const xs = pl.map((q) => q[0]);
   const end = (k) => pl.reduce((b, q) => (q[0] * k > b[0] * k ? q : b));
   const m = end(s), x0 = m[0] - s * 1.5, z0 = m[1];
@@ -2222,6 +2224,46 @@ function steamLoco() {
   for (let i = 0; i < 4; i++) for (const z of [-0.85, 0.85]) {
     g.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.14, 14).rotateX(Math.PI / 2), M.signalRed, -9.6 + i * 1.6, 0.6, z));
   }
+  return mergeByMaterial(g);
+}
+
+// Памятник основателю завода А. Ф. Дерябину на набережной (по фото): бронзовый бюст на высоком белом
+// постаменте с бронзовыми досками, под ним — три ступени чёрного гранита, по бокам — чугунные фонари
+// на три плафона. Лицом в +z (от пруда).
+function deryabinBust() {
+  const g = new THREE.Group();
+  for (let i = 0; i < 3; i++) g.add(box(4.6 - i * 0.9, 0.35, 4.6 - i * 0.9, M.dark, 0, -0.35 + i * 0.35, 0));
+  g.add(box(1.7, 0.5, 1.7, M.white, 0, 0.7, 0));
+  g.add(box(1.3, 2.4, 1.3, M.white, 0, 1.2, 0));
+  g.add(box(1.55, 0.3, 1.55, M.white, 0, 3.6, 0));
+  for (const [x, z, ry] of [[0, 0.66, 0], [0.66, 0, Math.PI / 2], [-0.66, 0, Math.PI / 2]]) {
+    const d = box(0.6, 1.2, 0.04, M.bronze, x, 1.8, z);
+    d.rotation.y = ry;
+    g.add(d);
+  }
+  g.add(box(0.5, 0.35, 0.5, M.bronze, 0, 3.9, 0));
+  g.add(cyl(0.45, 0.55, M.bronze, 0, 4.25, 0, 8, 0.3)); // плечи
+  g.add(mesh(new THREE.SphereGeometry(0.26, 8, 6), M.bronze, 0, 5.05, 0));
+  for (const x of [-3.2, 3.2]) {
+    g.add(cyl(0.12, 4, M.dark, x, 0, 0.6, 6));
+    g.add(box(1.4, 0.08, 0.08, M.dark, x, 3.6, 0.6));
+    for (const dx of [-0.65, 0, 0.65]) g.add(box(0.28, 0.42, 0.28, M.cream, x + dx, dx ? 3.7 : 4, 0.6));
+  }
+  return mergeByMaterial(g);
+}
+
+// Памятник Кузебаю Герду у Коммунаров (по фото): тёмная бронзовая фигура поэта сидит на камне
+// на низкой круглой белой площадке с полукруглыми ступенями. Лицом в +z.
+function gerdStatue() {
+  const g = new THREE.Group();
+  for (let i = 0; i < 3; i++) g.add(cyl(4.6 - i * 0.5, 0.25, M.concrete, 0, -0.25 + i * 0.25, 0.6, 16));
+  g.add(cyl(2.6, 0.9, M.white, 0, 0.5, 0, 16));
+  g.add(box(1.6, 0.5, 0.05, M.dark, 0, 0.7, 2.6));
+  g.add(box(0.8, 0.6, 0.7, M.redGranite, -0.7, 1.4, 0));
+  const f = figure(M.slateDark, { seated: true });
+  f.scale.setScalar(1.35);
+  f.position.set(0.2, 1.4, 0);
+  g.add(f);
   return mergeByMaterial(g);
 }
 
@@ -2591,6 +2633,16 @@ export function buildLandmarks(world) {
           const c = Math.cos(m.rotation.y), sn = Math.sin(m.rotation.y);
           world.addCollider([[-10.5, -1.5], [10.5, -1.5], [10.5, 1.5], [-10.5, 1.5]].map(([x, z]) => [lm.x + x * c + z * sn, lm.z - x * sn + z * c]));
         }
+        break;
+      }
+      case 'deryabin':
+      case 'gerd': {
+        // Дерябин — спиной к пруду (он на востоке), Герд — лицом к улице Коммунаров.
+        const [fx, fz] = lm.key === 'deryabin' ? [-0.98, -0.18] : toStreet(world, lm, /Коммунаров/, 1, 0);
+        const m = lm.key === 'deryabin' ? deryabinBust() : gerdStatue();
+        m.rotation.y = Math.atan2(fx, fz);
+        obj = place(new THREE.Group().add(m), lm.x, world.terrain(lm.x, lm.z), lm.z);
+        world.addCollider(square(lm.x, lm.z, lm.key === 'deryabin' ? 2.3 : 3));
         break;
       }
       case 'gunsmiths':
