@@ -271,6 +271,8 @@ LANDMARKS = {
     "armenian": ("way", 588383916, "Армянская церковь Святого Григория Просветителя", "replace"),
     "gunsmiths": ("node", 2348003715, "Памятник ижевским оружейникам", "add"),
     "kirov": ("node", 970533211, "Памятник С. М. Кирову", "add"),
+    "gagarin": ("node", 4207906448, "Памятник Ю. А. Гагарину", "add"),
+    "locomotive": ("node", 3957116836, "Паровоз Эр 796-28", "add"),
 }
 LANDMARK_BY_ELEMENT = {(t, i): key for key, (t, i, _, _) in LANDMARKS.items()}
 

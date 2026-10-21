@@ -2047,8 +2047,8 @@ function armenian(L, W, s) {
 }
 
 // Фигура человека ростом ~2 м (на постамент — масштабом): ноги, длинный сюртук, руки, голова;
-// hat — цилиндр, seated — сидит на кубе, колени вперёд. Лицом в +z.
-function figure(mat, { hat = false, seated = false } = {}) {
+// hat — цилиндр, seated — сидит на кубе, колени вперёд, armsUp — руки вскинуты вверх. Лицом в +z.
+function figure(mat, { hat = false, seated = false, armsUp = false } = {}) {
   const g = new THREE.Group();
   // Высоты: низ сюртука, плечи (верх торса), центр головы; у сидящего — от сиденья высотой 0.55.
   const [coat, top, head] = seated ? [0.55, 1.45, 1.6] : [0.55, 1.9, 2.07];
@@ -2066,9 +2066,9 @@ function figure(mat, { hat = false, seated = false } = {}) {
   g.add(mesh(new THREE.SphereGeometry(0.13, 10, 8), mat, 0, head, 0));
   for (const x of [-0.3, 0.3]) {
     const arm = box(0.11, 0.65, 0.11, mat, 0, 0, 0);
-    arm.position.set(x, top - 0.35, seated ? 0.12 : 0);
+    arm.position.set(armsUp ? x * 1.3 : x, armsUp ? top + 0.29 : top - 0.35, seated ? 0.12 : 0); // вскинутая — от плеча вверх и в сторону
     arm.rotation.x = seated ? -0.6 : 0;
-    arm.rotation.z = Math.sign(x) * 0.12;
+    arm.rotation.z = Math.sign(x) * (armsUp ? -0.45 : 0.12);
     g.add(arm);
   }
   if (hat) {
@@ -2125,6 +2125,52 @@ function kirovStatue() {
   f.scale.setScalar(2.1);
   f.position.y = 4.9;
   g.add(f);
+  return mergeByMaterial(g);
+}
+
+// Памятник Ю. А. Гагарину у «Аксиона» (Горького; по фото): бронзовая фигура со вскинутыми руками
+// на глобусе, опоясанном орбитой, на гранёной пирамиде из тёмного гранита. Лицом в +z.
+function gagarinStatue() {
+  const g = new THREE.Group();
+  g.add(box(7, 0.3, 7, M.stone, 0, -0.1, 0));
+  g.add(mesh(new THREE.CylinderGeometry(0.7, 2.2, 3.4, 4).rotateY(Math.PI / 4), M.granite, 0, 1.9, 0));
+  g.add(mesh(new THREE.SphereGeometry(1, 16, 12), M.bronze, 0, 4.4, 0));
+  const orbit = mesh(new THREE.TorusGeometry(1.45, 0.07, 6, 28), M.bronze, 0, 4.4, 0);
+  orbit.rotation.set(1.2, 0, 0.35);
+  g.add(orbit);
+  const f = figure(M.bronze, { armsUp: true });
+  f.scale.setScalar(1.6);
+  f.position.y = 5.3;
+  g.add(f);
+  return mergeByMaterial(g);
+}
+
+// Паровоз Эр 796-28 на постаменте (по фото): чёрный котёл с дымовой трубой и сухопарником, будка
+// машиниста, тендер, красная рама и пять пар красных ведущих колёс, красный буферный брус; стоит
+// на отрезке пути. Вдоль локальной x, дымовая труба — к +x.
+function steamLoco() {
+  const g = new THREE.Group(), L = 21;
+  for (let x = -L / 2; x <= L / 2; x += 0.9) g.add(box(0.25, 0.2, 2.6, M.bronze, x, -0.2, 0)); // шпалы
+  for (const z of [-0.76, 0.76]) g.add(box(L + 1, 0.15, 0.08, M.tin, 0, 0, z));
+  g.add(box(13, 0.5, 2.2, M.signalRed, 2.5, 1.1, 0)); // рама
+  for (let i = 0; i < 5; i++) for (const z of [-0.85, 0.85]) {
+    g.add(mesh(new THREE.CylinderGeometry(0.66, 0.66, 0.14, 16).rotateX(Math.PI / 2), M.signalRed, -0.6 + i * 1.6, 0.81, z));
+  }
+  const boiler = mesh(new THREE.CylinderGeometry(0.95, 0.95, 9.5, 20).rotateZ(Math.PI / 2), M.dark, 4.4, 2.6, 0);
+  g.add(boiler);
+  g.add(mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.4, 20).rotateZ(Math.PI / 2), M.dark, 9.1, 2.6, 0));
+  g.add(cyl(0.32, 1.2, M.dark, 8.2, 3.4, 0, 12));
+  g.add(cyl(0.45, 0.8, M.dark, 4.5, 3.4, 0, 12));
+  g.add(cyl(0.35, 0.6, M.dark, 2.4, 3.4, 0, 12));
+  g.add(box(0.3, 0.5, 2.6, M.signalRed, 9.55, 1.0, 0));
+  g.add(box(3, 3, 2.9, M.dark, -1.8, 1.5, 0)); // будка
+  g.add(box(3.4, 0.25, 3.1, M.dark, -1.8, 4.5, 0));
+  for (const z of [-1.46, 1.46]) g.add(box(1, 0.9, 0.05, M.glass, -1.6, 3.2, z));
+  g.add(box(7, 2.6, 2.8, M.dark, -7.2, 1.3, 0)); // тендер
+  g.add(box(7.4, 0.35, 2.4, M.signalRed, -7.2, 0.95, 0));
+  for (let i = 0; i < 4; i++) for (const z of [-0.85, 0.85]) {
+    g.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.14, 14).rotateX(Math.PI / 2), M.signalRed, -9.6 + i * 1.6, 0.6, z));
+  }
   return mergeByMaterial(g);
 }
 
@@ -2463,6 +2509,20 @@ export function buildLandmarks(world) {
         for (let i = 0; i < p.length; i++) {
           const j = (i + 1) % p.length;
           world.addCollider([p[i], p[j], q[j], q[i]]);
+        }
+        break;
+      }
+      case 'gagarin':
+      case 'locomotive': {
+        // Гагарин — лицом к улице Горького; паровоз — вдоль путей станции (они идут почти с севера на юг).
+        const [fx, fz] = toStreet(world, lm, /Горького/, -0.55, 0.83);
+        const m = lm.key === 'gagarin' ? gagarinStatue() : steamLoco();
+        m.rotation.y = lm.key === 'gagarin' ? Math.atan2(fx, fz) : -(100 * Math.PI) / 180;
+        obj = place(new THREE.Group().add(m), lm.x, world.terrain(lm.x, lm.z), lm.z);
+        if (lm.key === 'gagarin') world.addCollider(square(lm.x, lm.z, 2.2));
+        else {
+          const c = Math.cos(m.rotation.y), sn = Math.sin(m.rotation.y);
+          world.addCollider([[-10.5, -1.5], [10.5, -1.5], [10.5, 1.5], [-10.5, 1.5]].map(([x, z]) => [lm.x + x * c + z * sn, lm.z - x * sn + z * c]));
         }
         break;
       }
