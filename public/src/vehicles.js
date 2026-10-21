@@ -158,14 +158,76 @@ export const DEFAULT_MODEL = 'm412';
 export const RIM_STYLES = [['stock', 'штатные'], ['steel', 'штампованные', 3000], ['star', '«звезда»', 8000], ['spoke5', '5 спиц', 12000],
   ['turbo', '«турбина»', 15000], ['bbs', 'сетка, золото', 20000]];
 const RIM_UP_PRICE = [0, 4000, 9000, 15000, 22000, 30000, 40000];
+// Вид для всех машин (any — и у процедурных), слоты после дисков: подвеска — кузов выше/ниже над колёсами (RIDE, м),
+// тонировка — цвет стёкол, хром (бамперы, решётка, молдинги) — в чёрный или в цвет кузова (restyle).
+const STYLE_SLOTS = [
+  { key: 'ride', name: 'Подвеска', any: true, variants: [['stock', 'штатная'], ['low', 'ниже на 3 см', 4000], ['slam', 'ниже на 6 см', 8000], ['lift', 'выше на 4 см', 5000]] },
+  { key: 'tint', name: 'Тонировка', any: true, variants: [['none', 'нет'], ['light', 'лёгкая', 3000], ['dark', 'тёмная', 6000], ['blue', 'синяя', 7000]] },
+  { key: 'chrome', name: 'Хром', any: true, variants: [['stock', 'штатный'], ['black', 'чёрный', 3000], ['paint', 'в цвет кузова', 4000]] },
+];
+const RIDE = { stock: 0, low: -0.03, slam: -0.06, lift: 0.04 };
+const TINT = { light: '#141b21', dark: '#06080a', blue: '#0b1a33' };
 for (const spec of Object.values(MODELS)) {
   const base = spec.wheels.rim ?? 13;
   spec.options = [...(spec.options ?? []),
     { key: 'rim', name: 'Диски', wheel: true, variants: RIM_STYLES },
-    { key: 'rsize', name: 'Диаметр', wheel: true, variants: RIM_UP_PRICE.map((p, i) => [String(base + i), `R${base + i}`, ...(p ? [p] : [])]) }];
+    { key: 'rsize', name: 'Диаметр', wheel: true, variants: RIM_UP_PRICE.map((p, i) => [String(base + i), `R${base + i}`, ...(p ? [p] : [])]) },
+    ...STYLE_SLOTS];
 }
-// Детали, которые видно в гараже: у машин из glb — все, у процедурных — только диски.
-export const shownOptions = (spec) => (spec.options ?? []).filter((o) => spec.mesh || o.wheel);
+// Детали, которые видно в гараже: у машин из glb — все, у процедурных — диски и вид (any).
+export const shownOptions = (spec) => (spec.options ?? []).filter((o) => spec.mesh || o.wheel || o.any);
+
+// Стекло и хром во всех моделях — одного цвета (tools/models: '#26333f', '#c8ccd0'); в вершинах glb он лежит как есть,
+// у процедурных — в линейном пространстве (THREE.Color). Узнаём по цвету и перекрашиваем или переносим в краску.
+const GLASS_HEX = '#26333f', CHROME_HEX = '#c8ccd0';
+const spaces = (hex) => { const c = new THREE.Color(hex); return [[c.r, c.g, c.b], [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16) / 255)]; };
+function restyle(parts, { tint = 'none', chrome = 'stock' }) {
+  if (tint === 'none' && chrome === 'stock') return;
+  let geo = parts.detail.index ? parts.detail.toNonIndexed() : parts.detail;
+  const col = geo.attributes.color;
+  if (!col) return;
+  const near = (i, c) => Math.abs(col.getX(i) - c[0]) < 0.004 && Math.abs(col.getY(i) - c[1]) < 0.004 && Math.abs(col.getZ(i) - c[2]) < 0.004;
+  // Подходящий вариант цвета: [0] — линейный, [1] — как в glb; новый цвет — в том же пространстве.
+  const which = (i, list) => (near(i, list[0]) ? 0 : near(i, list[1]) ? 1 : -1);
+  const glass = spaces(GLASS_HEX), chromes = spaces(CHROME_HEX);
+  const to = (hex, k) => spaces(hex)[k];
+  const moved = [];
+  for (let t = 0; t < col.count; t += 3) {
+    for (let v = t; v < t + 3; v++) {
+      const g = tint !== 'none' ? which(v, glass) : -1;
+      if (g >= 0) col.setXYZ(v, ...to(TINT[tint], g));
+    }
+    if (chrome === 'stock') continue;
+    const k = which(t, chromes);
+    if (k < 0 || which(t + 1, chromes) !== k || which(t + 2, chromes) !== k) continue;
+    if (chrome === 'black') for (let v = t; v < t + 3; v++) col.setXYZ(v, ...to('#1b1c1f', k));
+    else moved.push(t / 3);
+  }
+  col.needsUpdate = true;
+  if (moved.length) {
+    // В цвет кузова: треугольники хрома — в геометрию краски (вершины белые), из деталей — прочь.
+    const tri = (src, keep) => {
+      const out = new THREE.BufferGeometry();
+      for (const [name, a] of Object.entries(src.attributes)) {
+        const n = a.itemSize, arr = new Float32Array(keep.length * 3 * n);
+        keep.forEach((tIdx, j) => arr.set(a.array.subarray(tIdx * 3 * n, tIdx * 3 * n + 3 * n), j * 3 * n));
+        out.setAttribute(name, new THREE.BufferAttribute(arr, n));
+      }
+      return out;
+    };
+    const set = new Set(moved), rest = [];
+    for (let i = 0; i < col.count / 3; i++) if (!set.has(i)) rest.push(i);
+    let paint = parts.paint.index ? parts.paint.toNonIndexed() : parts.paint;
+    const add = tri(geo, moved);
+    for (const name of Object.keys(add.attributes)) if (!paint.attributes[name]) add.deleteAttribute(name);
+    if (add.attributes.color) add.attributes.color.array.fill(1);
+    if (Object.keys(paint.attributes).every((k) => add.attributes[k])) {
+      parts.paint = mergeGeometries([paint, add]);
+      geo = tri(geo, rest);
+    }
+  }
+  parts.detail = geo;
+}
 
 // ---------------------------------------------------------------- геометрия
 
@@ -514,7 +576,8 @@ function wheelParts({ r, alloy }, seg) {
 const wheelMat = new THREE.MeshLambertMaterial({ vertexColors: true });
 export function buildPlayerModel(key, color, options) {
   const spec = MODELS[key] || MODELS[DEFAULT_MODEL];
-  const parts = vehicleParts(spec, { options });
+  const parts = vehicleParts(spec, { options }), style = pickOptions(spec, options);
+  restyle(parts, style);
   const g = new THREE.Group();
   const paintMat = paintMaterial(color || spec.colors[0]); // обычный цвет или покрытие (paints.js)
   const meshes = [
@@ -524,7 +587,7 @@ export function buildPlayerModel(key, color, options) {
   ];
   // Кузов — в своей группе с осью крена на высоте центра крена (колёса не кренятся, см. Car.bodyRoll).
   const body = new THREE.Group(), ROLL_CENTER = 0.45;
-  body.position.y = ROLL_CENTER;
+  body.position.y = ROLL_CENTER + (RIDE[style.ride] ?? 0); // подвеска: кузов выше/ниже, колёса на месте
   for (const mesh of meshes) mesh.position.y = -ROLL_CENTER;
   body.add(...meshes);
   g.add(body);
