@@ -1102,7 +1102,7 @@ FENCE_TYPE = {
     "corrugated_metal": "prof", "metal_sheet": "prof",
     "concrete": "panel", "wall": "panel", "brick": "brick", "stone": "brick",
 }
-FENCE_H = {"bars": 1.6, "mesh": 1.8, "wood": 1.8, "prof": 2.0, "panel": 2.4, "brick": 2.0, "hedge": 1.3, "jersey": 0.8}
+FENCE_H = {"bars": 1.6, "mesh": 1.8, "wood": 1.8, "prof": 2.0, "panel": 2.4, "brick": 2.0, "hedge": 1.3, "jersey": 0.8, "stucco": 1.3}
 GATE_W = {"gate": 4.0, "lift_gate": 4.0, "swing_gate": 4.0, "sliding_gate": 5.0, "sally_port": 4.0,
           "wicket_gate": 1.2, "kissing_gate": 1.2, "entrance": 1.5, "turnstile": 1.0, "full-height_turnstile": 1.0}
 
@@ -1600,10 +1600,76 @@ UNPAVED = {"unpaved", "ground", "gravel", "dirt", "compacted", "sand", "grass", 
 TREE_ROW_STEP = 7  # м между деревьями ряда
 # Полосы деревьев, которых нет в OSM, но они видны на снимке и делают место узнаваемым:
 # (здание way, сторона фасада, от и до — м от фасада, шаг сетки, узел-проход, полуширина прохода).
+# Куски заборов из OSM в проходе к зданию — другого вида: (здание way, сторона фасада, узел-проход,
+# полуширина прохода, до скольких м от фасада, вид). У завода проезд к колоннаде — меж белых стен.
+FENCE_WALLS = [
+    (90895162, "north", 5294741728, 7, 35, "stucco"),
+]
 TREE_BELTS = [
     (90895162, "north", 7, 20, 6.5, 5294741728, 7),  # сквер перед главным корпусом завода, проход к башне; ближе 6 м к достопримечательности деревья не ставятся
 ]
 BUMP_KIND = {"bump": 0, "hump": 1, "cushion": 1, "table": 2}
+
+
+def facade_edge(wid, side):
+    """Самое длинное ребро здания way, обращённое наружу на сторону света side: (L, ax, az, ex, ez, ox, oz)."""
+    pts = ring_xy(ways[wid][0])
+    cx = sum(p[0] for p in pts) / len(pts)
+    cz = sum(p[1] for p in pts) / len(pts)
+    want = {"north": (0, -1), "south": (0, 1), "west": (-1, 0), "east": (1, 0)}[side]
+    best = None
+    for (ax, az), (bx, bz) in zip(pts, pts[1:] + pts[:1]):
+        L = math.hypot(bx - ax, bz - az)
+        if L < 1e-6:
+            continue
+        ex, ez = (bx - ax) / L, (bz - az) / L
+        ox, oz = ez, -ex
+        if ox * ((ax + bx) / 2 - cx) + oz * ((az + bz) / 2 - cz) < 0:
+            ox, oz = -ox, -oz  # нормаль — наружу
+        if ox * want[0] + oz * want[1] > 0.7 and (not best or L > best[0]):
+            best = (L, ax, az, ex, ez, ox, oz)
+    return best
+
+
+def fence_walls(fence_list):
+    """Куски заборов в проходе из FENCE_WALLS — другим видом (забор режется на изломах прохода)."""
+    out = []
+    zones = []
+    for wid, side, gap_node, gap, depth, kind in FENCE_WALLS:
+        e = facade_edge(wid, side) if wid in ways and gap_node in nodes else None
+        if e:
+            L, ax, az, ex, ez, ox, oz = e
+            gx, gz = project(*nodes[gap_node])
+            zones.append((ax, az, ex, ez, ox, oz, (gx - ax) * ex + (gz - az) * ez, gap, depth, kind))
+
+    def zone_of(x, z):
+        for ax, az, ex, ez, ox, oz, tg, gap, depth, kind in zones:
+            t = (x - ax) * ex + (z - az) * ez
+            d = (x - ax) * ox + (z - az) * oz
+            if abs(t - tg) < gap and -1 < d < depth:
+                return kind
+        return None
+
+    changed = 0
+    for f in fence_list:
+        p = f["p"]
+        kinds = [zone_of((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(p, p[1:])]
+        runs, start = [], 0
+        for i in range(1, len(kinds) + 1):
+            if i == len(kinds) or kinds[i] != kinds[start]:
+                runs.append((kinds[start], p[start:i + 1]))
+                start = i
+        for k, p in runs:
+            if len(p) < 2:
+                continue
+            if k:
+                out.append({"k": k, "h": FENCE_H[k], "p": p})
+                changed += 1
+            else:
+                out.append({**f, "p": p})
+    if changed:
+        print(f"fence walls: {changed} pieces")
+    return out
 
 
 def tree_belts(trees, roads, road_nodes, buildings):
@@ -1611,21 +1677,7 @@ def tree_belts(trees, roads, road_nodes, buildings):
     for wid, side, d0, d1, step, gap_node, gap in TREE_BELTS:
         if wid not in ways or gap_node not in nodes:
             continue
-        pts = ring_xy(ways[wid][0])
-        cx = sum(p[0] for p in pts) / len(pts)
-        cz = sum(p[1] for p in pts) / len(pts)
-        want = {"north": (0, -1), "south": (0, 1), "west": (-1, 0), "east": (1, 0)}[side]
-        best = None
-        for (ax, az), (bx, bz) in zip(pts, pts[1:] + pts[:1]):
-            L = math.hypot(bx - ax, bz - az)
-            if L < 1e-6:
-                continue
-            ex, ez = (bx - ax) / L, (bz - az) / L
-            ox, oz = ez, -ex
-            if ox * ((ax + bx) / 2 - cx) + oz * ((az + bz) / 2 - cz) < 0:
-                ox, oz = -ox, -oz  # нормаль — наружу
-            if ox * want[0] + oz * want[1] > 0.7 and (not best or L > best[0]):
-                best = (L, ax, az, ex, ez, ox, oz)
+        best = facade_edge(wid, side)
         if not best:
             continue
         L, ax, az, ex, ez, ox, oz = best
@@ -1981,6 +2033,7 @@ def build_city():
     apply_gis(buildings)
     mark_village_houses(buildings)
     fence_list = fences(inside, roads, road_nodes, areas, buildings, footbridges)
+    fence_list = fence_walls(fence_list)
     buildings = cut_passages(buildings, roads, road_nodes)
     aligned = align_tram_tracks()
     for r in rails:

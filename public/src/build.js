@@ -2250,6 +2250,7 @@ const FENCE = {
   brick: { t: 0.4, len: 2, vm: 1, tint: ['#ffffff', '#e9dcd2', '#d8c9be'] },
   hedge: { t: 0.9, len: 2, vm: 1, tint: ['#ffffff', '#dce8d2'] },
   jersey: { t: 0.6, len: 2, vm: null, tint: ['#ffffff'] },
+  stucco: { t: 0.6, len: 3, vm: null, tint: ['#ffffff', '#f4f2ec'] }, // белая оштукатуренная стена с филёнками (у завода)
 };
 const FENCE_PIECE = 5;  // м: забор дробится, чтобы идти по рельефу (меш рельефа — треугольники 15 м)
 const FENCE_SINK = 0.3; // м: низ уходит в землю — на склоне не висит
@@ -2323,6 +2324,20 @@ function fenceTexture(kind, renderer) {
     for (let k = 0; k < 400; k++) { // пятна и потёки
       g.fillStyle = `rgba(${rnd() < 0.5 ? '90,85,75' : '230,226,218'},${0.08 + rnd() * 0.1})`;
       g.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 4, 1 + rnd() * 12);
+    }
+  } else if (kind === 'stucco') { // штукатурка: светлый верх-поребрик, ниже — прорезь филёнки, тени потёков
+    g.fillStyle = '#e9e7e1';
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = '#f7f6f2';
+    g.fillRect(0, 0, W, 34);
+    g.fillStyle = '#c9c6be';
+    g.fillRect(0, 34, W, 4);
+    g.strokeStyle = '#cfccc4';
+    g.lineWidth = 4;
+    g.strokeRect(24, 70, W - 48, H - 120);
+    for (let k = 0; k < 200; k++) {
+      g.fillStyle = `rgba(150,145,135,${0.04 + rnd() * 0.06})`;
+      g.fillRect(rnd() * W, 40 + rnd() * (H - 40), 1 + rnd() * 3, 2 + rnd() * 14);
     }
   } else if (kind === 'brick') { // кирпич на 1 м высоты: 13 рядов
     g.fillStyle = '#8f8a82';
