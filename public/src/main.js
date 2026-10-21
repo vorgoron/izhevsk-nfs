@@ -1263,7 +1263,9 @@ async function main() {
   $('loading').classList.add('done');
   setTimeout(() => $('loading').remove(), 600);
   const clock = new THREE.Clock();
-  const STEP = 1 / 120;
+  let cullAt = 0;
+  const cullPos = new THREE.Vector3();
+  const STEP = 1 / 120, MAX_STEPS = 8; // 8 шагов = 67 мс: до 15 fps игра идёт в обычном темпе
   let acc = 0;
   const perf = flags.has('perf') ? createPerf(renderer, scene, camera, sun) : null;
   let nextFrame = 0;
@@ -1285,12 +1287,17 @@ async function main() {
     }
     acc += dt;
     const inp = race.state === 'countdown' || garage.isOpen ? {} : input();
-    while (acc >= STEP) {
+    // Не больше MAX_STEPS шагов за кадр: на слабом телефоне 12 шагов удлиняли кадр, и следующий
+    // требовал ещё больше (спираль). Остаток отбрасываем — игра там чуть замедляется, но не тонет.
+    for (let steps = 0; acc >= STEP; steps++) {
+      if (steps === MAX_STEPS) { acc = 0; break; }
       car.update(STEP, inp);
       breakables.collide(car);
       acc -= STEP;
     }
+    perf?.mark('физика');
     chunks.update(car.pos.x, car.pos.y, isTouch ? 1 : 2);
+    perf?.mark('квадраты');
     if ((posT += dt) > POS_EVERY) { posT = 0; savePos(); }
     if (car.drowned) {
       // Утонул — всё сначала: та же гонка с отсчётом, трафик заново. Бак и нитро — какие были (за деньги).
@@ -1320,8 +1327,10 @@ async function main() {
       for (const g of net.ghosts.values()) if (!g.stale && g.p != null) lead = Math.max(lead, g.p);
       car.nitroBoost = 1 + Math.min(1, (lead - net.progress) / CATCH_UP);
     }
+    perf?.mark('игра');
     net.update(dt, car);
     traffic.update(dt, car);
+    perf?.mark('трафик');
     breakables.update(dt, car, traffic);
     nitroFx.update(dt, car);
     jetFx.update(dt, car);
@@ -1330,6 +1339,7 @@ async function main() {
     tireSmokeFx.update(dt, car);
     exhaustFx.update(dt, car);
     ghostFx.update(dt, net, car);
+    perf?.mark('эффекты');
     sound.update(dt, car, inp, race);
     sound.traffic(dt, traffic, car);
     sound.players(dt, net, car);
@@ -1341,6 +1351,17 @@ async function main() {
     guide.update(car);
     navigate(dt);
     updateCamera(dt);
+    // Дальше конца тумана всё одного цвета с горизонтом — не рисуем: дальняя плоскость = конец тумана
+    // (туман three.js считает по той же глубине, что и отсечение, — шва нет).
+    if (camera.far !== scene.fog.far) { camera.far = scene.fog.far; camera.updateProjectionMatrix(); }
+    // Дальние достопримечательности прячем раз в 0,5 с (по часам, не по dt — он ограничен) и сразу после
+    // прыжка камеры (перенос машины, рестарт гонки).
+    const cp = camera.position;
+    if (now > cullAt || Math.abs(cp.x - cullPos.x) + Math.abs(cp.z - cullPos.z) > 100) {
+      cullAt = now + 500;
+      cullPos.copy(cp);
+      landmarks.group.userData.cull(cp.x, cp.z, camera.far);
+    }
     skyDome.update(dt, camera);
     dayNight.update(dt);
     if (headlight.visible) {
@@ -1353,7 +1374,9 @@ async function main() {
     sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 300);
     updateHud(dt, inp);
     debug.update(now);
+    perf?.mark('звук, камера, HUD');
     renderer.render(scene, camera);
+    perf?.mark('отрисовка');
     perf?.end();
   });
 }

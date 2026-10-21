@@ -79,6 +79,8 @@ export function createPerf(renderer, scene, camera, light) {
 
   let last = performance.now(), start = 0, shown = last;
   let intervals = [], cpu = 0, gpu = 0, gpuN = 0, frames = 0;
+  // Доли кадра: mark(label) относит время с прошлой метки к label (в main.js — физика, трафик, отрисовка…).
+  let markT = 0, parts = new Map();
 
   function poll() {
     while (pending.length) {
@@ -95,13 +97,18 @@ export function createPerf(renderer, scene, camera, light) {
 
   return {
     begin() {
-      start = performance.now();
+      start = markT = performance.now();
       intervals.push(start - last);
       last = start;
       if (ext && pending.length < 8) {
         active = gl.createQuery();
         gl.beginQuery(ext.TIME_ELAPSED_EXT, active);
       }
+    },
+    mark(label) {
+      const t = performance.now();
+      parts.set(label, (parts.get(label) || 0) + t - markT);
+      markT = t;
     },
     end() {
       if (active) {
@@ -121,6 +128,7 @@ export function createPerf(renderer, scene, camera, light) {
       el.textContent = [
         `${Math.round(frames * 1000 / (start - shown))} fps  кадр ${avg.toFixed(1)} / ${p80.toFixed(1)} мс`,
         `JS ${(cpu / frames).toFixed(1)} мс  GPU ${ext ? (gpuN ? (gpu / gpuN).toFixed(1) + ' мс' : '…') : 'н/д'}`,
+        [...parts].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([l, t]) => `${l} ${(t / frames).toFixed(1)}`).join(' · '),
         `кадр: вызовов ${calls}  треуг. ${(triangles / 1000).toFixed(0)} тыс.`,
         `геом. ${geometries}  текст. ${textures}  px ${renderer.getPixelRatio()}`,
       ].join('\n');
@@ -135,6 +143,7 @@ export function createPerf(renderer, scene, camera, light) {
       shown = start;
       intervals = [];
       cpu = gpu = gpuN = frames = 0;
+      parts = new Map();
     },
   };
 }

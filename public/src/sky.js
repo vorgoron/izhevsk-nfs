@@ -198,6 +198,8 @@ export class Sky {
 
   update(dt, camera) {
     this.dome.position.copy(camera.position);
+    // Дальняя плоскость камеры — по концу тумана (main.js): купол сжимаем, чтобы он не обрезался.
+    this.dome.scale.setScalar(Math.min(1, (camera.far * 0.95) / 3500));
     this.uniforms.uTime.value = this.time += dt;
   }
 }

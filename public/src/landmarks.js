@@ -431,6 +431,57 @@ function mergeByMaterial(root) {
   return g;
 }
 
+// Вся модель — по мешу на материал (у резиденции было 540 мешей, у Троицкого 350): на слабом телефоне
+// каждый вызов отрисовки стоит дорого. Не трогаем анимированное (userData.update у меша или предка),
+// прозрачное (порядок смешивания), инстансы и меши с несколькими материалами.
+function flatten(obj) {
+  obj.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(obj.matrixWorld).invert();
+  const animated = (o) => { for (; o && o !== obj.parent; o = o.parent) if (o.userData.update) return true; return false; };
+  const groups = new Map(), merged = [];
+  obj.traverse((o) => {
+    if (!o.isMesh || o.isInstancedMesh || Array.isArray(o.material) || o.material.transparent || animated(o)) return;
+    const keep = ['position', 'normal'];
+    if (o.material.map) keep.push('uv');
+    if (o.material.vertexColors) keep.push('color');
+    if (!keep.every((k) => o.geometry.attributes[k])) return;
+    const key = [o.material.id, o.castShadow, o.receiveShadow].join();
+    if (!groups.has(key)) groups.set(key, { mat: o.material, cast: o.castShadow, receive: o.receiveShadow, keep, geos: [] });
+    const mx = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
+    let geo = o.geometry.clone().applyMatrix4(mx);
+    if (geo.index) geo = geo.toNonIndexed();
+    for (const k of Object.keys(geo.attributes)) if (!keep.includes(k)) geo.deleteAttribute(k);
+    // Зеркальная часть (масштаб −1): three.js переворачивал ей лицевую сторону сам, в общем меше — меняем
+    // порядок вершин треугольников, иначе грани отсекутся как задние.
+    if (mx.determinant() < 0) {
+      for (const attr of Object.values(geo.attributes)) {
+        const a = attr.array, n = attr.itemSize;
+        for (let t = 0; t < attr.count; t += 3) {
+          for (let k = 0; k < n; k++) {
+            const i1 = (t + 1) * n + k, i2 = (t + 2) * n + k, v = a[i1];
+            a[i1] = a[i2];
+            a[i2] = v;
+          }
+        }
+      }
+    }
+    groups.get(key).geos.push(geo);
+    merged.push(o);
+  });
+  for (const o of merged) o.removeFromParent();
+  for (const { mat, cast, receive, geos } of groups.values()) {
+    const m = new THREE.Mesh(geos.length > 1 ? mergeGeometries(geos) : geos[0], mat);
+    m.castShadow = cast;
+    m.receiveShadow = receive;
+    obj.add(m);
+  }
+  // Пустые группы — прочь, чтобы обход сцены каждый кадр был короче.
+  const empty = [];
+  obj.traverse((o) => { if (o !== obj && !o.isMesh && !o.children.length && !o.userData.update && o.type === 'Group') empty.push(o); });
+  for (const o of empty) o.removeFromParent();
+  return obj;
+}
+
 // ---------------------------------------------------------------- здания по контуру OSM
 
 // Контур в системе fit(): начало в центре, +x вдоль angle.
@@ -2375,6 +2426,7 @@ export function buildLandmarks(world) {
   const group = new THREE.Group();
   const animated = [];
   const markers = []; // { name, x, z } для HUD и миникарты
+  const far = []; // { obj, x, z, r } — для отсечения по расстоянию
 
   for (const lm of world.city.landmarks || []) {
     let obj = null;
@@ -2572,13 +2624,19 @@ export function buildLandmarks(world) {
     }
     if (p && lm.mode === 'replace' && lm.key !== 'stadium') world.addCollider(p); // у стадиона внутри поле
     if (obj) {
-      group.add(obj);
+      group.add(flatten(obj));
       obj.traverse((o) => { if (o.userData.update) animated.push(o.userData.update); });
+      const box = new THREE.Box3().setFromObject(obj), c = box.getCenter(new THREE.Vector3());
+      far.push({ obj, x: c.x, z: c.z, r: box.getSize(new THREE.Vector3()).length() / 2 });
     }
     if (lm.key !== 'plant') markers.push({ name: lm.name, x: lm.x, z: lm.z }); // корпус — под меткой башни
   }
 
   group.userData.update = (t) => animated.forEach((fn) => fn(t));
+  // Дальше конца тумана модель не видна, но рисовалась бы: прячем по расстоянию до её края.
+  group.userData.cull = (x, z, dist) => {
+    for (const f of far) f.obj.visible = Math.hypot(f.x - x, f.z - z) - f.r < dist;
+  };
   return { group, markers };
 }
 
