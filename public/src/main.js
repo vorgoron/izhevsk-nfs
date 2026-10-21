@@ -6,6 +6,7 @@ import { Car } from './car.js';
 import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates, setGear } from './vehicles.js';
 import { Garage, loadChoice, defaultChoice, optionKey } from './garage.js';
 import { tuned, ownsCar, grandfather } from './shop.js';
+import { paintOf, paintKey } from './paints.js';
 import { Race, formatTime, LENGTHS } from './race.js';
 import { Ramps } from './ramps.js';
 import { Pickups, NITRO_GIVE } from './pickups.js';
@@ -149,11 +150,14 @@ async function main() {
   // Деньги (money.js). Детали, выбранные до появления денег, считаются купленными; машина, на которой ездили
   // до автосалона, — тоже, с нитро и «Кузнечиком» (shop.js). Не своя машина (вышли из аккаунта) — стартовая.
   const wallet = new Wallet($('money'), $('money-log'));
+  // Покрытие кузова (paints.js) — своё на каждую машину; обычный цвет — у всех.
+  const ownsPaint = ({ model, color }) => !paintOf(color) || wallet.owns(paintKey(model, color));
   if (wallet.fresh) {
     wallet.grant((MODELS[choice.model].options || []).map((o) => optionKey(choice.model, o.key, choice.options[o.key])));
   }
   grandfather(wallet, choice.model);
   if (!ownsCar(wallet, choice.model)) choice = { ...defaultChoice(), saved: choice.saved };
+  if (!ownsPaint(choice)) choice = { ...choice, color: MODELS[choice.model].colors[0] };
   const model = buildPlayerModel(choice.model, choice.color, choice.options);
   model.userData.perf = 'машина игрока';
   scene.add(model);
@@ -534,7 +538,11 @@ async function main() {
     wallet,
     vehicle: () => garage.choice,
     // Машину из аккаунта — только если она своя (купленное к этому времени уже слито в кошелёк).
-    setVehicle: (v) => { if (MODELS[v.model] && ownsCar(wallet, v.model) && garage.set(v)) setVehicle(garage.choice.model, garage.choice.color, garage.choice.options); },
+    setVehicle: (v) => {
+      if (!MODELS[v.model] || !ownsCar(wallet, v.model)) return;
+      if (!ownsPaint(v)) v = { ...v, color: undefined }; // покрытие не куплено на эту машину — обычный цвет
+      if (garage.set(v)) setVehicle(garage.choice.model, garage.choice.color, garage.choice.options);
+    },
     onChange: () => menu.sync(),
   });
   // Покупки могли приехать из аккаунта — характеристики своей машины пересчитываем.

@@ -255,9 +255,15 @@
     #garage .tabs button.on { border-bottom-color: #ffd23f; background: rgba(255,210,63,.12); }
     #garage .pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
     #garage .pane[hidden] { display: none; }
-    #garage .colors { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 6px; }
+    #garage .colors { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; padding: 4px; } /* отступ — под обводку выбранного: .pane с overflow её срезает */
     #garage .colors button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); cursor: pointer; padding: 0; }
     #garage .colors button.on { border-color: #fff; box-shadow: 0 0 0 2px #ffd23f; }
+    #garage .colors button.paid { position: relative; }
+    #garage .colors button.paid::after { content: '₽'; position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px; border-radius: 50%;
+      background: #ffd23f; color: #15181b; font: 700 9px/14px Arial, sans-serif; text-align: center; }
+    #garage .paints-head { font-size: 12px; opacity: .8; margin: 2px 4px 0; }
+    #garage .paints-head em { font-style: normal; font-weight: 700; color: #ffd23f; margin-left: 4px; }
+    #garage .paints button { width: 26px; height: 26px; }
     #garage .opts, #garage .ups { display: flex; flex-direction: column; gap: 6px; }
     #garage .opt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
     #garage .opt > span { width: 96px; opacity: .6; }

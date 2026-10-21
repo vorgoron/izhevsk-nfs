@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { carGlows, glowMaterial } from './night.js';
+import { paintMaterial } from './paints.js';
 
 // ИЖ-27175 (фургон «Ода») отключён: хорошей 3D-модели нет, процедурная не годится.
 // Вернуть — добавить `odavan: ODAVAN` в MODELS (по году — после «Оды»), в MIX (traffic.js) и KINDS (queues.js).
@@ -463,7 +464,7 @@ export function buildPlayerModel(key, color, options) {
   const spec = MODELS[key] || MODELS[DEFAULT_MODEL];
   const parts = vehicleParts(spec, { options });
   const g = new THREE.Group();
-  const paintMat = new THREE.MeshLambertMaterial({ color: color || spec.colors[0], vertexColors: true });
+  const paintMat = paintMaterial(color || spec.colors[0]); // обычный цвет или покрытие (paints.js)
   const meshes = [
     new THREE.Mesh(parts.paint, paintMat),
     new THREE.Mesh(parts.detail, new THREE.MeshLambertMaterial({ vertexColors: true })),

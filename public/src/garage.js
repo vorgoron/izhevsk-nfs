@@ -1,13 +1,14 @@
 // Гараж — он же автосалон: машины лентой внизу, справа — панель выбранной машины: характеристики, вкладки «Вид»
 // (цвет, детали у машин с options) и «Тюнинг» (улучшения, shop.js). Камера облетает машину в свободной части экрана
 // (main.js, frame()). В начале есть только базовая машина; любую другую можно выбрать и посмотреть. Ничего не
-// покупается сразу: машина, улучшения и платные детали (цена — третье число варианта в vehicles.js) кладутся в корзину,
+// покупается сразу: машина, улучшения, платные покрытия (paints.js) и детали (цена — третье число варианта в vehicles.js) кладутся в корзину,
 // а оплачиваются вместе кнопкой «Купить» в корзине. Цвета бесплатные. Улучшения — для своей машины или той, что
 // в корзине. Не купил и уехал — возвращаешься на ту машину, на которой заехал, с купленными деталями; корзина
 // с машинами и улучшениями остаётся до следующего захода (пока открыта игра).
 import { MODELS, DEFAULT_MODEL, pickOptions } from './vehicles.js';
 import { formatMoney } from './money.js';
 import { UPGRADES, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './shop.js';
+import { PAINTS, paintOf, paintKey } from './paints.js';
 
 const STORE = 'vehicle';
 const MAX = { kmh: 220, accel: 1.21, grip: 1.17 }; // шкалы характеристик — с запасом на улучшения Весты
@@ -54,7 +55,7 @@ export class Garage {
         <h2>Автосалон <b class="money"></b></h2>
         <div class="info"></div>
         <div class="tabs"><button data-tab="look">Вид</button><button data-tab="tune">Тюнинг</button></div>
-        <div class="pane" data-pane="look"><div class="colors"></div><div class="opts"></div></div>
+        <div class="pane" data-pane="look"><div class="colors"></div><div class="paints-head"></div><div class="colors paints"></div><div class="opts"></div></div>
         <div class="pane" data-pane="tune"><div class="ups"></div></div>
         <div class="cart" hidden><div class="cart-head"></div><div class="cart-list"></div><button class="buy"></button></div>
         <div class="actions"><button class="go"></button><button class="back">К своей</button></div>
@@ -78,7 +79,7 @@ export class Garage {
     el.querySelector('.back').addEventListener('click', () => this.#pick(this.paid.model, this.paid.color, this.paid.options));
     addEventListener('keydown', (e) => {
       if (!this.isOpen) return;
-      const i = this.keys.indexOf(this.choice.model), colors = MODELS[this.choice.model].colors;
+      const i = this.keys.indexOf(this.choice.model), colors = [...MODELS[this.choice.model].colors, ...PAINTS.map((p) => p.key)];
       const ci = Math.max(0, colors.indexOf(this.choice.color));
       if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
         const k = this.keys[(i + (e.code === 'ArrowRight' ? 1 : -1) + this.keys.length) % this.keys.length];
@@ -128,7 +129,7 @@ export class Garage {
   }
 
   // Убрать из корзины: машину — вместе с её улучшениями, уровень улучшения — вместе со следующими,
-  // деталь — вернуть купленную (или штатную).
+  // деталь — вернуть купленную (или штатную), покрытие — цвет, с которым заехали.
   #remove(key) {
     const item = this.cart.get(key);
     if (item) {
@@ -137,8 +138,14 @@ export class Garage {
       }
       return this.#render();
     }
+    if (paintOf(this.choice.color) && key === paintKey(this.choice.model, this.choice.color)) return this.#pick(this.choice.model, this.#paidColor());
     const slot = (MODELS[this.choice.model].options ?? []).find((o) => optionKey(this.choice.model, o.key, this.choice.options[o.key]) === key);
     if (slot) this.#pick(this.choice.model, this.choice.color, { ...this.choice.options, [slot.key]: this.#paidOption(slot) });
+  }
+
+  // Цвет, с которым заехали (если машина та же), иначе первый обычный.
+  #paidColor() {
+    return this.paid?.model === this.choice.model ? this.paid.color : MODELS[this.choice.model].colors[0];
   }
 
   // Что было на этой детали до захода (если машина та же), иначе штатный вариант.
@@ -187,8 +194,9 @@ export class Garage {
       <div class="sys">${c.nitro ? `<span class="${t.nitro ? '' : 'in-cart'}">нитро</span>` : ''}${c.hopper ? `<span class="${t.hopper ? '' : 'in-cart'}">«Кузнечик»</span>` : ''}</div>`;
     for (const b of this.el.querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === this.tab);
     for (const p of this.el.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== this.tab;
-    const box = this.el.querySelector('.colors');
-    box.innerHTML = '';
+    // Цвета: обычные — бесплатно, ниже — покрытия (некупленные — со значком ₽, название и цена — строкой над ними).
+    const [box, pbox] = this.el.querySelectorAll('.colors');
+    box.innerHTML = pbox.innerHTML = '';
     for (const color of spec.colors) {
       const b = document.createElement('button');
       b.style.background = color;
@@ -196,6 +204,20 @@ export class Garage {
       b.addEventListener('click', () => this.#pick(model, color));
       box.append(b);
     }
+    for (const p of PAINTS) {
+      const b = document.createElement('button');
+      const mine = this.wallet?.owns(paintKey(model, p.key));
+      b.style.background = p.swatch;
+      b.title = mine ? p.name : `${p.name} — ${formatMoney(p.price)}`;
+      b.classList.toggle('on', p.key === this.choice.color);
+      b.classList.toggle('paid', !mine);
+      b.addEventListener('click', () => this.#pick(model, p.key));
+      pbox.append(b);
+    }
+    const cur = paintOf(this.choice.color), mineCur = cur && this.wallet?.owns(paintKey(model, cur.key));
+    this.el.querySelector('.paints-head').innerHTML = cur
+      ? `Покрытие: <b>${cur.name}</b> ${mineCur ? '' : `<em>${formatMoney(cur.price)}</em>`}`
+      : 'Покрытия — металлик, перламутр, хамелеон, плёнки';
     const opts = this.el.querySelector('.opts');
     opts.innerHTML = '';
     for (const slot of (spec.mesh && spec.options) || []) { // модель не загрузилась — процедурная, деталей нет
@@ -294,7 +316,7 @@ export class Garage {
     }
   }
 
-  // Выбранные, но не купленные машина и детали: { sum, keys: [ключ, цена, подпись], car }.
+  // Выбранные, но не купленные машина, покрытие и детали: { sum, keys: [ключ, цена, подпись], car }.
   #due() {
     const out = { sum: 0, keys: [], car: false };
     if (!this.wallet) return out;
@@ -304,6 +326,8 @@ export class Garage {
       out.sum += carPrice(this.choice.model);
       out.keys.push([carKey(this.choice.model), carPrice(this.choice.model)]);
     }
+    const paint = paintOf(this.choice.color), pk = paint && paintKey(this.choice.model, paint.key);
+    if (paint && !this.wallet.owns(pk)) { out.sum += paint.price; out.keys.push([pk, paint.price, `Покрытие: ${paint.name}`]); }
     for (const slot of (spec.mesh && spec.options) || []) {
       const [v, label, price] = slot.variants.find(([x]) => x === this.choice.options[slot.key]) ?? [];
       const key = optionKey(this.choice.model, slot.key, v);
@@ -312,17 +336,18 @@ export class Garage {
     return out;
   }
 
-  // При выезде: не купленная машина — вернуть ту, на которой заехали; не купленные детали — вернуть на них
-  // купленные (или штатные). Корзина с машинами и улучшениями остаётся.
+  // При выезде: не купленная машина — вернуть ту, на которой заехали; не купленные покрытие и детали — вернуть
+  // цвет, с которым заехали, и купленные (или штатные) детали. Корзина с машинами и улучшениями остаётся.
   #settle() {
     const due = this.#due();
     if (!due.sum) return;
     if (due.car) return this.#pick(this.paid.model, this.paid.color, this.paid.options);
-    const options = { ...this.choice.options };
-    for (const slot of MODELS[this.choice.model].options) {
-      if (due.keys.some(([k]) => k === optionKey(this.choice.model, slot.key, options[slot.key]))) options[slot.key] = this.#paidOption(slot);
+    const options = { ...this.choice.options }, owes = (k) => due.keys.some(([d]) => d === k);
+    for (const slot of MODELS[this.choice.model].options ?? []) {
+      if (owes(optionKey(this.choice.model, slot.key, options[slot.key]))) options[slot.key] = this.#paidOption(slot);
     }
-    this.#pick(this.choice.model, this.choice.color, options);
+    const color = owes(paintKey(this.choice.model, this.choice.color)) ? this.#paidColor() : this.choice.color;
+    this.#pick(this.choice.model, color, options);
   }
 
   open() {

@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
 import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates, optionsCode, optionsFrom } from './vehicles.js';
+import { paintIndex, paintFrom, plainColor } from './paints.js';
 
 export const CITY = 'city'; // общий город — комната по умолчанию
 const SEND_EVERY = 0.1;      // с
@@ -211,11 +212,11 @@ export class Net {
       this.sendT = this.#alone(now) ? HEARTBEAT : SEND_EVERY;
       const f = (v, n = 2) => +v.toFixed(n);
       const s = [f(car.pos.x), f(car.y), f(car.pos.y), f(car.heading, 3), f(wrap(car.pitch - car.flipP), 3), f(wrap(car.roll + car.flip), 3),
-        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts, fxFlags(car)].join(',');
-      // Детали — 11-м числом в s, флаги — 12-м, а не своими полями: правила базы не пускают новые поля, а старые клиенты
-      // читают первые 10.
+        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts, fxFlags(car), paintIndex(this.color)].join(',');
+      // Детали — 11-м числом в s, флаги — 12-м, покрытие (paints.js) — 13-м, а не своими полями: правила базы не пускают
+      // новые поля, а старые клиенты читают первые 10. В c — всегда '#hex': у покрытия похожий обычный цвет.
       const data = { n: this.name, s, m: this.model };
-      if (this.color) data.c = this.color;
+      if (this.color) data.c = plainColor(this.color);
       if (this.progress != null) data.p = Math.round(this.progress);
       this.fb.set(this.me, data).catch((e) => {
         if (!this.writeErr) console.warn('[net] запись не прошла:', e);
@@ -252,9 +253,9 @@ export class Net {
     if (!v || typeof v.s !== 'string') return;
     const n = v.s.split(',').map(Number);
     if (n.length < 10 || n.some((x) => !Number.isFinite(x))) return;
-    const [x, y, z, h, p, r, br, sp, st, t, opts = 0, fx = 0] = n;
+    const [x, y, z, h, p, r, br, sp, st, t, opts = 0, fx = 0, paint = 0] = n;
     const model = Object.hasOwn(MODELS, v.m ?? '') ? v.m : DEFAULT_MODEL;
-    const color = /^#[0-9a-f]{6}$/i.test(v.c ?? '') ? v.c : undefined;
+    const color = paintFrom(paint) ?? (/^#[0-9a-f]{6}$/i.test(v.c ?? '') ? v.c : undefined);
     const name = cleanName(v.n) || 'Гонщик';
     let g = this.ghosts.get(uid);
     if (g) g.p = typeof v.p === 'number' ? v.p : null;
