@@ -253,10 +253,11 @@ LANDMARKS = {
     "plant_tower": ("node", 5294741728, "Башня оружейного завода", "add"),
     "flame": ("node", 1259897102, "Вечный огонь", "add"),
     "wheel": ("node", 4891749969, "Колесо обозрения в Летнем саду", "add"),
-    "arsenal": ("relation", 389556, "Арсенал — Национальный музей", "recolor"),
+    "arsenal": ("relation", 389556, "Арсенал — Национальный музей", "replace"),
     "government": ("way", 63071820, "Дом правительства", "recolor"),
-    "opera": ("way", 152841852, "Театр оперы и балета", "recolor"),
-    "kalashnikov": ("way", 29032752, "Музей Калашникова", "recolor"),
+    "opera": ("way", 152841852, "Театр оперы и балета", "replace"),
+    "kalashnikov": ("way", 29032752, "Музей Калашникова", "replace"),
+    "drama": ("way", 53845854, "Русский драматический театр", "replace"),
 }
 LANDMARK_BY_ELEMENT = {(t, i): key for key, (t, i, _, _) in LANDMARKS.items()}
 

@@ -29,14 +29,22 @@ const M = {
   icon: lambert('#4f6f9c'),
   band: lambert('#4766b0'),
   gold: new THREE.MeshPhongMaterial({ color: '#d2a53a', specular: '#fff1b8', shininess: 90, emissive: '#2a1d00' }),
+  bronze: lambert('#6e5536'),
+  mint: lambert('#9fd8c0'),
+  beige: lambert('#e3cfa6'),
+  redBrick: lambert('#b4492f'),
+  churchGreen: lambert('#4fd68c'),
+  teal: lambert('#23867f'),
+  steelGreen: lambert('#2b8a63'),
+  greenGlass: new THREE.MeshPhongMaterial({ color: '#8fcfa4', specular: '#ffffff', shininess: 70 }),
+  blueGlass: new THREE.MeshPhongMaterial({ color: '#4a84c6', specular: '#e4f0ff', shininess: 80 }),
+  slab: lambert('#d3d1c9'),
+  limestone: lambert('#d9d3c7'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
 export const RECOLOR = {
-  arsenal: ['#e8c766', '#5f8466'],
   government: ['#ecebe6', '#7d8084'],
-  opera: ['#efece4', '#8a8f94'],
-  kalashnikov: ['#d6cfc0', '#6d6f72'],
 };
 
 // ---------------------------------------------------------------- примитивы
@@ -412,6 +420,106 @@ function mergeByMaterial(root) {
   return g;
 }
 
+// ---------------------------------------------------------------- здания по контуру OSM
+
+// Контур в системе fit(): начало в центре, +x вдоль angle.
+function toLocal(p, { cx, cz, angle }) {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  return p.map(([x, z]) => [(x - cx) * c + (z - cz) * s, -(x - cx) * s + (z - cz) * c]);
+}
+
+// Призма по контуру от y0 высотой h; grow — выступ во все стороны (тяга, карниз).
+function prism(p, y0, h, mat, grow = 0) {
+  const sh = new THREE.Shape(p.map(([x, z]) => new THREE.Vector2(x, -z)));
+  const geo = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: grow > 0, bevelThickness: 0.01, bevelSize: grow, bevelSegments: 1 });
+  geo.rotateX(-Math.PI / 2).translate(0, y0, 0);
+  return mesh(geo, mat);
+}
+
+// Рёбра контура: начало (x, z), направление (ex, ez), наружная нормаль (ox, oz), длина;
+// rot — поворот, при котором +z детали смотрит наружу.
+function contourEdges(p, fn) {
+  let area = 0;
+  for (let i = 0; i < p.length; i++) area += p[i][0] * p[(i + 1) % p.length][1] - p[(i + 1) % p.length][0] * p[i][1];
+  const out = area > 0 ? 1 : -1;
+  for (let i = 0; i < p.length; i++) {
+    const [x, z] = p[i], [x2, z2] = p[(i + 1) % p.length];
+    const len = Math.hypot(x2 - x, z2 - z);
+    if (len < 1e-6) continue;
+    const ex = (x2 - x) / len, ez = (z2 - z) / len, ox = out * ez, oz = -out * ex;
+    fn({ x, z, ex, ez, ox, oz, len, rot: Math.atan2(ox, oz) });
+  }
+}
+
+// Деталь на ребре: t — метр от начала ребра, d — вынос наружу; +z детали смотрит наружу.
+function onEdge(obj, e, t, d = 0) {
+  obj.position.x += e.x + e.ex * t + e.ox * d;
+  obj.position.z += e.z + e.ez * t + e.oz * d;
+  obj.rotation.y = e.rot;
+  return obj;
+}
+
+// Окна по всем рёбрам контура: rows — [[низ, высота], …]; make(h) — своё окно (+z наружу).
+function contourWindows(g, p, rows, { step = 3.6, w = 1.1, frame = M.white, min = 3, skip, make } = {}) {
+  contourEdges(p, (e) => {
+    if (e.len < min || skip?.(e)) return;
+    const n = Math.floor(e.len / step);
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) * (e.len / n);
+      for (const [y, h] of rows) {
+        if (make) { g.add(onEdge(make(h).translateY(y), e, t, 0.02)); continue; }
+        if (frame) g.add(onEdge(box(w + 0.4, h + 0.35, 0.12, frame, 0, y - 0.18, 0), e, t, 0.06));
+        g.add(onEdge(box(w, h, 0.16, M.glass, 0, y, 0), e, t, 0.08));
+      }
+    }
+  });
+}
+
+// Арочное окно лицом в +z (archWindow смотрит в +x).
+const archWindowZ = (w, h) => {
+  const o = new THREE.Group();
+  o.add(archWindow(w, h, 0, 0, 0).rotateY(-Math.PI / 2));
+  return o;
+};
+
+// Скатная кровля по контуру любой формы: каждый скат — от ребра на inset внутрь и h вверх,
+// сверху плоская площадка по сдвинутому контуру (у узких крыльев скаты почти сходятся в конёк).
+const DOUBLE = new Map();
+function doubleSided(mat) {
+  if (!DOUBLE.has(mat)) DOUBLE.set(mat, Object.assign(mat.clone(), { side: THREE.DoubleSide }));
+  return DOUBLE.get(mat);
+}
+function insetRoof(p, inset, h, y0, mat) {
+  let area = 0;
+  const n = p.length;
+  for (let i = 0; i < n; i++) area += p[i][0] * p[(i + 1) % n][1] - p[(i + 1) % n][0] * p[i][1];
+  const s = area > 0 ? 1 : -1;
+  const inward = (i) => {
+    const [x1, z1] = p[i], [x2, z2] = p[(i + 1) % n], L = Math.hypot(x2 - x1, z2 - z1) || 1;
+    return [-s * (z2 - z1) / L, s * (x2 - x1) / L];
+  };
+  // Вершина сдвинутого контура — на пересечении сдвинутых рёбер (у острых углов ограничена).
+  const q = p.map(([x, z], i) => {
+    const a = inward((i - 1 + n) % n), b = inward(i);
+    const k = inset / Math.max(0.25, 1 + a[0] * b[0] + a[1] * b[1]);
+    return [x + (a[0] + b[0]) * k, z + (a[1] + b[1]) * k];
+  });
+  const pos = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const P1 = [p[i][0], 0, p[i][1]], P2 = [p[j][0], 0, p[j][1]], Q1 = [q[i][0], h, q[i][1]], Q2 = [q[j][0], h, q[j][1]];
+    pos.push(...P1, ...P2, ...Q2, ...P1, ...Q2, ...Q1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const cap = new THREE.ShapeGeometry(new THREE.Shape(q.map(([x, z]) => new THREE.Vector2(x, -z)))).rotateX(-Math.PI / 2).translate(0, h, 0);
+  cap.deleteAttribute('uv');
+  cap.deleteAttribute('normal');
+  const all = mergeGeometries([geo, cap.toNonIndexed()]);
+  all.computeVertexNormals();
+  return mesh(all, doubleSided(mat), 0, y0, 0);
+}
+
 // Александро-Невский собор (ампир, С. Е. Дудин): крестообразный объём с портиками,
 // ротонда с золотым куполом, ярусная колокольня со шпилем.
 function nevsky({ L, W }) {
@@ -454,61 +562,114 @@ function nevsky({ L, W }) {
   return g;
 }
 
-// Свято-Троицкий собор (Советская / Удмуртская): белый пятиглавый храм — четверик с портиками,
-// большой барабан с золотой главой, четыре малые синие главы, трапезная и ярусная колокольня.
+// Свято-Троицкий собор (Удмуртская, 222; по фото): ярко-зелёный с белыми лопатками и наличниками.
+// Четверик с портиками, большой бирюзовый купол на барабане с золотой главкой, четыре малые
+// золотые главы, трапезная и высокая ярусная колокольня с запада — четверик, два восьмерика
+// со звоном, зелёный шатёр со слухами, золотая глава. Западный портал — белые колонны.
 function troitsky({ L, W }) {
   const g = new THREE.Group();
+  const G = M.churchGreen, Wt = M.white;
+  const C8 = Math.cos(Math.PI / 8);
+  const oct = (a0, a1, h, mat, x, y0) => mesh(new THREE.CylinderGeometry(a1 / C8, a0 / C8, h, 8).rotateY(Math.PI / 8), mat, x, y0 + h / 2, 0);
   const s = Math.min(W * 0.95, L * 0.5);
   const cx = L * 0.14;
-  g.add(box(s, 18, s, M.white, cx, -3, 0));
+  // Четверик: стены, лопатки, арочные окна в два света, карниз и бирюзовая кровля.
+  g.add(box(s, 18, s, G, cx, -3, 0));
   g.add(pilasters(s, s, 18, cx, -3, 0));
-  g.add(windowBand(3, s, s, 5, cx, 0));
-  const turned = windowBand(3, s, s, 5, 0, 0);
-  turned.rotation.y = Math.PI / 2;
-  turned.position.x = cx;
-  g.add(turned);
-  g.add(box(s + 0.8, 0.8, s + 0.8, M.cream, cx, 15, 0)); // карниз
-  g.add(box(s + 0.2, 1.2, s + 0.2, M.silver, cx, 15.8, 0));
+  for (let k = 0; k < 4; k++) {
+    const f = new THREE.Group();
+    for (const dz of [-s * 0.28, 0, s * 0.28]) {
+      f.add(archWindow(1.4, 3.6, s / 2 + 0.02, 2.2, dz));
+      f.add(archWindow(1.1, 2.4, s / 2 + 0.02, 9.2, dz));
+    }
+    f.rotation.y = (k * Math.PI) / 2;
+    f.position.x = cx;
+    g.add(f);
+  }
+  g.add(box(s + 0.8, 0.8, s + 0.8, Wt, cx, 15, 0));
+  g.add(hipRoof(s + 0.6, s + 0.6, 2.2, 15.8, M.teal).translateX(cx));
   // Портики с севера и юга.
   for (const side of [-1, 1]) {
     const z = side * (s / 2 + 2);
     g.add(portico(4, cx - s * 0.2, cx + s * 0.2, z, 'x', 9, 0.4, 0));
-    g.add(box(s * 0.5, 1, 4.4, M.white, cx, 9, side * (s / 2 + 1.5)));
+    g.add(box(s * 0.5, 1, 4.4, Wt, cx, 9, side * (s / 2 + 1.5)));
     g.add(pediment(s * 0.5, 2.4, 4.4, cx, 10, side * (s / 2 + 1.5)));
   }
   // Апсида на востоке.
-  g.add(mesh(new THREE.CylinderGeometry(s * 0.3, s * 0.3, 12, 20, 1, false, 0, Math.PI), M.white, cx + s / 2, 3, 0));
-  g.add(dome(s * 0.3, M.silver, cx + s / 2, 9, 0, 0.5));
-  // Центральный барабан и большая золотая глава.
-  const dr = s * 0.22;
-  g.add(cyl(dr, 8, M.white, cx, 16.5, 0, 16));
-  g.add(windowBand(4, dr * 1.4, dr * 1.4, 19, cx, 0));
-  g.add(cyl(dr + 0.4, 0.6, M.cream, cx, 24.3, 0, 16));
-  g.add(onion(dr * 1.05, dr * 2.2, cx, 24.8, 0));
-  // Малые главы по углам — синие.
-  for (const [dx, dz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
-    const x = cx + dx * s * 0.33, z = dz * s * 0.33;
-    g.add(cyl(dr * 0.45, 4, M.white, x, 16.5, z, 12));
-    g.add(onion(dr * 0.5, dr * 1.1, x, 20.5, z, true, M.blue));
+  g.add(mesh(new THREE.CylinderGeometry(s * 0.3, s * 0.3, 12, 20, 1, false, 0, Math.PI), G, cx + s / 2, 3, 0));
+  g.add(dome(s * 0.3 + 0.1, M.teal, cx + s / 2, 9, 0, 0.5));
+  // Центральный барабан и большой бирюзовый купол с золотой главкой.
+  const dr = s * 0.27;
+  g.add(cyl(dr, 7, G, cx, 17, 0, 20));
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2, wnd = archWindow(0.9, 2.4, 0, 0, 0);
+    wnd.position.set(cx + Math.cos(a) * (dr + 0.02), 19, Math.sin(a) * (dr + 0.02));
+    wnd.rotation.y = -a;
+    g.add(wnd);
   }
-  // Трапезная и колокольня на западе.
+  g.add(cyl(dr + 0.5, 0.7, Wt, cx, 23.6, 0, 20));
+  g.add(dome(dr + 0.3, M.teal, cx, 24.2, 0, 0.95));
+  g.add(cyl(0.9, 1.6, Wt, cx, 24 + (dr + 0.3) * 0.95, 0, 10));
+  g.add(onion(1.1, 2.4, cx, 25.5 + (dr + 0.3) * 0.95, 0));
+  // Малые главы по углам — золотые на зелёных барабанах.
+  for (const [dx, dz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+    const x = cx + dx * s * 0.36, z = dz * s * 0.36;
+    g.add(cyl(dr * 0.32, 3.4, G, x, 17.4, z, 12));
+    g.add(cyl(dr * 0.32 + 0.2, 0.4, Wt, x, 20.6, z, 12));
+    g.add(onion(dr * 0.36, dr * 0.8, x, 21, z));
+  }
+  // Трапезная.
   const t = Math.min(9, W * 0.45);
   const tx = -L / 2 + t / 2;
   const refStart = tx + t / 2, refEnd = cx - s / 2;
   if (refEnd > refStart) {
-    g.add(box(refEnd - refStart, 11, W * 0.6, M.white, (refStart + refEnd) / 2, -3, 0));
-    g.add(box(refEnd - refStart + 0.4, 1, W * 0.6 + 0.4, M.silver, (refStart + refEnd) / 2, 8, 0));
+    const rl = refEnd - refStart, rx = (refStart + refEnd) / 2, rw = W * 0.7;
+    g.add(box(rl, 11, rw, G, rx, -3, 0));
+    g.add(box(rl + 0.4, 0.6, rw + 0.4, Wt, rx, 7.6, 0));
+    g.add(hipRoof(rl + 0.4, rw + 0.4, 2.4, 8.2, M.teal).translateX(rx));
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < Math.floor(rl / 3.4); i++) {
+        const w = archWindow(1.2, 3, 0, 1.8, 0);
+        w.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+        w.position.set(refStart + 1.7 + i * 3.4, 1.8, side * (rw / 2 + 0.02));
+        g.add(w);
+      }
+    }
   }
-  g.add(box(t, 22, t, M.white, tx, -3, 0));
-  g.add(pilasters(t, t, 22, tx, -3, 0));
-  g.add(box(t + 0.6, 0.7, t + 0.6, M.cream, tx, 19, 0));
-  g.add(box(t * 0.75, 7, t * 0.75, M.white, tx, 19.7, 0));
-  g.add(colonnade(8, t * 0.38, 6, 0.22, M.cream, tx, 20.2, 0)); // ярус звона
-  g.add(box(t * 0.8, 0.6, t * 0.8, M.cream, tx, 26.7, 0));
-  g.add(cyl(t * 0.25, 4, M.white, tx, 27.3, 0, 12));
-  g.add(onion(t * 0.24, t * 0.5, tx, 31.3, 0, false, M.blue));
-  g.add(cone(t * 0.06, 9, M.gold, tx, 31.3 + t * 0.5, 0, 8));
-  g.add(cross(2.4, tx, 40.5 + t * 0.5, 0));
+  // Колокольня: четверик с порталом, два восьмерика звона, шатёр со слухами, глава.
+  g.add(box(t, 15, t, G, tx, -3, 0));
+  g.add(pilasters(t, t, 15, tx, -3, 0));
+  g.add(portico(4, -t * 0.42, t * 0.42, tx - t / 2 - 1.6, 'z', 7, 0.4, 0));
+  g.add(box(2.8, 1, t, Wt, tx - t / 2 - 1.4, 7, 0));
+  const ped = pediment(t, 2.2, 2.8, 0, 0, 0);
+  ped.rotation.y = Math.PI / 2;
+  ped.position.set(tx - t / 2 - 1.4, 8, 0);
+  g.add(ped);
+  g.add(archWindow(1.1, 1.5, tx - t / 2 - 0.02, 10.4, 0).rotateY(Math.PI));
+  g.add(box(t + 0.6, 0.6, t + 0.6, Wt, tx, 12, 0));
+  const tiers = [[t * 0.42, 12.6, 6.4], [t * 0.34, 19.6, 5.2]];
+  for (const [a, y0, h] of tiers) {
+    g.add(oct(a, a, h, G, tx, y0));
+    for (let k = 0; k < 8; k++) {
+      const ang = (k * Math.PI) / 4, op = archOpening(a * 0.55, h * 0.62, false);
+      op.position.set(tx + Math.cos(ang) * (a + 0.02), y0 + h * 0.16, Math.sin(ang) * (a + 0.02));
+      op.rotation.y = -ang;
+      g.add(op);
+    }
+    g.add(oct(a + 0.35, a + 0.35, 0.5, Wt, tx, y0 + h));
+  }
+  const sY = 25.3, sH = 10;
+  g.add(oct(t * 0.34, 0.2, sH, M.teal, tx, sY));
+  for (let k = 0; k < 4; k++) { // слухи
+    const a = (k * Math.PI) / 2, r = t * 0.34 * (1 - 2 / sH);
+    const d = new THREE.Group();
+    d.add(box(0.8, 1.2, 0.9, Wt, 0, 0, 0));
+    d.add(archWindow(0.5, 0.8, 0.42, 0.2, 0));
+    d.position.set(tx + Math.cos(a) * r, sY + 1.6, Math.sin(a) * r);
+    d.rotation.y = -a;
+    g.add(d);
+  }
+  g.add(onion(0.9, 2, tx, sY + sH - 0.4, 0));
   return g;
 }
 
@@ -881,27 +1042,33 @@ function residence(p, { ux, uz, nx, nz }) {
   return g;
 }
 
-// «Навеки с Россией»: две параллельные белые стелы на гранитном стилобате.
+// Монумент «Навеки с Россией» (по фото): одна высокая плита из двух лезвий, между ними сквозная
+// прорезь. Внизу прорезь открыта (портал между «ногами»), выше — бронзовый рельеф с гербами,
+// сверху лезвия срезаны клином к прорези. Широкой стороной — к пруду (на запад) и к аллее.
 function friendship({ L, W }, h = 46) {
   const g = new THREE.Group();
-  g.add(box(L, 1.4, W, M.granite, 0, -2, 0));
+  g.add(box(L + 2, 1.4, W + 2, M.granite, 0, -2, 0));
   g.add(box(L * 0.7, 1, W * 0.7, M.stone, 0, -0.6, 0));
-  const steleW = 6, gap = 2.6;
-  const steles = new THREE.Group();
-  steles.rotation.y = Math.PI / 2; // плоскости стел поперёк длинной стороны стилобата
-  g.add(steles);
+  const t = 2.8, bw = 2.5, gap = 2.2, notch = 4; // толщина (по x), ширина лезвия и прорези (по z)
   for (const side of [-1, 1]) {
-    const geo = new THREE.BoxGeometry(steleW, h, 2.2, 1, 8, 1);
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const t = (pos.getY(i) + h / 2) / h; // 0 внизу, 1 вверху
-      pos.setX(i, pos.getX(i) * (1 - 0.45 * t));
-    }
-    geo.computeVertexNormals();
-    steles.add(mesh(geo, M.concrete, 0, 0.4 + h / 2, side * (gap / 2 + 1.1)));
+    // Профиль лезвия в плоскости (z, y): чуть сужается кверху, верх скошен к прорези.
+    const zi = gap / 2, zo = gap / 2 + bw, zt = gap / 2 + bw * 0.86;
+    let pts = [[zi, 0], [zo, 0], [zt, h], [zi, h - notch]].map(([z, y]) => new THREE.Vector2(-side * z, y));
+    if (side < 0) pts = pts.reverse();
+    const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: t, bevelEnabled: false })
+      .translate(0, 0, -t / 2).rotateY(Math.PI / 2);
+    g.add(mesh(geo, M.slab, 0, 0.4, 0));
+    // Вертикальные борозды по лицевым граням лезвия.
+    for (const x of [-t / 2 - 0.03, t / 2 + 0.03]) g.add(box(0.06, h * 0.9, 0.12, M.stone, x, 0.4 + h * 0.03, side * (zi + bw * 0.55)));
   }
-  // Венчающая перемычка.
-  steles.add(box(steleW * 0.5, 1.2, gap + 4.4, M.concrete, 0, h - 1.5, 0));
+  // Бронзовый рельеф в прорези: от верха портала до клина, по нему — выпуклые гербы и фигуры.
+  const y0 = 0.4 + h * 0.17, y1 = 0.4 + h - notch - 0.6;
+  g.add(box(t * 0.7, y1 - y0, gap + 0.1, M.bronze, 0, y0, 0));
+  for (const x of [-1, 1]) {
+    for (let y = y0 + 1.5; y < y1 - 2; y += 3.2) g.add(box(0.5, 1.8, gap * 0.8, M.bronze, x * t * 0.38, y, 0));
+    const emblem = mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.3, 20).rotateZ(Math.PI / 2), M.gold, x * (t * 0.35 + 0.25), y1 - 3.2, 0);
+    g.add(emblem);
+  }
   return g;
 }
 
@@ -916,43 +1083,296 @@ function rotunda({ R }) {
   return g;
 }
 
-function mosque({ L, W }) {
+// Центральная мечеть (Карла Маркса; по фото): объём по контуру OSM — бежевый нижний этаж,
+// красный кирпич с высокими арочными окнами, белый карниз с мятной полосой, тёмная плоская кровля.
+// В центре — золотой купол на кирпичном барабане, по углам — малые золотые купола и четыре
+// мятных минарета с золотыми шатрами; у угла к Карла Маркса (запад) — главный высокий минарет.
+// pl — контур в системе fit (+x вдоль angle).
+function mosque(pl, { L, W, angle }) {
   const g = new THREE.Group();
-  g.add(box(L * 0.8, 12, W * 0.9, M.white, 0, -3, 0));
-  g.add(box(L * 0.8 + 0.6, 0.6, W * 0.9 + 0.6, M.green, 0, 9, 0));
-  const r = Math.min(L, W) * 0.27;
-  g.add(cyl(r, 4, M.white, 0, 9.6, 0, 24));
-  g.add(dome(r + 0.3, M.green, 0, 13.6, 0, 1.05));
-  g.add(cyl(0.12, 3, M.gold, 0, 13.6 + r * 1.05, 0, 6));
-  for (const side of [-1, 1]) {
-    const x = side * (L * 0.4 + 1.5);
-    g.add(cyl(1.5, 30, M.white, x, -3, 0, 12, 1.2));
-    g.add(cyl(2.1, 0.8, M.white, x, 22, 0, 12));
-    g.add(cyl(1.15, 4, M.white, x, 22.8, 0, 12));
-    g.add(cone(1.3, 5, M.green, x, 26.8, 0, 12));
-    const crescent = mesh(new THREE.TorusGeometry(0.6, 0.1, 6, 16, Math.PI * 1.4), M.gold, x, 32.6, 0);
-    crescent.rotation.z = Math.PI * 0.8;
-    g.add(crescent);
+  const H0 = 4, H1 = 13;
+  g.add(prism(pl, -3, H0 + 3, M.beige));
+  g.add(prism(pl, H0, H1 - H0, M.redBrick));
+  g.add(prism(pl, H0 - 0.15, 0.35, M.white, 0.15));
+  g.add(prism(pl, H1 - 0.1, 0.6, M.mint, 0.25));
+  g.add(prism(pl, H1 + 0.5, 0.6, M.white, 0.45));
+  g.add(prism(pl, H1 + 0.5, 0.75, M.dark));
+  contourWindows(g, pl, [[H0 + 1.4, 5.6]], { step: 4.6, make: (h) => archWindowZ(1.5, h) });
+  contourWindows(g, pl, [[1.1, 1.8]], { step: 4.6, w: 1.4, frame: null });
+  // Купол: восьмигранный кирпичный барабан, мятный пояс, золотой купол с полумесяцем.
+  const r = Math.min(L, W) * 0.2, yd = H1 + 1.2;
+  g.add(cyl(r, 3.6, M.redBrick, 0, yd, 0, 8));
+  g.add(cyl(r + 0.3, 0.5, M.mint, 0, yd + 3.6, 0, 8));
+  g.add(dome(r + 0.2, M.gold, 0, yd + 4.1, 0, 1.15));
+  g.add(cyl(0.12, 2.4, M.gold, 0, yd + 4.1 + (r + 0.2) * 1.15 - 0.2, 0, 6));
+  const crescent = (x, y, z) => {
+    const c = mesh(new THREE.TorusGeometry(0.55, 0.1, 6, 16, Math.PI * 1.4), M.gold, x, y, z);
+    c.rotation.z = Math.PI * 0.8;
+    return c;
+  };
+  g.add(crescent(0, yd + 4.1 + (r + 0.2) * 1.15 + 2.6, 0));
+  // Минарет: мятный ствол с белыми поясами, балкон, верхний ствол, золотой шатёр.
+  const minaret = (x, z, y0, h, rr) => {
+    const m = new THREE.Group();
+    m.add(cyl(rr, h * 0.72, M.mint, 0, 0, 0, 8, rr * 0.85));
+    for (let y = h * 0.12; y < h * 0.7; y += h * 0.15) m.add(cyl(rr * 0.95, 0.35, M.white, 0, y, 0, 8));
+    m.add(cyl(rr * 1.5, 0.45, M.white, 0, h * 0.72, 0, 12));
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      m.add(box(0.08, 1, 0.08, M.white, Math.cos(a) * rr * 1.4, h * 0.72 + 0.45, Math.sin(a) * rr * 1.4));
+    }
+    m.add(cyl(rr * 0.75, h * 0.1, M.mint, 0, h * 0.72 + 0.45, 0, 8));
+    m.add(cyl(rr * 0.95, 0.35, M.gold, 0, h * 0.82 + 0.45, 0, 8));
+    m.add(cone(rr * 0.9, h * 0.17, M.gold, 0, h * 0.82 + 0.8, 0, 8));
+    m.add(crescent(0, h + 1.6, 0));
+    m.position.set(x, y0, z);
+    return m;
+  };
+  // По углам: вершина контура, ближняя к углу описанного прямоугольника, сдвинутая к центру.
+  const corner = (sx, sz, inset) => {
+    let q = pl[0];
+    for (const v of pl) if (v[0] * sx * W + v[1] * sz * L > q[0] * sx * W + q[1] * sz * L) q = v;
+    const d = Math.hypot(q[0], q[1]) || 1;
+    return [q[0] - (q[0] / d) * inset, q[1] - (q[1] / d) * inset];
+  };
+  for (const [sx, sz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+    const [mx, mz] = corner(sx, sz, 2.2);
+    g.add(minaret(mx, mz, H1 + 1.25, 14, 0.75));
+    const dx = sx * L * 0.22, dz = sz * W * 0.22;
+    g.add(cyl(1.3, 1.4, M.redBrick, dx, H1 + 1.25, dz, 8));
+    g.add(dome(1.4, M.gold, dx, H1 + 2.65, dz, 1.2));
   }
+  // Главный минарет — у западного угла (к Карла Маркса), с земли, вплотную к стене.
+  const c = Math.cos(angle), s = Math.sin(angle);
+  let west = pl[0];
+  for (const v of pl) if (v[0] * c - v[1] * s < west[0] * c - west[1] * s) west = v;
+  const d = Math.hypot(west[0], west[1]) || 1;
+  const [wx, wz] = [west[0] + (west[0] / d) * 0.6, west[1] + (west[1] / d) * 0.6];
+  g.add(cyl(2.4, 4, M.beige, wx, -3, wz, 8));
+  g.add(minaret(wx, wz, 1, 36, 1.4));
+  return mergeByMaterial(g);
+}
+
+// Государственный цирк Удмуртии (по фото): круглый объём из красного кирпича с белыми полосами,
+// над ним — венец голубых стеклянных сводов, сходящихся к центру, со светлыми рёбрами; в центре —
+// стеклянный фонарь. Вход — стеклянный тамбур к Красноармейской (юго-запад).
+function circus({ R }) {
+  const g = new THREE.Group();
+  const H = 13;
+  g.add(cyl(R, H + 3, M.redBrick, 0, -3, 0, 40));
+  for (const y of [2.6, 5.4, 8.2, 11]) g.add(cyl(R + 0.06, 0.55, M.white, 0, y, 0, 40));
+  g.add(cyl(R + 0.5, 0.8, M.white, 0, H, 0, 40));
+  // Своды: полуцилиндры вдоль радиусов, внутренний конец выше.
+  const N = 14, len = R * 0.72, rv = R * Math.sin(Math.PI / N) * 0.98, tilt = 0.22;
+  const vaultGeo = new THREE.CylinderGeometry(rv, rv, len, 14, 1, false, -Math.PI / 2, Math.PI).rotateX(-Math.PI / 2).rotateY(Math.PI / 2);
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const arm = new THREE.Group();
+    arm.rotation.y = -a;
+    const v = mesh(vaultGeo, M.blueGlass, R - len / 2 - 0.4, H + 0.8 + Math.sin(tilt) * len / 2, 0);
+    v.rotation.z = -tilt;
+    arm.add(v);
+    // Торец свода: белая арка по краю.
+    const rim = mesh(new THREE.TorusGeometry(rv, 0.22, 4, 14, Math.PI).rotateY(Math.PI / 2), M.white, R - 0.4, H + 0.8, 0);
+    arm.add(rim);
+    // Ребро в ендове между сводами.
+    const rib = box(len, 0.4, 0.5, M.white, 0, 0, 0);
+    rib.position.set(R - len / 2 - 0.4, H + 0.9 + Math.sin(tilt) * len / 2, 0);
+    rib.rotation.z = -tilt;
+    const ribArm = new THREE.Group();
+    ribArm.rotation.y = -a - Math.PI / N;
+    ribArm.add(rib);
+    g.add(arm, ribArm);
+  }
+  // Центральный фонарь.
+  const rc = R - len - 0.2, yc = H + 0.8 + Math.sin(tilt) * len;
+  g.add(cyl(rc + 0.6, yc - H + 0.6, M.white, 0, H, 0, 24));
+  g.add(dome(rc + 0.3, M.blueGlass, 0, yc + 0.6, 0, 0.55));
+  g.add(cyl(0.12, 4, M.dark, 0, yc + 0.6 + (rc + 0.3) * 0.55, 0, 6));
+  // Входной тамбур к юго-западу.
+  const ent = new THREE.Group();
+  ent.rotation.y = -(3 * Math.PI) / 4;
+  ent.add(box(5, 6, 12, M.blueGlass, R + 1.5, -3 + 3, 0));
+  ent.add(box(5.6, 0.6, 12.6, M.white, R + 1.5, 6, 0));
+  g.add(ent);
+  return mergeByMaterial(g);
+}
+
+// Часть контура с z < zc (отсечение многоугольника полуплоскостью).
+function clipZ(p, zc) {
+  const out = [];
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length];
+    if (a[1] < zc) out.push(a);
+    if ((a[1] < zc) !== (b[1] < zc)) {
+      const t = (zc - a[1]) / (b[1] - a[1]);
+      out.push([a[0] + (b[0] - a[0]) * t, zc]);
+    }
+  }
+  return out;
+}
+
+// Тёмная скульптура на пилоне: постамент, фигура, голова, поднятая рука.
+function statue(s = 1) {
+  const g = new THREE.Group();
+  g.add(box(0.9, 0.4, 0.9, M.dark, 0, 0, 0));
+  g.add(cyl(0.3, 1.5, M.dark, 0, 0.4, 0, 8, 0.22));
+  g.add(mesh(new THREE.SphereGeometry(0.2, 8, 6), M.dark, 0, 2.1, 0));
+  const arm = box(0.12, 0.9, 0.12, M.dark, 0, 0, 0);
+  arm.position.set(0.3, 2.1, 0);
+  arm.rotation.z = -0.5;
+  g.add(arm);
+  g.scale.setScalar(s);
   return g;
 }
 
-function circus({ R }) {
+// Театр оперы и балета (по фото): белый модернизм 1970-х. Низкий стилобат по всему контуру
+// (с юга — терраса буквой П), на нём главный объём; южный фасад — ряд высоких пилонов-лопаток
+// со стеклом между ними, на пилонах — тёмные скульптуры; над залом — глухая сценическая коробка.
+// pl — контур в системе fit(p, 0): +z — юг.
+function opera(pl) {
   const g = new THREE.Group();
-  g.add(cyl(R, 15, M.concrete, 0, -3, 0, 40));
-  g.add(cyl(R + 0.4, 1, M.silver, 0, 7, 0, 40));
-  g.add(cyl(R * 0.98, 3, lambert('#c0473a'), 0, 8, 0, 40)); // красный пояс
-  g.add(dome(R * 0.97, M.silver, 0, 11, 0, 0.42));
-  // Рёбра купола.
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2;
-    const rib = mesh(new THREE.TorusGeometry(R * 0.97, 0.18, 4, 24, Math.PI / 2), M.white, 0, 11, 0);
-    rib.scale.set(1, 0.42, 1);
-    rib.rotation.set(0, a, 0);
-    g.add(rib);
+  const H0 = 1.2, H = 15;
+  const zs = pl.map((q) => q[1]), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  const main = clipZ(pl, z0 + (z1 - z0) * 0.7);
+  g.add(prism(pl, -3, H0 + 3, M.concrete));
+  g.add(prism(pl, H0 - 0.1, 0.4, M.white, 0.2));
+  g.add(prism(main, H0, H - H0, M.white));
+  g.add(prism(main, H, 0.9, M.white, 0.35));
+  g.add(prism(main, H + 0.9, 0.3, M.dark));
+  // Сценическая коробка — над северной частью главного объёма.
+  const xs = main.map((q) => q[0]), mx0 = Math.min(...xs), mx1 = Math.max(...xs);
+  const mz0 = Math.min(...main.map((q) => q[1])), mz1 = Math.max(...main.map((q) => q[1]));
+  g.add(box((mx1 - mx0) * 0.42, 28, (mz1 - mz0) * 0.36, M.concrete, (mx0 + mx1) / 2, H0, mz0 + (mz1 - mz0) * 0.38));
+  // Южный фасад: пилоны, стекло между ними, скульптуры на каждом втором пилоне.
+  const south = (e) => e.oz > 0.6 && e.len > 5;
+  contourEdges(main, (e) => {
+    if (!south(e)) return;
+    g.add(onEdge(box(e.len - 0.4, H - H0 - 1.6, 0.2, M.glass, 0, H0 + 0.4, 0), e, e.len / 2, 0.1));
+    const n = Math.max(2, Math.round(e.len / 3.4));
+    for (let k = 0; k <= n; k++) {
+      const t = (k * e.len) / n;
+      g.add(onEdge(box(0.9, H - H0 + 3.2, 2.6, M.white, 0, H0, 0), e, t, 1.3));
+      if (k % 2 === 0) g.add(onEdge(statue(1.8), e, t, 1.3).translateY(H + 3.2));
+    }
+  });
+  // Остальные стены — узкие вертикальные окна.
+  contourWindows(g, main, [[H0 + 1.5, H - H0 - 4]], { step: 7, w: 1.4, frame: null, skip: south, min: 6 });
+  return mergeByMaterial(g);
+}
+
+// Арсенал — Национальный музей Удмуртии (по фото): ампир, корпус буквой П по контуру OSM —
+// белый рустованный первый этаж, жёлтый второй, белые тяги и карниз, зелёная скатная кровля;
+// в середине самого длинного северного фасада — белый портик из четырёх колонн с фронтоном.
+function arsenal(pl) {
+  const g = new THREE.Group();
+  const H0 = 4.6, H1 = 10;
+  g.add(prism(pl, -3, H0 + 3, M.white));
+  g.add(prism(pl, H0, H1 - H0, M.cream));
+  g.add(prism(pl, H0 - 0.25, 0.45, M.white, 0.15));
+  g.add(prism(pl, H1, 0.8, M.white, 0.4));
+  g.add(insetRoof(pl, 4, 2.4, H1 + 0.8, M.roofGreen));
+  for (const y of [1.5, 3]) g.add(prism(pl, y, 0.12, M.stone, 0.04)); // руст
+  contourWindows(g, pl, [[1.1, 2.3]], { step: 3.6, frame: null, min: 2.5 });
+  contourWindows(g, pl, [[H0 + 1.1, 2.7]], { step: 3.6, min: 2.5 });
+  let front = null;
+  contourEdges(pl, (e) => { if (e.oz < -0.7 && (!front || e.len > front.len)) front = e; });
+  if (front) {
+    const q = new THREE.Group(), w = 14;
+    q.add(box(w + 1, 1.2, 3.6, M.white, 0, -0.4, 1.8));
+    for (let i = 0; i < 4; i++) q.add(cyl(0.6, H1 - 0.8, M.white, -w / 2 + 1.2 + (i * (w - 2.4)) / 3, 0.8, 2.8, 14));
+    q.add(box(w + 1, 1.3, 3.8, M.white, 0, H1, 1.9));
+    q.add(pediment(w + 1, 3.4, 3.8, 0, H1 + 1.3, 1.9));
+    g.add(onEdge(q, front, front.len / 2));
   }
-  g.add(cyl(0.12, 6, M.dark, 0, 11 + R * 0.4, 0, 6));
-  return g;
+  return mergeByMaterial(g);
+}
+
+// Русский драматический театр (Ленина; по фото): неоклассика 1950-х, охристые стены. Главный
+// фасад к улице Ленина — восемь колонн большого ордера во всю высоту, между ними высокие окна,
+// антаблемент с надписью, аттик с белыми медальонами; по бокам — лопатки и окна в два ряда;
+// над северной частью — сценическая коробка. pl — контур в системе fit(p, 0), +z — юг.
+function drama(pl) {
+  const g = new THREE.Group();
+  const H = 15, A = 2.2; // карниз и высота аттика
+  g.add(prism(pl, -3, 3.8, M.stone));
+  g.add(prism(pl, 0.8, H - 0.8, M.ochre));
+  g.add(prism(pl, H, 0.9, M.cream, 0.45));
+  g.add(prism(pl, H + 0.9, A, M.ochre));
+  g.add(prism(pl, H + 0.9 + A, 0.4, M.cream, 0.2));
+  let front = null;
+  contourEdges(pl, (e) => { if (e.oz > 0.7 && (!front || e.len > front.len)) front = e; });
+  const isFront = (e) => e === front;
+  contourWindows(g, pl, [[2, 3.2], [8.2, 3.2]], { step: 4.4, w: 1.6, skip: isFront });
+  contourEdges(pl, (e) => {
+    if (isFront(e) || e.len < 6) return;
+    const n = Math.floor(e.len / 4.4);
+    for (let k = 0; k <= n; k++) g.add(onEdge(box(0.9, H - 0.8, 0.3, M.cream, 0, 0.8, 0), e, (k * e.len) / n, 0.1));
+  });
+  // Сценическая коробка.
+  const zs = pl.map((q) => q[1]), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  const xs = pl.map((q) => q[0]), xm = (Math.min(...xs) + Math.max(...xs)) / 2;
+  g.add(box((Math.max(...xs) - Math.min(...xs)) * 0.5, 9, (z1 - z0) * 0.28, M.ochre, xm, H, z0 + (z1 - z0) * 0.3));
+  if (front) {
+    const q = new THREE.Group(), w = Math.min(front.len - 2, 34), n = 8;
+    q.add(box(w + 1, 0.8, 4.4, M.stone, 0, -0.1, 1.8));
+    q.add(box(w, H - 1.6, 0.2, M.glass, 0, 1.6, 0.1));
+    for (let i = 0; i < n; i++) {
+      const x = -w / 2 + 0.8 + (i * (w - 1.6)) / (n - 1);
+      q.add(cyl(0.75, H - 1.3, M.cream, x, 0.7, 3, 14));
+      q.add(box(1.8, 0.5, 1.8, M.cream, x, H - 0.6, 3));
+    }
+    for (let i = 0; i < n - 1; i++) { // проёмы между колоннами: рамы-импосты
+      const x = -w / 2 + 0.8 + ((i + 0.5) * (w - 1.6)) / (n - 1);
+      q.add(box(0.2, H - 1.6, 0.3, M.cream, x, 1.6, 0.2));
+      for (const y of [4.6, 9.2]) q.add(box((w - 1.6) / (n - 1) - 0.4, 0.25, 0.3, M.cream, x, y, 0.2));
+    }
+    q.add(box(w + 1.2, 1.6, 4.2, M.cream, 0, H - 0.1, 2.1));
+    q.add(box(w * 0.5, A + 1.2, 0.6, M.ochre, 0, H + 0.9, 0.3)); // повышенный аттик в центре
+    for (let i = 0; i < 6; i++) q.add(mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.2, 16).rotateX(Math.PI / 2), M.white, -w / 2 + 2 + (i * (w - 4)) / 5, H + 2.1, 0.7));
+    g.add(onEdge(q, front, front.len / 2));
+  }
+  const merged = mergeByMaterial(g);
+  if (front) merged.add(onEdge(sign('РУССКИЙ ДРАМАТИЧЕСКИЙ ТЕАТР', 14, 0.9, 0, H + 0.25, 0, 1), front, front.len / 2, 4.25));
+  return merged;
+}
+
+// Музейно-выставочный комплекс Калашникова (по фото): объём по контуру — светлые каменные пилоны
+// с тёмным стеклом между ними, плоская кровля с выносом, круглый стеклянный фонарь в центре.
+// У угла к улице Бородина — высокий вход: зелёные стальные стойки, полуциркульный навес
+// из зелёного стекла и бронзовая стена входа под ним. (fx, fz) — направление к улице.
+function kalashnikov(pl, fx, fz) {
+  const g = new THREE.Group();
+  const H = 11, stone = M.limestone;
+  g.add(prism(pl, -3, 3.4, M.stone));
+  g.add(prism(pl, 0.4, H - 0.4, M.glass));
+  contourEdges(pl, (e) => {
+    if (e.len < 3) return;
+    const n = Math.max(1, Math.round(e.len / 4.4));
+    for (let k = 0; k <= n; k++) g.add(onEdge(box(1.3, H - 0.4, 1, stone, 0, 0.4, 0), e, (k * e.len) / n, 0.3));
+  });
+  g.add(prism(pl, H, 1.1, stone, 0.8));
+  g.add(cyl(8, 2.2, M.white, 0, H + 1.1, 0, 32));
+  g.add(cyl(7.6, 1.6, M.greenGlass, 0, H + 3.3, 0, 32));
+  g.add(dome(7.8, M.white, 0, H + 4.9, 0, 0.18));
+  // Вход: самая дальняя к улице точка контура.
+  let best = pl[0];
+  for (const q of pl) if (q[0] * fx + q[1] * fz > best[0] * fx + best[1] * fz) best = q;
+  const e = new THREE.Group(), R = 4.4, Hp = 15, D = 9;
+  e.position.set(best[0] - fx * 2, 0, best[1] - fz * 2);
+  e.rotation.y = Math.atan2(fx, fz);
+  e.add(box(7, Hp - 1, 3, M.bronze, 0, 0, -1));
+  for (const x of [-R, R]) {
+    for (const z of [0.5, D - 0.5]) e.add(cyl(0.32, Hp, M.steelGreen, x, 0, z, 10));
+    e.add(box(0.5, 0.6, D, M.steelGreen, x, Hp - 0.6, D / 2));
+  }
+  e.add(box(2 * R + 0.8, 0.9, 0.6, M.yellow, 0, Hp - 0.9, D));
+  const vault = mesh(new THREE.CylinderGeometry(R, R, D, 18, 1, false, -Math.PI / 2, Math.PI).rotateX(-Math.PI / 2), M.greenGlass, 0, Hp, D / 2);
+  e.add(vault);
+  for (let z = 0.5; z <= D; z += 1.6) e.add(mesh(new THREE.TorusGeometry(R + 0.05, 0.08, 4, 18, Math.PI), M.steelGreen, 0, Hp, z));
+  for (let i = 0; i < 4; i++) e.add(box(2.4, 0.25, 4, M.stone, 0, -0.2 - i * 0.25 + 0.75, D + 1.5 + i * 0.6)); // ступени
+  g.add(e);
+  return mergeByMaterial(g);
 }
 
 function column() {
@@ -1224,13 +1644,35 @@ export function buildLandmarks(world) {
         break;
       }
       case 'friendship': {
-        const f = fit(p, longestEdgeAngle(p));
-        obj = place(friendship(f, lm.h || 46), f.cx, baseY(world, p), f.cz, f.angle);
+        // Широкой стороной плиты — к пруду на западе.
+        const f = fit(p, 0);
+        obj = place(friendship(f, lm.h || 46), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
       case 'mosque': {
         const f = fit(p, longestEdgeAngle(p));
-        obj = place(mosque(f), f.cx, baseY(world, p), f.cz, f.angle);
+        obj = place(mosque(toLocal(p, f), f), f.cx, baseY(world, p), f.cz, f.angle);
+        break;
+      }
+      case 'opera':
+      case 'arsenal':
+      case 'drama': {
+        const f = fit(p, 0);
+        obj = place({ opera, arsenal, drama }[lm.key](toLocal(p, f)), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'kalashnikov': {
+        // Вход — к улице Бородина: направление на её ближайшую точку.
+        let best = null;
+        for (const s of world.segmentsNear(lm.x, lm.z, 200)) {
+          if (!/Бородина/.test(s.road.name)) continue;
+          const c = World.closest(s, lm.x, lm.z);
+          if (!best || c.d < best.d) best = c;
+        }
+        let fx = -0.6, fz = 0.8;
+        if (best) { const d = Math.hypot(best.px - lm.x, best.pz - lm.z) || 1; fx = (best.px - lm.x) / d; fz = (best.pz - lm.z) / d; }
+        const f = fit(p, 0);
+        obj = place(kalashnikov(toLocal(p, f), fx, fz), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
       case 'rotunda':
