@@ -1,9 +1,10 @@
 // Гараж — он же автосалон: машины лентой внизу, справа — панель выбранной машины: характеристики, вкладки «Вид»
 // (цвет, детали у машин с options) и «Тюнинг» (улучшения, shop.js). Камера облетает машину в свободной части экрана
-// (main.js, frame()). В начале есть только базовая машина; любую другую можно выбрать и посмотреть, купить —
-// кнопкой «Купить», не купил и уехал — возвращаешься на ту, на которой заехал. Цвета бесплатные, детали — за
-// деньги (цена — третье число варианта в vehicles.js), их оплачивают при выезде, а не хватает — детали снимаются.
-// Улучшения покупаются сразу, кнопкой, и только для своей машины.
+// (main.js, frame()). В начале есть только базовая машина; любую другую можно выбрать и посмотреть. Ничего не
+// покупается сразу: машина, улучшения и платные детали (цена — третье число варианта в vehicles.js) кладутся в корзину,
+// а оплачиваются вместе кнопкой «Купить» в корзине. Цвета бесплатные. Улучшения — для своей машины или той, что
+// в корзине. Не купил и уехал — возвращаешься на ту машину, на которой заехал, с купленными деталями; корзина
+// с машинами и улучшениями остаётся до следующего захода (пока открыта игра).
 import { MODELS, DEFAULT_MODEL, pickOptions } from './vehicles.js';
 import { formatMoney } from './money.js';
 import { UPGRADES, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './shop.js';
@@ -43,6 +44,7 @@ export class Garage {
     this.isOpen = false;
     this.tab = 'look';
     this.keys = Object.keys(MODELS);
+    this.cart = new Map(); // ключ в кошельке → { price, why, model } — машины и улучшения; детали — из выбора (#due)
 
     const el = (this.el = document.createElement('div'));
     el.id = 'garage';
@@ -52,8 +54,9 @@ export class Garage {
         <div class="tabs"><button data-tab="look">Вид</button><button data-tab="tune">Тюнинг</button></div>
         <div class="pane" data-pane="look"><div class="colors"></div><div class="opts"></div></div>
         <div class="pane" data-pane="tune"><div class="ups"></div></div>
+        <div class="cart" hidden><div class="cart-head"></div><div class="cart-list"></div><button class="buy"></button></div>
         <div class="actions"><button class="go"></button><button class="back">К своей</button></div>
-        <div class="hint">←→ машина · ↑↓ цвет · <kbd>Enter</kbd> поехать · <kbd>G</kbd> выйти</div>
+        <div class="hint">←→ машина · ↑↓ цвет · <kbd>Enter</kbd> в корзину / поехать · <kbd>G</kbd> выйти</div>
       </div>
       <div class="strip"></div>`;
     document.body.append(el);
@@ -69,6 +72,7 @@ export class Garage {
     }
     for (const b of el.querySelectorAll('[data-tab]')) b.addEventListener('click', () => { this.tab = b.dataset.tab; this.#render(); });
     el.querySelector('.go').addEventListener('click', () => this.#go());
+    el.querySelector('.buy').addEventListener('click', () => this.#buy());
     el.querySelector('.back').addEventListener('click', () => this.#pick(this.paid.model, this.paid.color, this.paid.options));
     addEventListener('keydown', (e) => {
       if (!this.isOpen) return;
@@ -105,14 +109,54 @@ export class Garage {
     this.onChange(model, color, options);
   }
 
-  // Главная кнопка: чужая машина — купить (вместе с выбранными деталями), своя — поехать.
+  // Куплено или лежит в корзине — для предпросмотра улучшений и характеристик.
+  #has(key) { return this.wallet.owns(key) || this.cart.has(key); }
+  #view() { return { owns: (key) => this.#has(key) }; }
+
+  // Главная кнопка: чужая машина — в корзину, своя — поехать.
   #go() {
-    const due = this.#due();
-    if (!due.car) return this.close();
-    if (!this.wallet.can(due.sum)) return;
-    for (const [key, price] of due.keys) this.wallet.buy(key, price, key === carKey(this.choice.model) ? MODELS[this.choice.model].name : 'детали в гараже');
-    this.paid = { model: this.choice.model, color: this.choice.color, options: { ...this.choice.options } };
-    this.tab = 'tune'; // купил машину — сразу к улучшениям
+    const model = this.choice.model;
+    if (!this.wallet || ownsCar(this.wallet, model)) return this.close();
+    if (this.cart.has(carKey(model))) return;
+    this.cart.set(carKey(model), { price: carPrice(model), why: MODELS[model].name, model, car: true });
+    this.#render();
+  }
+
+  // Убрать из корзины: машину — вместе с её улучшениями, уровень улучшения — вместе со следующими,
+  // деталь — вернуть купленную (или штатную).
+  #remove(key) {
+    const item = this.cart.get(key);
+    if (item) {
+      for (const [k, it] of this.cart) {
+        if (it.model === item.model && (item.car || (it.up === item.up && it.level >= item.level))) this.cart.delete(k);
+      }
+      return this.#render();
+    }
+    const slot = (MODELS[this.choice.model].options ?? []).find((o) => optionKey(this.choice.model, o.key, this.choice.options[o.key]) === key);
+    if (slot) this.#pick(this.choice.model, this.choice.color, { ...this.choice.options, [slot.key]: this.#paidOption(slot) });
+  }
+
+  // Что было на этой детали до захода (если машина та же), иначе штатный вариант.
+  #paidOption(slot) {
+    return this.paid?.model === this.choice.model ? this.paid.options[slot.key] : slot.variants[0][0];
+  }
+
+  // Всё, что в корзине: машины и улучшения (кроме уже купленных — могли приехать из аккаунта) + выбранные детали.
+  #items() {
+    for (const k of this.cart.keys()) if (this.wallet.owns(k)) this.cart.delete(k);
+    return [...[...this.cart].map(([key, it]) => ({ key, ...it })), ...this.#due().keys.filter(([key]) => key !== carKey(this.choice.model)).map(([key, price, why]) => ({ key, price, why, model: this.choice.model }))];
+  }
+
+  // «Купить» в корзине: всё сразу — или ничего, если не хватает денег. Машины лежат в корзине раньше своих улучшений.
+  #buy() {
+    const items = this.#items(), sum = items.reduce((a, it) => a + it.price, 0);
+    if (!items.length || !this.wallet.can(sum)) return;
+    for (const it of items) this.wallet.buy(it.key, it.price, it.why);
+    this.cart.clear();
+    if (ownsCar(this.wallet, this.choice.model)) {
+      this.paid = { model: this.choice.model, color: this.choice.color, options: { ...this.choice.options } };
+      if (items.some((it) => it.car && it.model === this.choice.model)) this.tab = 'tune'; // купил машину — к улучшениям
+    }
     this.#render();
     this.onUpgrade?.();
   }
@@ -124,17 +168,18 @@ export class Garage {
       c.classList.toggle('on', on);
       if (on && this.isOpen) c.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
       const k = c.dataset.key, mine = !this.wallet || ownsCar(this.wallet, k);
-      c.querySelector('.price').textContent = !carPrice(k) ? 'стартовая' : mine ? 'своя' : formatMoney(carPrice(k));
+      c.querySelector('.price').textContent = !carPrice(k) ? 'стартовая' : mine ? 'своя' : `${formatMoney(carPrice(k))}${this.cart.has(carKey(k)) ? ' · в корзине' : ''}`;
       c.classList.toggle('own', mine);
     }
-    // Характеристики: штатные — жёлтым, прибавка от улучшений — зелёным.
-    const t = this.wallet ? tuned(this.wallet, model) : spec.stats;
-    const bar = (label, base, up, max) => `<div class="stat"><span>${label}</span><i style="--v:${Math.round(base / max * 100)}%;--u:${Math.round(up / max * 100)}%"></i></div>`;
+    // Характеристики: штатные — жёлтым, прибавка от улучшений — зелёным, от улучшений в корзине — голубым.
+    const t = this.wallet ? tuned(this.wallet, model) : spec.stats, c = this.wallet ? tuned(this.#view(), model) : t;
+    const pct = (x, max) => `${Math.round(x / max * 100)}%`;
+    const bar = (label, k, max) => `<div class="stat"><span>${label}</span><i style="--v:${pct(spec.stats[k], max)};--u:${pct(t[k], max)};--c:${pct(c[k], max)}"></i></div>`;
     this.el.querySelector('.info').innerHTML = `<b>${spec.name}</b> <small>${spec.years}</small>
-      <em class="${own ? 'own' : ''}">${!carPrice(model) ? 'стартовая' : own ? 'своя' : formatMoney(carPrice(model))}</em>
+      <em class="${own ? 'own' : ''}">${!carPrice(model) ? 'стартовая' : own ? 'своя' : `${this.cart.has(carKey(model)) ? 'в корзине · ' : ''}${formatMoney(carPrice(model))}`}</em>
       <p>${spec.about}</p>${spec.credit ? `<p class="credit">${spec.credit}</p>` : ''}
-      ${bar('скорость', spec.stats.kmh, t.kmh, MAX.kmh)}${bar('разгон', spec.stats.accel, t.accel, MAX.accel)}${bar('сцепление', spec.stats.grip, t.grip, MAX.grip)}
-      <div class="sys">${t.nitro ? '<span>нитро</span>' : ''}${t.hopper ? '<span>«Кузнечик»</span>' : ''}</div>`;
+      ${bar('скорость', 'kmh', MAX.kmh)}${bar('разгон', 'accel', MAX.accel)}${bar('сцепление', 'grip', MAX.grip)}
+      <div class="sys">${c.nitro ? `<span class="${t.nitro ? '' : 'in-cart'}">нитро</span>` : ''}${c.hopper ? `<span class="${t.hopper ? '' : 'in-cart'}">«Кузнечик»</span>` : ''}</div>`;
     for (const b of this.el.querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === this.tab);
     for (const p of this.el.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== this.tab;
     const box = this.el.querySelector('.colors');
@@ -163,59 +208,87 @@ export class Garage {
       opts.append(row);
     }
     this.#renderUps();
+    this.#renderCart();
     if (this.wallet) this.el.querySelector('.money').textContent = formatMoney(this.wallet.balance);
-    // Кнопки: чужая машина — «Купить» и «К своей», своя — «Поехать» (есть некупленные детали — с ценой).
-    const due = this.#due(), poor = due.sum - Math.max(0, this.wallet?.balance ?? 0);
+    // Кнопки: чужая машина — «В корзину» и «К своей», своя — «Поехать».
+    const foreign = !own, inCart = foreign && this.cart.has(carKey(model));
     const go = this.el.querySelector('.go');
-    go.innerHTML = due.car ? (poor > 0 ? `Не хватает ${formatMoney(poor)}` : `Купить за ${formatMoney(due.sum)}`)
-      : !due.sum ? 'Поехать' : poor > 0 ? `Не хватает ${formatMoney(poor)} — снять детали` : `Детали за ${formatMoney(due.sum)} — поехать`;
-    go.classList.toggle('poor', due.car && poor > 0);
-    this.el.querySelector('.back').hidden = !due.car;
+    go.innerHTML = !foreign ? 'Поехать' : inCart ? 'В корзине' : `В корзину · ${formatMoney(carPrice(model))}`;
+    go.classList.toggle('poor', inCart);
+    this.el.querySelector('.back').hidden = !foreign;
   }
 
-  // Улучшения: по строке на каждое — купленные уровни, следующий с ценой (кнопка — купить сразу), дальше — закрыты.
+  // Корзина: строки с ценой и крестиком, итог и «Купить» (не хватает денег — сколько).
+  #renderCart() {
+    const box = this.el.querySelector('.cart'), items = this.wallet ? this.#items() : [];
+    box.hidden = !items.length;
+    if (!items.length) return;
+    const sum = items.reduce((a, it) => a + it.price, 0), poor = sum - Math.max(0, this.wallet.balance);
+    box.querySelector('.cart-head').textContent = `Корзина · ${items.length}`;
+    const list = box.querySelector('.cart-list');
+    list.innerHTML = '';
+    for (const it of items) {
+      const row = document.createElement('div');
+      const label = it.model !== this.choice.model && !it.car ? `${it.why} · ${MODELS[it.model].name}` : it.why;
+      row.innerHTML = `<span></span><b>${formatMoney(it.price)}</b><button title="Убрать из корзины">✕</button>`;
+      row.querySelector('span').textContent = label;
+      row.querySelector('button').addEventListener('click', () => this.#remove(it.key));
+      list.append(row);
+    }
+    const buy = box.querySelector('.buy');
+    buy.textContent = poor > 0 ? `Не хватает ${formatMoney(poor)}` : `Купить за ${formatMoney(sum)}`;
+    buy.classList.toggle('poor', poor > 0);
+  }
+
+  // Улучшения: по строке на каждое — купленные уровни, уровни в корзине (нажал — убрать), следующий с ценой
+  // (нажал — в корзину), дальше — закрыты.
   #renderUps() {
     const box = this.el.querySelector('.ups');
     box.innerHTML = '';
     if (!this.wallet) return;
-    const model = this.choice.model, own = ownsCar(this.wallet, model);
+    const model = this.choice.model, own = ownsCar(this.wallet, model) || this.cart.has(carKey(model));
+    const sum = this.#items().reduce((a, it) => a + it.price, 0);
     if (!own) {
       const head = document.createElement('div');
       head.className = 'ups-head';
-      head.textContent = 'Улучшения ставятся на свою машину — сначала купите её';
+      head.textContent = 'Улучшения ставятся на свою машину — сначала положите её в корзину';
       box.append(head);
     }
     for (const up of UPGRADES) {
-      const lv = upLevel(this.wallet, model, up.key);
+      const lv = upLevel(this.wallet, model, up.key), lc = upLevel(this.#view(), model, up.key);
       const row = document.createElement('div');
       row.className = 'opt';
       row.innerHTML = `<span>${up.name}</span>`;
       up.levels.forEach(([label, price, about], i) => {
         const b = document.createElement('button');
         b.title = about;
+        const key = upKey(model, up.key, i + 1);
         if (i < lv) { b.textContent = label; b.classList.add('on'); }
-        else {
+        else if (i < lc) {
+          b.innerHTML = `${label} <small>в корзине</small>`;
+          b.classList.add('in-cart');
+          b.addEventListener('click', () => this.#remove(key));
+        } else {
           b.innerHTML = `${label} <small>${formatMoney(price)}</small>`;
-          const next = i === lv && own;
+          const next = i === lc && own;
           b.disabled = !next;
-          b.classList.toggle('poor', next && !this.wallet.can(price));
+          b.classList.toggle('poor', next && !this.wallet.can(sum + price));
           b.addEventListener('click', () => {
-            if (!this.wallet.buy(upKey(model, up.key, i + 1), price, `${up.name}: ${label}`)) return;
+            this.cart.set(key, { price, why: `${up.name}: ${label}`, model, up: up.key, level: i + 1 });
             this.#render();
-            this.onUpgrade?.();
           });
         }
         row.append(b);
       });
       const note = document.createElement('small');
       note.className = 'about';
-      note.textContent = lv === up.levels.length ? up.levels[lv - 1][2] : `${lv ? 'дальше: ' : ''}${up.levels[lv][2]}`;
+      note.textContent = lc === up.levels.length ? up.levels[lc - 1][2] : `${lc ? 'дальше: ' : ''}${up.levels[lc][2]}`;
       row.append(note);
       box.append(row);
     }
   }
 
-  // Выбранные, но не купленные машина и детали: { sum, keys, car }.
+  // Выбранные, но не купленные машина и детали: { sum, keys: [ключ, цена, подпись], car }.
   #due() {
     const out = { sum: 0, keys: [], car: false };
     if (!this.wallet) return out;
@@ -226,28 +299,22 @@ export class Garage {
       out.keys.push([carKey(this.choice.model), carPrice(this.choice.model)]);
     }
     for (const slot of (spec.mesh && spec.options) || []) {
-      const [v, , price] = slot.variants.find(([x]) => x === this.choice.options[slot.key]) ?? [];
+      const [v, label, price] = slot.variants.find(([x]) => x === this.choice.options[slot.key]) ?? [];
       const key = optionKey(this.choice.model, slot.key, v);
-      if (price && !this.wallet.owns(key)) { out.sum += price; out.keys.push([key, price]); }
+      if (price && !this.wallet.owns(key)) { out.sum += price; out.keys.push([key, price, `${slot.name}: ${label}`]); }
     }
     return out;
   }
 
-  // При выезде: не купленная машина — вернуть ту, на которой заехали; детали — оплатить, а не хватает денег —
-  // вернуть на них купленные (или штатные).
+  // При выезде: не купленная машина — вернуть ту, на которой заехали; не купленные детали — вернуть на них
+  // купленные (или штатные). Корзина с машинами и улучшениями остаётся.
   #settle() {
     const due = this.#due();
     if (!due.sum) return;
     if (due.car) return this.#pick(this.paid.model, this.paid.color, this.paid.options);
-    if (this.wallet.can(due.sum)) {
-      for (const [key, price] of due.keys) this.wallet.buy(key, price, 'детали в гараже');
-      return;
-    }
-    const spec = MODELS[this.choice.model], options = { ...this.choice.options };
-    for (const slot of spec.options) {
-      if (due.keys.some(([k]) => k === optionKey(this.choice.model, slot.key, options[slot.key]))) {
-        options[slot.key] = this.paid?.model === this.choice.model ? this.paid.options[slot.key] : slot.variants[0][0];
-      }
+    const options = { ...this.choice.options };
+    for (const slot of MODELS[this.choice.model].options) {
+      if (due.keys.some(([k]) => k === optionKey(this.choice.model, slot.key, options[slot.key]))) options[slot.key] = this.#paidOption(slot);
     }
     this.#pick(this.choice.model, this.choice.color, options);
   }
