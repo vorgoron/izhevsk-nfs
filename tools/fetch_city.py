@@ -956,7 +956,9 @@ SHOP_GENERIC = {
 }
 SIGN_GAP = 0.5        # м между вывесками на одной стене
 SIGN_REACH = 10.0     # м: точка вне дома — к стене не дальше
-SIGN_PER_WALL = 6
+SIGN_PER_WALL = 8
+SIGN_STREET_W = 2.0   # вес расстояния от стены до улицы при выборе стены (к расстоянию от места до стены)
+SIGN_YARD = {"service", "living_street"}  # проезды во дворах — не улица для вывесок
 
 
 def shop_kind(t):
@@ -979,10 +981,8 @@ def shop_kind(t):
     return k, text[:40]
 
 
-def shop_signs(buildings, roads, road_nodes):
-    """Вывески: [x, z, угол лица, ширина, дом, вид, текст]. Точка — на стене;
-    угол — atan2(nx, nz) наружной нормали. Стена выбирается ближняя к точке, но с поправкой на улицу:
-    внутри большого дома ближней бывает дворовая. Вывески одной стены раздвигаются, не влезли — сужаются."""
+def shop_pois():
+    """Места с вывеской из OSM: [(x, z, вид, текст)] — точки и центры контуров."""
     pois = []
     for nid, t in node_tags.items():
         if (sk := shop_kind(t)):
@@ -992,6 +992,17 @@ def shop_signs(buildings, roads, road_nodes):
             pts = [project(*nodes[n]) for n in nds[:-1] if n in nodes]
             if len(pts) >= 3:
                 pois.append((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts), *sk))
+    return pois
+
+
+def shop_signs(buildings, roads, road_nodes, pois=None):
+    """Вывески: [x, z, угол лица, ширина, дом, вид, текст]. Точка — на стене;
+    угол — atan2(nx, nz) наружной нормали. Стена выбирается ближняя к точке, но с поправкой на улицу
+    (SIGN_STREET_W × расстояние до улицы перед стеной): внутри большого дома ближней бывает дворовая.
+    Улица — проезжая часть без service/living_street: дворовые проезды тянули вывески во двор.
+    Вывески одной стены раздвигаются, не влезли — сужаются. pois — без OSM (tools/shop_walls.py)."""
+    if pois is None:
+        pois = shop_pois()
     # Одно и то же место точкой и контуром — одна вывеска.
     seen, uniq = {}, []
     for p in pois:
@@ -1010,7 +1021,7 @@ def shop_signs(buildings, roads, road_nodes):
             for j in range(int((min(zs) - SIGN_REACH) // cell), int((max(zs) + SIGN_REACH) // cell) + 1):
                 bgrid.setdefault((i, j), []).append(bi)
     for r in roads:
-        if r["k"] not in DRIVE or r["br"] or r["tu"]:
+        if r["k"] not in DRIVE or r["k"] in SIGN_YARD or r["br"] or r["tu"]:
             continue
         pts = [road_nodes[n] for n in r["n"]]
         for a, b in zip(pts, pts[1:]):
@@ -1062,8 +1073,7 @@ def shop_signs(buildings, roads, road_nodes):
                     road_cache[(bi, i)] = None if shut else road_d(mx + nx * 1.5, mz + nz * 1.5)
                 if road_cache[(bi, i)] is None:
                     continue
-                if home is not None:
-                    d += 0.6 * road_cache[(bi, i)]
+                d += SIGN_STREET_W * road_cache[(bi, i)]
                 if best is None or d < best[0]:
                     best = (d, bi, i, t * L)
         if best:

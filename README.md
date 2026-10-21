@@ -37,6 +37,14 @@ python3 tools/gis_extract.py "…/Сведения по ОЖФ Удмуртск�
 python3 tools/gibdd_cams.py "…/Kompleksy_dlya_sayta_Gosavtoinspekcii_<год>.xls"
 ```
 
+Вывески магазинов (`shops`) садятся на стену, ближнюю к месту из OSM, с поправкой на улицу перед стеной (дворовые
+проезды `service` улицей не считаются — иначе вывески уходили во двор). Пересадить вывески в готовом `city.json` после
+правки правил (`shop_signs` в `fetch_city.py`), без OSM и пересборки:
+
+```sh
+python3 tools/shop_walls.py
+```
+
 Сырые ответы кешируются в `data/raw/`. OSM берётся из основного API тайлами ~0.6 × 0.6 км
 (Overpass часто недоступен; весь город — ~730 запросов, 40–60 минут на чистую загрузку),
 рельеф — тайлы Terrarium (AWS Terrain Tiles, z13), сетка 30 м.
