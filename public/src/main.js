@@ -27,6 +27,7 @@ import { NitroFX, JetFX, DustFX, ExhaustFX, SkidMarksFX, TireSmokeFX } from './e
 import { GhostFX } from './ghostfx.js';
 import { sendAdRequest } from './adrequest.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
+import { install } from './install.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { createDebug } from './debug.js';
@@ -1249,6 +1250,16 @@ async function main() {
     if (!net.named && !isTouch) nameIn.focus();
     // Клавиатура телефона закрывает пол-экрана — прокручиваем к полю и кнопке.
     nameIn.addEventListener('focus', () => setTimeout(() => box.scrollIntoView({ block: 'end', behavior: 'smooth' }), 300));
+    // Иконка на рабочий стол: кнопка, только пока браузер может поставить (или это iPhone с подсказкой).
+    const inst = box.querySelector('.install'), hint = box.querySelector('.install-hint');
+    const showInst = () => { inst.hidden = !install.available; };
+    showInst();
+    install.onChange(showInst);
+    inst.addEventListener('click', async () => {
+      const r = await install.prompt();
+      if (r === 'ios') { hint.hidden = false; inst.hidden = true; }
+      track('install', { result: String(r) });
+    });
     return new Promise((resolve) => {
       // По ссылке друга — уже в его компании: «Поехали к друзьям» или ездить одному.
       const invited = net.room !== CITY;

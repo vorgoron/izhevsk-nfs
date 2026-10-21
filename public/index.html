@@ -53,6 +53,11 @@
     body.touch #start label small, body.touch #start .invited { font-size: 12px; }
     #start .invited { margin: 0; font-size: 14px; line-height: 1.4; text-align: left; color: #8fd0ff; }
     #start .invited[hidden] { display: none; }
+    #start .install { font-size: 15px; font-style: normal; font-weight: 600; text-transform: none; letter-spacing: 0;
+      color: #fff; background: none; border: 0; padding: 4px; opacity: .7; text-decoration: underline; text-underline-offset: 3px; }
+    #start .install:hover { background: none; opacity: 1; }
+    #start .install-hint { margin: 0; font-size: 14px; line-height: 1.4; color: #8fd0ff; }
+    #start .install[hidden], #start .install-hint[hidden] { display: none; }
     #start button kbd { margin-left: 10px; font-family: inherit; font-size: 12px; font-style: normal; font-weight: 600; text-transform: none; letter-spacing: 0;
       border: 1px solid rgba(0,0,0,.3); border-radius: 4px; padding: 0 5px; opacity: .6; vertical-align: middle; }
     body.touch #start button kbd { display: none; }
@@ -488,6 +493,8 @@
       <p class="invited" hidden>Вас позвали покататься вместе: кто открыл эту ссылку, тот в одном городе с вами — видно машины, можно гоняться.</p>
       <div class="choice"><button class="go"><span>Исследовать город ▶</span><kbd>Enter</kbd></button>
       <button class="friends"><span>👥 Играть с друзьями</span><small>получите ссылку — кто её откроет, окажется в городе рядом с вами</small></button></div>
+      <button class="install" hidden>📲 Установить как приложение</button>
+      <p class="install-hint" hidden>Нажмите «Поделиться» <b>⬆︎</b> внизу Safari, затем «На экран Домой».</p>
     </div></div></div>
   <div id="street" class="hud"></div>
   <div id="landmark" class="hud"></div>
