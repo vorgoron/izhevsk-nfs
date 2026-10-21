@@ -331,6 +331,9 @@ export class Car {
     if (!this.air && y0 - ground > FALL && this.sink === 0) {
       this.air = { kind: 'fall', t: 0, vy: 0, dur: 1, dir: 1, a: 0, w: 0, acc: 0 };
       this.onTop = null;
+      // Подскок с лежачего дальше не считается: иначе замерший hopV после посадки снова поднимал выше FALL — и так
+      // без конца (машина прыгала, не переставая).
+      this.hopV = this.hopH = 0;
     }
     if (this.air && this.air.kind === 'fall') {
       // Падение с крыши: просто вниз, без оборота.
@@ -415,8 +418,9 @@ export class Car {
   }
 
   // Лежачий полицейский под колёсами: удар, на скорости — подбрасывает (hopV, м/с вверх; сам подскок — в update).
+  // В подскоке колёса над дорогой — следующий лежачий пролетаем.
   #bump(vf, air) {
-    const x = this.pos.x, z = this.pos.y, k = air || this.onTop ? -1 : this.world.bumpCross(this.bumpX ?? x, this.bumpZ ?? z, x, z);
+    const x = this.pos.x, z = this.pos.y, k = air || this.onTop || this.hopH > 0 ? -1 : this.world.bumpCross(this.bumpX ?? x, this.bumpZ ?? z, x, z);
     this.bumpX = x; this.bumpZ = z;
     if (k < 0) return;
     const v = Math.abs(vf), [hop, hard] = BUMP_HIT[k];
