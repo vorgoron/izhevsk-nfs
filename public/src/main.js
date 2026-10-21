@@ -3,9 +3,10 @@ import { World } from './world.js';
 import { MINIMAP_SCALE } from './build.js';
 import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
-import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates } from './vehicles.js';
+import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates, setGear } from './vehicles.js';
 import { Garage, loadChoice, defaultChoice, optionKey } from './garage.js';
 import { tuned, ownsCar, grandfather } from './shop.js';
+import { paintOf, paintKey } from './paints.js';
 import { Race, formatTime, LENGTHS } from './race.js';
 import { Ramps } from './ramps.js';
 import { Pickups, NITRO_GIVE } from './pickups.js';
@@ -149,15 +150,20 @@ async function main() {
   // Деньги (money.js). Детали, выбранные до появления денег, считаются купленными; машина, на которой ездили
   // до автосалона, — тоже, с нитро и «Кузнечиком» (shop.js). Не своя машина (вышли из аккаунта) — стартовая.
   const wallet = new Wallet($('money'), $('money-log'));
+  // Покрытие кузова (paints.js) — своё на каждую машину; обычный цвет — у всех.
+  const ownsPaint = ({ model, color }) => !paintOf(color) || wallet.owns(paintKey(model, color));
   if (wallet.fresh) {
     wallet.grant((MODELS[choice.model].options || []).map((o) => optionKey(choice.model, o.key, choice.options[o.key])));
   }
   grandfather(wallet, choice.model);
   if (!ownsCar(wallet, choice.model)) choice = { ...defaultChoice(), saved: choice.saved };
+  if (!ownsPaint(choice)) choice = { ...choice, color: MODELS[choice.model].colors[0] };
   const model = buildPlayerModel(choice.model, choice.color, choice.options);
   model.userData.perf = 'машина игрока';
   scene.add(model);
   const car = new Car(world, model, tuned(wallet, choice.model));
+  // Тюнинг на машине: в гараже — и то, что в корзине, в городе — купленное.
+  const showGear = (g) => setGear(car.model, g.isOpen ? g.gear() : tuned(wallet, g.choice.model));
   const setVehicle = (key, color, options) => {
     scene.remove(car.model);
     car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
@@ -167,6 +173,7 @@ async function main() {
     m.userData.perf = 'машина игрока';
     scene.add(m);
     car.setModel(m, tuned(wallet, key));
+    showGear(garage);
     net.setVehicle(key, color, options);
     nitroFx.attach(m);
     jetFx.attach(m);
@@ -246,6 +253,7 @@ async function main() {
     onChange: setVehicle,
     // Улучшение куплено — новые характеристики сразу (модель та же).
     onUpgrade: () => { car.setModel(car.model, tuned(wallet, garage.choice.model)); game.account?.save(); },
+    onGear: showGear,
     onClose: (changed) => {
       if (changed) track('car_select', { model: garage.choice.model, color: garage.choice.color });
       if (changed) game.account?.save();
@@ -530,11 +538,15 @@ async function main() {
     wallet,
     vehicle: () => garage.choice,
     // Машину из аккаунта — только если она своя (купленное к этому времени уже слито в кошелёк).
-    setVehicle: (v) => { if (MODELS[v.model] && ownsCar(wallet, v.model) && garage.set(v)) setVehicle(garage.choice.model, garage.choice.color, garage.choice.options); },
+    setVehicle: (v) => {
+      if (!MODELS[v.model] || !ownsCar(wallet, v.model)) return;
+      if (!ownsPaint(v)) v = { ...v, color: undefined }; // покрытие не куплено на эту машину — обычный цвет
+      if (garage.set(v)) setVehicle(garage.choice.model, garage.choice.color, garage.choice.options);
+    },
     onChange: () => menu.sync(),
   });
   // Покупки могли приехать из аккаунта — характеристики своей машины пересчитываем.
-  wallet.onChange = () => { account.save(); car.setModel(car.model, tuned(wallet, garage.choice.model)); };
+  wallet.onChange = () => { account.save(); car.setModel(car.model, tuned(wallet, garage.choice.model)); showGear(garage); };
   game.account = account;
   // Большая карта: значки — заправки, достопримечательности, камеры, другие игроки; маршрут гонки — жёлтым.
   citymap = new CityMap({
@@ -626,7 +638,9 @@ async function main() {
 
   // ---------------------------------------------------------------- камера
 
-  let orbit = 0;
+  // Гараж: камера сама облетает машину; потянул мышью или пальцем — крутишь сам (вбок — вокруг, вверх-вниз — выше
+  // или ниже), колесо мыши — ближе/дальше. Отпустил — через 3 с облёт продолжается с того же места.
+  let orbit = 0, orbitPitch = 0.24, orbitDist = 6.7, orbitIdle = 99;
   let lag = 0; // отставание камеры при разгоне, м
   const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
   let camInit = false;
@@ -634,13 +648,13 @@ async function main() {
 
   // Мышью (тянуть с зажатой кнопкой) и пальцем по свободному месту экрана (руль и педали —
   // свои элементы поверх, их касания сюда не попадают). Отпустил — через 1.5 с на ходу камера
-  // плавно возвращается за машину.
+  // плавно возвращается за машину. В гараже так же крутится облёт машины.
   let camYaw = 0, camPitch = 0, dragId = null, dragX = 0, dragY = 0, sinceDrag = 99;
   const cv = renderer.domElement;
   cv.style.cursor = 'grab';
   cv.style.touchAction = 'none';
   cv.addEventListener('pointerdown', (e) => {
-    if (dragId !== null || garage.isOpen || menu.isOpen) return;
+    if (dragId !== null || menu.isOpen) return;
     dragId = e.pointerId;
     dragX = e.clientX;
     dragY = e.clientY;
@@ -649,6 +663,14 @@ async function main() {
   });
   cv.addEventListener('pointermove', (e) => {
     if (e.pointerId !== dragId) return;
+    if (garage.isOpen) {
+      orbit -= (e.clientX - dragX) * 0.008;
+      orbitPitch = Math.max(0.03, Math.min(1.2, orbitPitch + (e.clientY - dragY) * 0.003));
+      dragX = e.clientX;
+      dragY = e.clientY;
+      orbitIdle = 0;
+      return;
+    }
     // Палец — короче ход; мышь — по обеим осям в обратную сторону от пальца.
     const k = e.pointerType === 'touch' ? 1.4 : -1;
     camYaw -= (e.clientX - dragX) * 0.006 * k;
@@ -657,6 +679,12 @@ async function main() {
     dragY = e.clientY;
     sinceDrag = 0;
   });
+  cv.addEventListener('wheel', (e) => {
+    if (!garage.isOpen) return;
+    e.preventDefault();
+    orbitDist = Math.max(5, Math.min(11, orbitDist * (1 + Math.sign(e.deltaY) * Math.min(0.15, Math.abs(e.deltaY) * 0.0015))));
+    orbitIdle = 0;
+  }, { passive: false });
   // Нажатие без перетаскивания — по рекламному щиту? Ссылка рекламодателя или действие игры (build.js, ADVERTISERS).
   let tapAt = null;
   cv.addEventListener('pointerdown', (e) => { tapAt = { x: e.clientX, y: e.clientY, t: performance.now() }; });
@@ -821,11 +849,13 @@ async function main() {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
     }
-    // Гараж: камера облетает машину, кадр сдвинут влево от панели и вверх от ленты машин.
+    // Гараж: камера облетает машину (или её крутят, см. «вращение камеры»), кадр сдвинут влево от панели и вверх
+    // от ленты машин.
     if (garage.isOpen) {
-      orbit += dt * 0.35;
-      const c = new THREE.Vector3(car.pos.x, car.y + 0.7, car.pos.y);
-      camera.position.set(c.x + Math.sin(orbit) * 6.5, c.y + 1.6, c.z + Math.cos(orbit) * 6.5);
+      orbitIdle += dt;
+      if (orbitIdle > 3 && dragId === null) orbit += dt * 0.35;
+      const c = new THREE.Vector3(car.pos.x, car.y + 0.7, car.pos.y), flat = Math.cos(orbitPitch) * orbitDist;
+      camera.position.set(c.x + Math.sin(orbit) * flat, c.y + Math.sin(orbitPitch) * orbitDist, c.z + Math.cos(orbit) * flat);
       camera.lookAt(c);
       camera.fov = 50;
       const f = garage.frame();

@@ -41,8 +41,9 @@ export class NitroFX {
 
   // Новая машина: пламя — в её выхлопную трубу (слева сзади, под бампером).
   attach(model) {
-    const len = model.userData.length ?? 4.2;
-    this.flame.position.set(-0.45, 0.33, -len / 2 - 0.05);
+    const len = model.userData.length ?? 4.2, n = model.userData.mounts?.nitro; // сопло нитро (vehicles.js, setGear)
+    if (n) this.flame.position.set(n.x, n.y, n.z - 0.08);
+    else this.flame.position.set(-0.45, 0.33, -len / 2 - 0.05);
     model.add(this.flame);
     this.exhaust = this.flame.position;
   }
@@ -177,10 +178,15 @@ export class JetFX {
 
   // Новая машина: нижние сопла под передней и задней частью днища, боковые — на бортах.
   attach(model) {
-    const len = model.userData.length ?? 4.2, w = (model.userData.width ?? 1.7) / 2;
-    this.down[0].mesh.position.set(0, 0.3, len * 0.28);
-    this.down[1].mesh.position.set(0, 0.3, -len * 0.28);
-    for (const s of this.side) s.mesh.position.set(s.side * w, 0.65, (s.front ? 1 : -1) * len * 0.36);
+    const len = model.userData.length ?? 4.2, w = (model.userData.width ?? 1.7) / 2, at = model.userData.mounts;
+    if (at) { // сопла «Кузнечика» на машине (vehicles.js, setGear)
+      this.down.forEach((d, i) => d.mesh.position.set(0, at.down[i].y - 0.06, at.down[i].z));
+      for (const s of this.side) { const m = at.side.find((m) => m.side === s.side && m.front === s.front); s.mesh.position.set(m.x + s.side * 0.05, m.y, m.z); }
+    } else {
+      this.down[0].mesh.position.set(0, 0.3, len * 0.28);
+      this.down[1].mesh.position.set(0, 0.3, -len * 0.28);
+      for (const s of this.side) s.mesh.position.set(s.side * w, 0.65, (s.front ? 1 : -1) * len * 0.36);
+    }
     for (const n of this.all) model.add(n.mesh);
   }
 
@@ -665,7 +671,9 @@ export class ExhaustFX {
 
   // Труба — там же, где пламя нитро: слева сзади, под бампером.
   attach(model) {
-    this.exhaust.set(-0.45, 0.33, -(model.userData.length ?? 4.2) / 2 - 0.1);
+    const e = model.userData.mounts?.exhaust;
+    if (e) this.exhaust.set(e.x, e.y, e.z - 0.1);
+    else this.exhaust.set(-0.45, 0.33, -(model.userData.length ?? 4.2) / 2 - 0.1);
   }
 
   // Машина игрока: выпустить и прожить кадр.

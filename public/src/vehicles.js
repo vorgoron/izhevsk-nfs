@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { carGlows, glowMaterial } from './night.js';
+import { paintMaterial } from './paints.js';
 
 // ИЖ-27175 (фургон «Ода») отключён: хорошей 3D-модели нет, процедурная не годится.
 // Вернуть — добавить `odavan: ODAVAN` в MODELS (по году — после «Оды»), в MIX (traffic.js) и KINDS (queues.js).
@@ -143,13 +144,28 @@ export const MODELS = {
     taper: 0.8, corner: 0.13, cornerR: 0.7, // покатая крыша, сильно скруглённые углы
     windows: [[2, -0.3], [-0.42, -1.2], [-1.28, -2]], frame: '#1a1b1d', doors: [1.0, -0.36, -1.4],
     crease: [[0.8, 0.46], [-1.68, 0.8]], // косая выштамповка на дверях — «икс» сбоку
-    wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76, alloy: true },
+    wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76, alloy: true, rim: 15 },
     bumper: 'paint', bumperH: 0.26, grille: '#1b1c1f', trim: '#1a1b1d', lights: 'vesta',
     colors: ['#e9e9e6', '#c63a2a', '#1e1f22', '#8c9196', '#2c5aa0', '#e07a1f', '#5a3a6b', '#3b5f4a'],
     stats: { kmh: 190, accel: 1.0, grip: 1.06, eco: 0.85 },
   },
 };
 export const DEFAULT_MODEL = 'm412';
+
+// Диски — у всех машин: два слота в конце options (стиль и диаметр покупаются отдельно, как детали; wheel — показывать
+// в гараже и у процедурных машин). Штатный диаметр — wheels.rim (дюймы, по умолчанию 13), больше — до +6". Вид — в
+// rimWheel: колесо того же размера, шина ниже и шире. Новые стили — только в конец (номер варианта уходит в сеть).
+export const RIM_STYLES = [['stock', 'штатные'], ['steel', 'штампованные', 3000], ['star', '«звезда»', 8000], ['spoke5', '5 спиц', 12000],
+  ['turbo', '«турбина»', 15000], ['bbs', 'сетка, золото', 20000]];
+const RIM_UP_PRICE = [0, 4000, 9000, 15000, 22000, 30000, 40000];
+for (const spec of Object.values(MODELS)) {
+  const base = spec.wheels.rim ?? 13;
+  spec.options = [...(spec.options ?? []),
+    { key: 'rim', name: 'Диски', wheel: true, variants: RIM_STYLES },
+    { key: 'rsize', name: 'Диаметр', wheel: true, variants: RIM_UP_PRICE.map((p, i) => [String(base + i), `R${base + i}`, ...(p ? [p] : [])]) }];
+}
+// Детали, которые видно в гараже: у машин из glb — все, у процедурных — только диски.
+export const shownOptions = (spec) => (spec.options ?? []).filter((o) => spec.mesh || o.wheel);
 
 // ---------------------------------------------------------------- геометрия
 
@@ -312,7 +328,9 @@ function mirrorX(geo) {
 
 // Колесо вокруг своего центра одной геометрией с вершинными цветами. left — для левого борта (x < 0):
 // у колеса с диском из модели (hub) диск снаружи, его отражаем.
-function wheelGeometry(spec, seg, left = false) {
+function wheelGeometry(spec, seg, left = false, options) {
+  const base = spec.wheels.rim ?? 13, style = options?.rim ?? 'stock', size = +(options?.rsize ?? base);
+  if (style !== 'stock' || size !== base) return rimWheel(spec, seg, style === 'stock' ? (spec.wheels.alloy ? 'spoke5' : 'steel') : style, size, left);
   const m = spec.mesh;
   if (!m || !m.wheel) return merge(wheelParts(spec.wheels, seg)); // в модели нет колеса — процедурное
   if (m.hub) return (left ? m.wheelL : m.wheel).clone();
@@ -447,6 +465,41 @@ export function vehicleParts(spec, { wheelsInDetail = false, options } = {}) {
   return { paint: merge(paint, form), detail: merge(detail, form), lights: merge(lights, form), wheels, length: front - rear };
 }
 
+// Купленные диски (слоты rim, rsize): шина, обод и лицо диска по стилю. Колесо снаружи того же радиуса, что штатное
+// (крупнее — вылезало из тесных арок готовых моделей), обод — по диаметру, резина — что осталось (низкий профиль).
+// На дюйм шире на 4 % — внутрь машины (left — левый борт), внешняя боковина на месте, иначе торчит из-за крыла.
+// Спицы шире шины — видны с обеих сторон, зеркалить не надо. userData.rim — радиус обода (ободок шин, setGear).
+const RIM_COLORS = { steel: ['#7d8288', '#8f949a'], star: ['#c4c8cc', '#c4c8cc'], spoke5: ['#c4c8cc', '#d4d8dc'], turbo: ['#b9bec4', '#d0d4d8'], bbs: ['#c9cdd2', '#c9a227'] };
+function rimWheel(spec, seg, style, size, left) {
+  const { r: R } = spec.wheels, up = size - (spec.wheels.rim ?? 13);
+  const w = 0.22 * (1 + 0.04 * up), rr = Math.min(R - 0.035, size * 0.0127 * (R / 0.29));
+  const disc = (rad, width, n = seg * 2) => new THREE.CylinderGeometry(rad, rad, width, n).rotateZ(Math.PI / 2);
+  // Плоская деталь на лице диска: ширина вдоль оси колеса — чуть больше шины.
+  const spoke = (len, thick, at, angle, tilt = 0) => new THREE.BoxGeometry(w + 0.012, len, thick).rotateX(tilt).translate(0, at, 0).rotateX(angle);
+  const [barrel, face] = RIM_COLORS[style], DARK = '#2a2c30';
+  const parts = [[disc(R, w), '#151618'], [disc(rr, w + 0.004), barrel]];
+  if (style === 'steel') {
+    parts.push([disc(rr * 0.94, w + 0.006), face], [disc(rr * 0.32, w + 0.016, 16), '#c4c8cc']);
+    for (let i = 0; i < 6; i++) parts.push([disc(rr * 0.11, w + 0.01, 8).translate(0, Math.cos(i * Math.PI / 3) * rr * 0.62, Math.sin(i * Math.PI / 3) * rr * 0.62), DARK]);
+  } else if (style === 'turbo') {
+    parts.push([disc(rr * 0.94, w + 0.006), face], [disc(rr * 0.3, w + 0.016, 16), '#e4e7ea']);
+    for (let i = 0; i < 14; i++) parts.push([spoke(rr * 0.5, 0.025, rr * 0.62, (i * 2 * Math.PI) / 14, 0.55), '#7d838a']);
+  } else {
+    // Спицы на тёмной подложке: «звезда» — 5 широких, «5 спиц» — 5 пар тонких, сетка — 10 спиц крест-накрест.
+    parts.push([disc(rr * 0.9, w + 0.006), DARK], [disc(rr * 0.24, w + 0.016, 16), face]);
+    const n = style === 'bbs' ? 10 : 5;
+    for (let i = 0; i < n; i++) {
+      const a = (i * 2 * Math.PI) / n;
+      if (style === 'star') parts.push([spoke(rr * 0.82, 0.075, rr * 0.48, a), face]);
+      else if (style === 'spoke5') for (const d of [-0.11, 0.11]) parts.push([spoke(rr * 0.84, 0.03, rr * 0.48, a + d), face]);
+      else for (const t of [-0.45, 0.45]) parts.push([spoke(rr * 0.85, 0.022, rr * 0.5, a, t), face]);
+    }
+  }
+  const g = merge(parts).translate((left ? 1 : -1) * (w - 0.22) / 2, 0, 0);
+  g.userData.rim = rr;
+  return g;
+}
+
 // Колесо вокруг своего центра: шина и штампованный диск с колпаком; alloy — литой диск со спицами.
 function wheelParts({ r, alloy }, seg) {
   const disc = (k, w, n = 8) => new THREE.CylinderGeometry(r * k, r * k, w, n).rotateZ(Math.PI / 2);
@@ -463,7 +516,7 @@ export function buildPlayerModel(key, color, options) {
   const spec = MODELS[key] || MODELS[DEFAULT_MODEL];
   const parts = vehicleParts(spec, { options });
   const g = new THREE.Group();
-  const paintMat = new THREE.MeshLambertMaterial({ color: color || spec.colors[0], vertexColors: true });
+  const paintMat = paintMaterial(color || spec.colors[0]); // обычный цвет или покрытие (paints.js)
   const meshes = [
     new THREE.Mesh(parts.paint, paintMat),
     new THREE.Mesh(parts.detail, new THREE.MeshLambertMaterial({ vertexColors: true })),
@@ -477,7 +530,7 @@ export function buildPlayerModel(key, color, options) {
   g.add(body);
   g.userData.body = body;
   g.userData.wheels = [];
-  const wheelGeo = [wheelGeometry(spec, 14), wheelGeometry(spec, 14, true)];
+  const wheelGeo = [wheelGeometry(spec, 14, false, options), wheelGeometry(spec, 14, true, options)];
   for (const w of parts.wheels) {
     const pivot = new THREE.Group();
     pivot.position.set(w.x, w.y, w.z);
@@ -492,6 +545,7 @@ export function buildPlayerModel(key, color, options) {
   g.userData.width = spec.width;
   g.userData.plateHost = meshes[1];
   g.userData.plateSpots = plateSpots(spec, parts.detail);
+  g.userData.mounts = gearMounts(spec, g, meshes.slice(0, 2), parts.length);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   // Ночью — ореолы фар и фонарей (свет на дорогу у своей машины — прожектор в main.js).
   const glow = new THREE.Mesh(carGlows(parts.lights), glowMaterial());
@@ -499,6 +553,98 @@ export function buildPlayerModel(key, color, options) {
   glow.frustumCulled = false;
   body.add(glow);
   return g;
+}
+
+// ---------------------------------------------------------------- тюнинг на машине
+
+// Точки крепления навесного — лучом снаружи по кузову (краска и детали), чтобы сидело на поверхности: сопла
+// «Кузнечика» на порогах между колёсами и под днищем, сопло нитро справа сзади, глушитель слева сзади.
+// Струи, пламя нитро и выхлоп (effects.js) бьют из этих же точек.
+function gearMounts(spec, g, meshes, len) {
+  g.updateMatrixWorld(true);
+  const ray = new THREE.Raycaster();
+  // С обеих сторон граней: у готовых моделей низ бампера — одна грань, изнутри.
+  const hit = (o, d) => {
+    ray.set(new THREE.Vector3(...o), new THREE.Vector3(...d));
+    for (const m of meshes) m.material.side = THREE.DoubleSide;
+    const p = ray.intersectObjects(meshes, false)[0]?.point;
+    for (const m of meshes) m.material.side = THREE.FrontSide;
+    return p;
+  };
+  const { r, front, rear } = spec.wheels, mid = (front + rear) / 2, w = spec.width / 2;
+  const side = [];
+  for (const s of [1, -1]) {
+    for (const [z, isFront] of [[front - r - 0.28, true], [rear + r + 0.28, false]]) {
+      side.push({ side: s, front: isFront, x: hit([s * 3, 0.45, z], [-s, 0, 0])?.x ?? s * w, y: 0.45, z });
+    }
+  }
+  const down = [0.3, -0.3].map((k) => { const z = mid + k * (front - rear); return { x: 0, y: hit([0, -1, z], [0, 1, 0])?.y ?? 0.3, z }; });
+  // Задний торец: бампер бывает выше трубы — самая задняя точка кузова на высоте 0.2…0.6 м; труба — под нижним
+  // краем бампера (у низкого бампера «Оды» — ниже 0.33 м, иначе пряталась в нём).
+  const back = (x, y) => {
+    let z = Infinity;
+    for (let h = 0.2; h <= 0.6; h += 0.05) z = Math.min(z, hit([x, h, -10], [0, 0, 1])?.z ?? Infinity);
+    z = Number.isFinite(z) ? z : -len / 2;
+    const bottom = hit([x, -1, z + 0.06], [0, 1, 0])?.y;
+    return { x, y: bottom ? Math.max(0.17, Math.min(y, bottom - 0.045)) : y, z };
+  };
+  return { side, down, exhaust: back(-0.45, 0.33), nitro: back(0.45, 0.33) };
+}
+
+const gearMats = {};
+const gearMat = (color) => (gearMats[color] ??= new THREE.MeshLambertMaterial({ color }));
+const CHROME = '#c9ccd0', DARK = '#1c1d20', NOZZLE = '#3a3d42', HOT = '#ff8a2a';
+const HOP_OUT = 0.04; // насколько сопло «Кузнечика» выходит из кузова, м (у «М» — в 1.35 раза больше)
+
+// Видимый тюнинг (уровни — как в tuned(), shop.js): двигатель — насадка глушителя (III — двойная), шины — тонкий
+// цветной ободок на боковине вокруг диска (жёлтый / красный), нитро — синее сопло сзади (двойной баллон — два), «Кузнечик» — сопла
+// на порогах и под днищем, выходят из кузова на 4 см («Кузнечик-М» — те же, крупнее). Трубы — вровень с бампером.
+export function setGear(model, { engine = 0, tires = 0, nitro = 0, hopper = 0 } = {}) {
+  const ud = model.userData, key = `${engine}${tires}${nitro}${hopper}`;
+  if (!ud.mounts || ud.gearKey === key) return;
+  ud.gearKey = key;
+  for (const m of ud.gear ?? []) { m.removeFromParent(); m.geometry.dispose(); }
+  ud.gear = [];
+  const lift = -ud.body.position.y; // меши кузова опущены на центр крена
+  const add = (parent, geo, color, y = lift) => {
+    const m = new THREE.Mesh(geo, gearMat(color));
+    m.position.y = y;
+    parent.add(m);
+    ud.gear.push(m);
+  };
+  // Труба вдоль машины: от z + 0.2 до z − out (z — задний край бампера).
+  const pipe = ({ x, y, z }, r, color, out) => {
+    const l = 0.2 + out;
+    add(ud.body, new THREE.CylinderGeometry(r, r, l, 14).rotateX(Math.PI / 2).translate(x, y, z + 0.2 - l / 2), color);
+    add(ud.body, new THREE.CircleGeometry(r * 0.7, 14).rotateY(Math.PI).translate(x, y, z - out - 0.001), DARK);
+  };
+  const { side, down, exhaust, nitro: nz } = ud.mounts;
+  if (engine) {
+    const tips = engine === 3 ? [-0.042, 0.042] : [0];
+    for (const dx of tips) pipe({ ...exhaust, x: exhaust.x + dx }, engine === 1 ? 0.028 : 0.034, CHROME, 0.005);
+  }
+  if (nitro) for (const dx of nitro === 2 ? [-0.028, 0.028] : [0]) pipe({ ...nz, x: nz.x + dx }, 0.021, '#2a62d8', -0.005);
+  if (hopper) {
+    // Сопло: фланец на кузове, из него наружу — конус на HOP_OUT, на срезе — раскалённое кольцо.
+    // «Кузнечик-М» — такие же, только крупнее.
+    const k = hopper === 2 ? 1.35 : 1, out = HOP_OUT * k;
+    const nozzle = (r, flip, place) => [
+      [new THREE.CylinderGeometry(r * 1.35, r * 1.35, 0.02, 18), NOZZLE, 0],
+      [new THREE.CylinderGeometry(r * 0.8, r, out, 18).translate(0, out / 2, 0), NOZZLE, 0],
+      [new THREE.CylinderGeometry(r * 0.58, r * 0.58, 0.004, 18), HOT, out + 0.001],
+    ].forEach(([geo, color, at]) => add(ud.body, place(flip(geo.translate(0, at, 0))), color));
+    for (const m of side) nozzle(0.034 * k, (g) => g.rotateZ(-m.side * Math.PI / 2), (g) => g.translate(m.x, m.y, m.z));
+    for (const m of down) nozzle(0.06 * k, (g) => g.rotateX(Math.PI), (g) => g.translate(0, m.y, m.z));
+  }
+  if (tires) {
+    for (const wh of ud.wheels) {
+      const geo = wh.w.children[0].geometry;
+      geo.boundingBox ?? geo.computeBoundingBox();
+      const s = Math.sign(wh.pivot.position.x), ring = geo.userData.rim ? geo.userData.rim + 0.012 : geo.boundingBox.max.y * 0.7; // купленные диски — по ободу
+      const x = s < 0 ? geo.boundingBox.min.x - 0.002 : geo.boundingBox.max.x + 0.002;
+      add(wh.w, new THREE.TorusGeometry(ring, 0.007, 4, 32).rotateY(Math.PI / 2).translate(x, 0, 0), tires === 2 ? '#ff3b30' : '#ffd23f', 0);
+    }
+  }
 }
 
 // ---------------------------------------------------------------- номер с именем игрока
