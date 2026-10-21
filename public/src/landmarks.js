@@ -44,6 +44,7 @@ const M = {
   darkBrick: lambert('#7a2e1e'),
   warmBrick: lambert('#c65d3c'),
   signalRed: lambert('#d23a2a'),
+  marble: lambert('#f1e6da'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -1706,6 +1707,73 @@ function stadium(pl) {
   return merged;
 }
 
+// Вокзал станции Ижевск (по фото): светлый камень с тёмно-красным цоколем, высокие арочные окна,
+// над карнизом — волнистый аттик из полукруглых щипцов с круглыми окошками, красная кровля. Центральный
+// объём выше и чуть смещён от середины: арочный витраж над входом, герб, барабан с красным куполом и
+// шпилем; по концам — павильоны выше крыльев с полукруглыми щипцами. «ВОКЗАЛ» — к городу (f = ±1 по z),
+// «ИЖЕВСК» — к путям. L × W — прямоугольник контура в системе fit.
+function station(L, W, f) {
+  const g = new THREE.Group();
+  const H = 11, stone = M.marble, red = M.terra;
+  const half = (r, d, mat) => mesh(new THREE.CylinderGeometry(r, r, d, 14, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(-Math.PI / 2), mat);
+  g.add(box(L, 4.2, W, M.darkBrick, 0, -3, 0));
+  g.add(box(L - 0.2, H - 1.2, W - 0.2, stone, 0, 1.2, 0));
+  g.add(box(L + 0.4, 0.6, W + 0.4, M.white, 0, H, 0));
+  g.add(box(L - 1, 2, W - 1, red, 0, H + 0.6, 0));
+  g.add(box(L - 6, 1.4, W - 6, red, 0, H + 2.6, 0));
+  const xc = -L * 0.08, cw = 13, Hc = 16.5, pw = 7;  // центр, его ширина и высота; ширина павильона
+  const inWing = (x) => Math.abs(x - xc) > cw / 2 + 1.5 && Math.abs(x) < L / 2 - pw - 0.5;
+  for (const s of [-1, 1]) {
+    const z = s * (W / 2 - 0.08);
+    const face = (obj) => { if (s < 0) obj.rotation.y = Math.PI; obj.position.z = z + s * obj.position.z; g.add(obj); return obj; };
+    // Крылья: арочные окна, полукруглые щипцы аттика.
+    for (let x = -L / 2 + pw + 2; x < L / 2 - pw - 1; x += 3.6) {
+      if (!inWing(x)) continue;
+      face(archWindowZ(1.6, 5).translateX(x).translateY(1.8));
+      const q = half(1.6, 0.5, stone);
+      q.position.set(x, H + 0.6, 0);
+      face(q);
+      face(mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.2, 12).rotateX(Math.PI / 2), M.glass, x, H + 1.3, 0.3));
+      face(box(3.4, 1.6, 0.5, stone, x, H + 0.6 - 1.6 + 0.6, 0));
+    }
+    // Концевые павильоны: выше, по два яруса окон и большой щипец.
+    for (const e of [-1, 1]) {
+      const x = e * (L / 2 - pw / 2);
+      face(box(pw, H + 2.6, 1.2, stone, x, -3, 0.3));
+      for (const y of [2, 6.8]) face(box(1.4, 2.6, 0.2, M.glass, x, y, 0.95));
+      const q = half(pw / 2, 0.6, stone);
+      q.position.set(x, H - 0.4 + 0.4, 0.3);
+      face(q);
+      face(mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.2, 12).rotateX(Math.PI / 2), M.glass, x, H + 1.2, 0.7));
+    }
+    // Центральный объём: выступ, арочный витраж, герб, табличка.
+    face(box(cw, Hc + 3, 1.6, stone, xc, -3, 0.5));
+    face(box(cw + 0.5, 0.6, 2, M.white, xc, Hc, 0.5));
+    face(archWindowZ(4, 6).translateX(xc).translateY(2.2).translateZ(1.32));
+    for (const dx of [-4.5, 4.5]) for (const y of [2.5, 7.5, 11.5]) face(box(1.2, 2, 0.2, M.glass, xc + dx, y, 1.32));
+    const q = half(3.2, 0.6, stone);
+    q.position.set(xc, Hc + 0.6, 0.6);
+    face(q);
+    face(mesh(new THREE.CylinderGeometry(1, 1, 0.2, 16).rotateX(Math.PI / 2), M.white, xc, Hc + 1.8, 0.95));
+  }
+  g.add(box(cw - 1, 2.4, W - 3, red, xc, Hc + 0.6, 0));
+  // Барабан, купол, шпиль.
+  g.add(cyl(3.6, 0.5, M.white, xc, Hc + 3, 0, 24));
+  g.add(cyl(3.3, 3.4, M.white, xc, Hc + 3.5, 0, 24));
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2, w = box(0.9, 1.6, 0.3, M.glass, xc + Math.sin(a) * 3.3, Hc + 4.3, Math.cos(a) * 3.3);
+    w.rotation.y = a;
+    g.add(w);
+  }
+  g.add(dome(3.6, red, xc, Hc + 6.9, 0, 0.55));
+  g.add(cyl(0.25, 1.2, M.white, xc, Hc + 8.7, 0, 8));
+  g.add(cone(0.18, 6, red, xc, Hc + 9.9, 0, 6));
+  const merged = mergeByMaterial(g);
+  merged.add(sign('ВОКЗАЛ', 6, 0.9, xc, Hc - 3.4, f * (W / 2 + 1.36), f, '#ebe5da'));
+  merged.add(sign('ИЖЕВСК', 6, 0.9, xc, Hc - 3.4, -f * (W / 2 + 1.36), -f, '#ebe5da'));
+  return merged;
+}
+
 function plantTower() {
   const g = new THREE.Group();
   const pink = M.pink, white = M.white;
@@ -2003,6 +2071,12 @@ export function buildLandmarks(world) {
       case 'plant': {
         const f = fit(p, 0), t = world.city.landmarks.find((q) => q.key === 'plant_tower') || { x: f.cx, z: f.cz };
         obj = place(plantMain(toLocal(p, f), t.x - f.cx, t.z - f.cz), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'station': {
+        // «ВОКЗАЛ» — к привокзальной площади на западе, «ИЖЕВСК» — к путям на востоке.
+        const f = fit(p, longestEdgeAngle(p)), side = Math.sin(f.angle) > 0 ? 1 : -1; // знак (−1, 0)·(локальная z)
+        obj = place(station(f.L, f.W, side), f.cx, baseY(world, p), f.cz, f.angle);
         break;
       }
       case 'stadium': {
