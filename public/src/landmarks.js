@@ -1601,7 +1601,7 @@ function plantMain(pl, tx, tz) {
   let front = null;
   contourEdges(pl, (e) => { if (e.oz < -0.7 && (!front || e.len > front.len)) front = e; });
   const tc = (tx - front.x) * front.ex + (tz - front.z) * front.ez; // башня — метр фасада
-  const busy = (e, t) => e === front && (Math.abs(t - tc) < 18 || t < 14 || t > e.len - 14);
+  const busy = (e, t) => e === front && (Math.abs(t - tc) < 15.5 || t < 14 || t > e.len - 14);
   contourEdges(pl, (e) => {
     if (e.len < 6) return;
     const n = Math.floor(e.len / 4.2);
@@ -1617,24 +1617,39 @@ function plantMain(pl, tx, tz) {
       }
     }
   });
-  // Колоннада под башней; вынесена так, чтобы основание башни (16 × 14 вокруг точки) было внутри.
+  // Колоннада под башней (по фото с улицы): восемь колонн от земли во все этажи, между ними внизу
+  // арочные окна и дверь, выше — два ряда окон; антаблемент с розовыми метопами, розовый фриз, карниз и
+  // белый аттик с часами, на котором стоит башня. Стена колоннады вынесена на d — чуть впереди основания
+  // башни (16 × 14 вокруг её точки), иначе оно проступало сквозь стену, закрывая средние пролёты.
   const out = (tx - front.x) * front.ox + (tz - front.z) * front.oz;
-  const dd = Math.max(0.9, 7.2 + out);
-  const c = new THREE.Group(), cw = 32, n = 10;
-  c.add(box(cw + 1, 4.4 + 3, 2 + dd, M.white, 0, -3, -dd / 2));
-  for (let i = 0; i < 6; i++) c.add(box(cw + 1.1, 0.12, 2.1, M.stone, 0, -0.2 + i * 0.75, 0)); // руст
-  for (let i = 0; i < n - 1; i++) c.add(archWindowZ(1.6, 2.6).translateX(-cw / 2 + ((i + 1) * cw) / n).translateY(1).translateZ(1.02));
-  c.add(box(cw, H - 4.4, 0.4 + dd, pink, 0, 4.4, -0.6 - dd / 2));
+  const d = Math.max(0.9, 7.3 + out), zt = out - d; // zt — башня в системе колоннады
+  const c = new THREE.Group(), cw = 28, n = 8, bay = (cw - 1.6) / (n - 1);
+  c.add(box(cw, H + 3, d + 0.2, pink, 0, -3, -d / 2));
+  c.add(box(cw, 0.3, 0.2, M.white, 0, 4.3, 0.1));
   for (let i = 0; i < n; i++) {
-    const x = -cw / 2 + 0.8 + (i * (cw - 1.6)) / (n - 1);
-    c.add(cyl(0.6, H - 5.4, M.white, x, 4.9, 0.6, 14, 0.5));
-    c.add(box(1.4, 0.5, 1.4, M.white, x, 4.4, 0.6));
-    c.add(box(1.4, 0.4, 1.4, M.white, x, H - 0.5, 0.6));
-    if (i < n - 1) for (const y of [5.6, 8.4]) c.add(box(1.4, 1.9, 0.16, M.glass, x + (cw - 1.6) / (n - 1) / 2, y, -0.35));
+    const x = -cw / 2 + 0.8 + i * bay;
+    c.add(box(1.5, 0.5, 1.5, M.white, x, -0.2, 0.9));
+    c.add(cyl(0.55, H - 0.8, M.white, x, 0.3, 0.9, 12, 0.47));
+    c.add(box(1.4, 0.4, 1.4, M.white, x, H - 0.5, 0.9));
+    if (i === n - 1) continue;
+    const xm = x + bay / 2;
+    if (i === (n - 2) / 2) c.add(archWindowZ(1.6, 3.4, 6).translateX(xm).translateY(0.3)); // дверь
+    else c.add(archWindowZ(1.7, 2.8, 6).translateX(xm).translateY(0.9));
+    for (const y of [5, 8.1]) {
+      c.add(box(1.8, 2.3, 0.12, M.white, xm, y - 0.15, 0.06));
+      c.add(box(1.4, 2, 0.16, M.glass, xm, y, 0.1));
+    }
   }
-  c.add(box(cw + 1.4, 1.4, 2.4 + dd, M.white, 0, H - 0.1, 0.4 - dd / 2));
-  for (let i = 0; i < 12; i++) c.add(box(1, 0.6, 0.1, pink, -cw / 2 + 1.5 + (i * (cw - 3)) / 11, H + 0.3, 1.62)); // метопы
-  g.add(onEdge(c, front, tc, dd));
+  c.add(box(cw + 1.2, 1.3, d + 1.9, M.white, 0, H - 0.1, (1.9 - d) / 2));
+  for (let i = 0; i < 14; i++) c.add(box(0.8, 0.5, 0.1, pink, -cw / 2 + 1.2 + (i * (cw - 2.4)) / 13, H + 0.3, 1.92)); // метопы
+  c.add(box(cw + 1, 1, d + 1.7, pink, 0, H + 1.2, (1.7 - d) / 2));
+  c.add(box(cw + 1.6, 0.45, d + 2.1, M.white, 0, H + 2.2, (2.1 - d) / 2));
+  // Аттик под башней: белый, с розовыми филёнками и часами.
+  c.add(box(17, 1.6, 14.2, M.white, 0, H + 2.65, zt));
+  for (const x of [-5.5, 5.5]) c.add(box(4, 0.6, 0.1, pink, x, H + 3.15, zt + 7.12));
+  c.add(mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.12, 16).rotateX(Math.PI / 2), M.dark, 0, H + 3.45, zt + 7.12));
+  c.add(mesh(new THREE.CylinderGeometry(0.58, 0.58, 0.14, 16).rotateX(Math.PI / 2), M.white, 0, H + 3.45, zt + 7.14));
+  g.add(onEdge(c, front, tc, d));
   // Концевые павильоны: выше корпуса, с фронтоном и зелёной кровлей.
   const Hp = H + 2.4;
   for (const t of [8, front.len - 8]) {
