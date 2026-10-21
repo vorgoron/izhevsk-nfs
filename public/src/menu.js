@@ -9,7 +9,7 @@ const CAMERAS = ['сзади', 'из салона', 'сверху', 'кино'];
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, fullscreen, debug };
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, quality, qName, fullscreen, debug };
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
   // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
@@ -49,6 +49,7 @@ export class Menu {
       <button data-act="night">Время суток <b data-v="night"></b><kbd>Y</kbd></button>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
       <button data-act="fps">Кадров в секунду <b data-v="fps"></b><kbd>L</kbd></button>
+      <button data-page="quality">Графика <b data-v="quality"></b><i>›</i></button>
       <button data-act="map">Карта города <b data-v="nav"></b><kbd>M</kbd></button>
       <button data-act="debug">Отладка: координаты и камера <b data-v="debug"></b><kbd>I</kbd></button>
       ${fs ? '<button data-act="fullscreen">Во весь экран <b data-v="fullscreen"></b><kbd>F</kbd></button>' : ''}
@@ -111,6 +112,14 @@ export class Menu {
       <button data-ad="send" class="go">Отправить заявку</button>
       <button data-page="main">‹ Назад <kbd>Esc</kbd></button>
       </div>
+      <div class="page" data-page="quality" hidden>
+      <h2>Графика</h2>
+      <button data-q="high">Высокая <b>весь город до горизонта, тени, сглаживание</b></button>
+      <button data-q="medium">Средняя <b>город до ~1 км, мелочи вблизи</b></button>
+      <button data-q="low">Низкая <b>для слабых телефонов: ближе туман, без теней</b></button>
+      <p class="hint">Игра перезапустится с того же места.</p>
+      <button data-page="main">‹ Назад <kbd>Esc</kbd></button>
+      </div>
       <div class="page" data-page="volume" hidden>
       <h2>Громкость</h2>
       <div class="volumes">${Object.entries(VOLUME_LABELS).map(([k, label]) =>
@@ -122,6 +131,7 @@ export class Menu {
     for (const b of el.querySelectorAll('[data-act]')) {
       b.addEventListener('click', () => this.actions[b.dataset.act]());
     }
+    for (const b of el.querySelectorAll('button[data-q]')) b.addEventListener('click', () => this.actions.quality(b.dataset.q));
     for (const b of el.querySelectorAll('button[data-page]')) b.addEventListener('click', () => this.page(b.dataset.page));
     const nameIn = (this.nameIn = el.querySelector('[data-name]'));
     nameIn.addEventListener('change', () => { setName(nameIn.value); this.sync(); });
@@ -171,6 +181,7 @@ export class Menu {
       camera: CAMERAS[s.camera],
       night: s.night,
       fps: s.fps ? `до ${s.fps}` : 'без предела',
+      quality: s.quality,
       nav: s.nav ?? '',
       fullscreen: s.fullscreen ? 'вкл' : 'выкл',
       volume: s.sound ? `${Math.round(this.volume.get('master') * 100)}%` : 'звук выкл',
@@ -190,9 +201,10 @@ export class Menu {
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account', 'ads'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'quality', 'net', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account', 'ads'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
+    for (const b of this.el.querySelectorAll('[data-q]')) b.classList.toggle('off', b.dataset.q !== s.qName);
     this.el.querySelector('[data-show="no-hopper"]').hidden = s.hopper;
     if (document.activeElement !== this.nameIn) this.nameIn.value = s.name;
     for (const r of this.el.querySelectorAll('[data-vol]')) {

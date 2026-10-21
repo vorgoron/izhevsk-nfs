@@ -129,7 +129,7 @@ export class Signals {
     const n = list.length;
     this.poles = new THREE.InstancedMesh(pole, poleMat, n);
     this.housings = new THREE.InstancedMesh(housing, poleMat, n);
-    const lampGeo = new THREE.SphereGeometry(0.13, 10, 8);
+    const lampGeo = new THREE.SphereGeometry(0.13, 8, 5); // 64 треугольника: ламп в городе тысячи, и рисуются все
     this.lamps = ['red', 'yellow', 'green'].map(() => new THREE.InstancedMesh(lampGeo, new THREE.MeshBasicMaterial(), n));
     const LAMP_Y = { red: 3.92, yellow: 3.55, green: 3.18 };
 

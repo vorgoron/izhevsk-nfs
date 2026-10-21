@@ -102,15 +102,18 @@ export class Traffic {
       meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES),
         new THREE.InstancedMesh(busGlows(), glowMaterial(), BUSES)] });
     this.meshes = kinds.flatMap((k) => k.meshes);
-    const c = new THREE.Color();
+    this.kinds = kinds;
+    this.drawFar = 300; // м от игрока
+    for (const k of kinds) k.meshes.kind = k;
     this.vehicles = [];
     let n = 0;
     for (const kind of kinds) {
       const bus = kind.key === 'bus';
       for (let idx = 0; idx < kind.count; idx++, n++) {
-        kind.meshes[kind.paint].setColorAt(idx, c.set(kind.colors[(idx * 3 + n) % kind.colors.length]));
+        const color = new THREE.Color(kind.colors[(idx * 3 + n) % kind.colors.length]);
+        kind.meshes[kind.paint].setColorAt(idx, color); // заводит instanceColor до компиляции шейдера
         this.vehicles.push({
-          meshes: kind.meshes, idx, bus, kind: kind.key,
+          meshes: kind.meshes, color, bus, kind: kind.key,
           len: kind.len, roof: kind.roof, y: 0, half: bus ? 1.25 : 0.85,
           // Выхлопная труба слева сзади; ускорение — для густоты дыма.
           acc: 0, smoke: { carry: Math.random() },
@@ -130,7 +133,7 @@ export class Traffic {
     }
     for (const m of this.meshes) {
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      m.count = 0;
       m.castShadow = m.receiveShadow = m.material !== glowMaterial(); // ночное свечение фар — без теней
       m.frustumCulled = false; // инстансы разбросаны по карте, сфера геометрии им не подходит
       scene.add(m);
@@ -138,7 +141,6 @@ export class Traffic {
     this.mat4 = new THREE.Matrix4();
     this.quat = new THREE.Quaternion();
     this.up = new THREE.Vector3(0, 1, 0);
-    this.hidden = new THREE.Matrix4().makeScale(0, 0, 0);
     this.smoke = new ExhaustFX(scene, 400);
     this.sparks = new HitFX(scene);
     this.bangs = []; // удары машин трафика между собой — для звука (забирает Sound.traffic)
@@ -731,8 +733,11 @@ export class Traffic {
   #sync(dt, px, pz) {
     const p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), e = new THREE.Euler(0, 0, 0, 'YXZ');
     const w = this.world;
+    // Активные машины — подряд в начало инстансов, mesh.count = их число: спрятанные нулевой матрицей
+    // видеокарта всё равно обсчитывала — все 50 машин в кадре и в тенях.
+    for (const k of this.kinds) k.used = 0;
     for (const v of this.vehicles) {
-      if (!v.active) { for (const m of v.meshes) m.setMatrixAt(v.idx, this.hidden); continue; }
+      if (!v.active) continue;
       // Наклон по поверхности, как у машины игрока: тангаж по осям колёс, крен по бокам.
       const fx = v.dx, fz = v.dz, rx = -fz, rz = fx, a = v.len * 0.32, b = v.bus ? 1.1 : 0.85;
       // Высота от своей дороги: под мостом — по нижней улице, а не по настилу над ней.
@@ -753,14 +758,25 @@ export class Traffic {
       e.set(-Math.atan2(hf - hb, 2 * a) + v.pitch, v.heading, Math.atan2(hl - hr, 2 * b) + v.roll);
       this.quat.setFromEuler(e);
       this.mat4.compose(p, this.quat, one);
-      for (const m of v.meshes) m.setMatrixAt(v.idx, this.mat4);
-      if (Math.hypot(v.x - px, v.z - pz) < 60) {
+      // Дальше drawFar машина едет, но не рисуется: там уже туман, а каждая — 4–10 тыс. треугольников.
+      const d = Math.hypot(v.x - px, v.z - pz);
+      if (d > this.drawFar) continue;
+      const kind = v.meshes.kind, slot = kind.used++;
+      for (const m of v.meshes) m.setMatrixAt(slot, this.mat4);
+      v.meshes[kind.paint].setColorAt(slot, v.color);
+      if (d < 60) {
         const throttle = Math.min(1, Math.max(0, v.acc / 2.8));
         this.smoke.emit(dt, v.smoke, this.mat4, v.pipe, v.dx * v.speed, v.dz * v.speed, v.speed, throttle, v.bus ? 1 : 0.7);
       }
     }
     this.smoke.step(dt);
     this.sparks.update(dt);
-    for (const m of this.meshes) m.instanceMatrix.needsUpdate = true;
+    for (const k of this.kinds) {
+      for (const m of k.meshes) {
+        m.count = k.used;
+        m.instanceMatrix.needsUpdate = true;
+      }
+      k.meshes[k.paint].instanceColor.needsUpdate = true;
+    }
   }
 }

@@ -2346,25 +2346,34 @@ function ferrisWheel(h = 50) {
       rotor.add(spoke);
     }
   }
-  // Кабинки — не дети ротора: позицию считаем сами, чтобы они не переворачивались.
+  flatten(rotor); // 52 меша — в два (по материалу), крутится целиком
+  // Кабинки — не дети ротора: позицию считаем сами, чтобы они не переворачивались. Четыре части кабинки —
+  // по InstancedMesh на все 24 (цвет кузова — у инстанса), иначе 96 вызовов отрисовки.
   const colors = ['#e6493c', '#f2b632', '#3b8fd9', '#45b36b', '#9b59b6', '#f07f2e'];
-  const cabins = [];
-  for (let i = 0; i < N; i++) {
-    const c = new THREE.Group();
-    c.add(box(0.12, 1.2, 0.12, M.dark, 0, -1.2, 0));
-    c.add(box(1.8, 1.9, 1.8, lambert(colors[i % colors.length]), 0, -3.1, 0));
-    c.add(box(1.82, 0.9, 1.82, lambert('#bcd3e2'), 0, -2.1, 0)); // остекление
-    c.add(box(2, 0.15, 2, M.white, 0, -1.25, 0));
-    g.add(c);
-    cabins.push(c);
-  }
+  const cabins = [
+    [new THREE.BoxGeometry(0.12, 1.2, 0.12).translate(0, -1.2, 0), M.dark],
+    [new THREE.BoxGeometry(1.8, 1.9, 1.8).translate(0, -3.1, 0), lambert('#ffffff')],
+    [new THREE.BoxGeometry(1.82, 0.9, 1.82).translate(0, -2.1, 0), lambert('#bcd3e2')], // остекление
+    [new THREE.BoxGeometry(2, 0.15, 2).translate(0, -1.25, 0), M.white],
+  ].map(([geo, mat]) => {
+    const m = new THREE.InstancedMesh(geo, mat, N);
+    m.castShadow = m.receiveShadow = true;
+    m.frustumCulled = false; // кабинки двигаются; дальние модели прячет buildLandmarks
+    g.add(m);
+    return m;
+  });
+  const c = new THREE.Color();
+  for (let i = 0; i < N; i++) cabins[1].setColorAt(i, c.set(colors[i % colors.length]));
+  const mx = new THREE.Matrix4();
   g.userData.update = (t) => {
     const phase = t * 0.06; // полный оборот примерно за 105 секунд
     rotor.rotation.z = phase;
-    cabins.forEach((c, i) => {
+    for (let i = 0; i < N; i++) {
       const a = phase + (i / N) * Math.PI * 2;
-      c.position.set(Math.cos(a) * R, cy + Math.sin(a) * R, 0);
-    });
+      mx.makeTranslation(Math.cos(a) * R, cy + Math.sin(a) * R, 0);
+      for (const m of cabins) m.setMatrixAt(i, mx);
+    }
+    for (const m of cabins) m.instanceMatrix.needsUpdate = true;
   };
   g.userData.update(0);
   return g;

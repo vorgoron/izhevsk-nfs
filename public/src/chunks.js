@@ -9,15 +9,18 @@ import {
 import { buildPropChunk, propMaterials } from './props.js';
 import { buildShopChunk, SHOP_NEAR } from './shops.js';
 
-const TREE_NEAR = 450; // м до квадрата: ближе — подробные деревья
 
 export class ChunkManager {
-  constructor(world, scene, renderer, { radius = 1800, texSize = 1024 } = {}) {
+  // treeNear — м до квадрата, ближе — подробные деревья; detailFar — дальше квадрата не рисуются
+  // мелочи, столбы, заборы, остановки и рельсы (уровень графики в main.js).
+  constructor(world, scene, renderer, { radius = 1800, texSize = 1024, treeNear = 450, detailFar = Infinity } = {}) {
     this.world = world;
     this.scene = scene;
     this.renderer = renderer;
     this.radius = radius;
     this.texSize = texSize;
+    this.treeNear = treeNear;
+    this.detailFar = detailFar;
     this.loaded = new Map(); // ключ → { group, terrain }
     this.breakables = null;  // выставляет main.js: столбы и щиты квадратов ломаются
     this.mats = { roads: roadMaterials(renderer), buildings: buildingMaterials(renderer), trees: treeMaterials(), poles: poleMaterials(),
@@ -51,32 +54,35 @@ export class ChunkManager {
   #build(ci, cj) {
     const w = this.world, info = w.chunkInfo(ci, cj);
     const group = new THREE.Group();
-    group.userData = { ci, cj, trees: [], shops: null };
+    // Мелкое — в отдельной подгруппе: её прячем целиком по расстоянию (update), не трогая видимость самих мешей.
+    const detail = new THREE.Group();
+    group.add(detail);
+    group.userData = { ci, cj, trees: [], shops: null, detail };
     const tag = (o, label) => ((o.userData.perf = label), o); // разбивка треугольников в `?perf`
     group.add(tag(buildTerrainChunk(w, info, this.texSize, this.renderer), 'рельеф'));
     if (info.data.runs.length) group.add(tag(buildRoadChunk(w, info.data.runs, this.mats.roads), 'дороги'));
     if (info.data.buildings.length) group.add(tag(buildBuildingChunk(w, info.data.buildings, this.mats.buildings), 'дома'));
     const rails = info.data.rails.length ? buildRailChunk(w, info, this.mats.roads.rail, this.mats.roads.concrete, this.mats.roads.trackbed, this.mats.roads.crossing) : null;
-    if (rails) group.add(tag(rails, 'рельсы'));
+    if (rails) detail.add(tag(rails, 'рельсы'));
     const trees = buildTreeChunk(w, info, this.mats.trees);
     if (trees.length) group.add(...trees.map((t) => tag(t, 'деревья')));
     for (const t of trees) this.breakables?.addTrees(t);
     group.userData.trees = trees;
     const poles = buildPoleChunk(w, info, this.mats.poles);
-    if (poles) group.add(tag(poles, 'столбы'), ...poles.userData.glow.map((o) => tag(o, 'столбы')));
+    if (poles) detail.add(tag(poles, 'столбы'), ...poles.userData.glow.map((o) => tag(o, 'столбы')));
     const ads = buildBillboardChunk(w, info, this.mats.ads);
     if (ads) group.add(...ads.map((o) => tag(o, 'щиты')));
     if (poles) this.breakables?.addPoles(poles);
     if (ads) this.breakables?.addBoards(...ads);
     if (ads) for (const o of ads.slice(1)) this.mats.ads.meshes.add(o); // плакаты — для нажатия по ним
     const stops = buildStopChunk(w, info, this.mats.stops);
-    if (stops) group.add(...stops.map((o) => tag(o, 'остановки')));
+    if (stops) detail.add(...stops.map((o) => tag(o, 'остановки')));
     for (const o of stops || []) if (o.userData.stop) this.breakables?.addStop(o);
     const fences = buildFenceChunk(w, info, this.mats.fences);
-    if (fences) group.add(...fences.map((o) => tag(o, 'заборы')));
+    if (fences) detail.add(...fences.map((o) => tag(o, 'заборы')));
     for (const o of fences || []) if (o.userData.pieces) this.breakables?.addFences(o);
     const props = buildPropChunk(w, info, this.mats.props);
-    if (props) group.add(...props.map((o) => tag(o, 'мелочи')));
+    if (props) detail.add(...props.map((o) => tag(o, 'мелочи')));
     for (const o of props || []) {
       if (o.userData.breakKind) this.breakables?.addProps(o);
       if (o.userData.arms) this.breakables?.addGates(o);
@@ -108,12 +114,14 @@ export class ChunkManager {
   update(px, pz, budget = 1) {
     this.mats.ads.tick(performance.now());
     this.mats.trees.tick(performance.now());
-    // Деревья дальних квадратов — упрощённые; зазор между порогами, чтобы на границе не мигали.
+    // Деревья дальних квадратов — упрощённые, мелочи — спрятаны; зазор между порогами, чтобы на границе не мигали.
     for (const group of this.loaded.values()) {
-      const { ci, cj, trees } = group.userData;
+      const { ci, cj, trees, detail } = group.userData;
+      const d = this.#dist(ci, cj, px, pz);
+      detail.visible = detail.visible ? d < this.detailFar + 40 : d < this.detailFar;
       if (!trees.length) continue;
-      const d = this.#dist(ci, cj, px, pz), cur = trees[0].geometry === trees[0].userData.lod[1];
-      const far = cur ? d > TREE_NEAR - 60 : d > TREE_NEAR;
+      const cur = trees[0].geometry === trees[0].userData.lod[1];
+      const far = cur ? d > this.treeNear - 60 : d > this.treeNear;
       if (far !== cur) for (const t of trees) t.geometry = t.userData.lod[far ? 1 : 0];
     }
     // Вывески — только у ближних квадратов (у каждого своя текстура); не больше одного квадрата за кадр.

@@ -344,6 +344,10 @@
     #menu button:hover { background: rgba(255,255,255,.12); }
     #menu button b { margin-left: auto; color: #ffd23f; font-weight: 700; }
     #menu button b.off { color: rgba(255,255,255,.45); }
+    /* Уровни графики: выбранный — с жёлтой рамкой, описание — мелко справа. */
+    #menu button[data-q] { flex-wrap: wrap; box-shadow: inset 0 0 0 2px #ffd23f; }
+    #menu button[data-q].off { box-shadow: none; }
+    #menu button[data-q] b { flex-basis: 100%; margin: 0; font-size: 12px; font-weight: 400; color: rgba(255,255,255,.6); }
     #menu button kbd { margin-left: auto; opacity: .6; }
     #menu button b ~ kbd { margin-left: 0; }
     #menu .go { font-weight: 800; font-size: 17px; background: #ffd23f; color: #15181b; }

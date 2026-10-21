@@ -165,8 +165,9 @@ export class DayNight {
   // hemi, sun — свет сцены; sky — Sky (купол, звёзды, облака); ads — материалы щитов (подсветка плакатов);
   // headlight — прожектор фар игрока; dir — направление на солнце (ночью там луна).
   // Режим: auto — по солнцу в Ижевске сейчас, day / night — вручную; помнится в localStorage.daytime.
-  constructor({ scene, hemi, sun, dir, sky, ads, headlight }) {
-    Object.assign(this, { scene, hemi, sun, dir, sky, ads, headlight });
+  // fogScale — множитель дальности тумана (уровень графики в main.js).
+  constructor({ scene, hemi, sun, dir, sky, ads, headlight, fogScale = 1 }) {
+    Object.assign(this, { scene, hemi, sun, dir, sky, ads, headlight, fogScale });
     this.mode = 'auto';
     try { const m = localStorage.getItem('daytime'); if (MODES.includes(m)) this.mode = m; } catch {}
     this.clock = clockNight();
@@ -191,6 +192,11 @@ export class DayNight {
     try { localStorage.setItem('daytime', this.mode); } catch {}
   }
 
+  setFogScale(k) {
+    this.fogScale = k;
+    this.#apply();
+  }
+
   #goal() { return this.mode === 'auto' ? this.clock : this.mode === 'night' ? 1 : 0; }
 
   update(dt) {
@@ -212,8 +218,8 @@ export class DayNight {
     col(this.sun.color, DAY.sun, NIGHT_SET.sun);
     this.sun.intensity = lerp(DAY.sunI, NIGHT_SET.sunI);
     const fog = this.scene.fog;
-    fog.near = lerp(DAY.fogNear, NIGHT_SET.fogNear);
-    fog.far = lerp(DAY.fogFar, NIGHT_SET.fogFar);
+    fog.near = lerp(DAY.fogNear, NIGHT_SET.fogNear) * this.fogScale;
+    fog.far = lerp(DAY.fogFar, NIGHT_SET.fogFar) * this.fogScale;
     FOG.value.set(fog.near, fog.far);
     this.sky.setNight(s, this.dir);
     fog.color.copy(this.sky.horizon);

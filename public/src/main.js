@@ -77,6 +77,21 @@ async function fetchJSON(url, onBytes) {
 // поверх канваса, ?lowpower — слабый GPU, ?noaa / ?aa — сглаживание.
 const flags = new URLSearchParams(location.search);
 const lite = flags.has('lite');
+
+// Уровни графики: меню «Графика», `?q=high|medium|low`, localStorage.quality; меняются на лету (setQuality),
+// кроме неба (число шагов облаков — при постройке).
+// На телефоне кадр упирается в процессор — в число вызовов отрисовки и треугольников, поэтому главное —
+// дальность (туман, квадраты города, мелочи, трафик), а не разрешение. fog — множитель дальности тумана,
+// дальняя плоскость камеры — по его концу (цикл ниже).
+const QUALITY = {
+  high: { label: 'высокая', px: 2, shadow: 2048, fog: 1, radius: 1800, tex: 1024, treeNear: 450, detailFar: Infinity, carsFar: 300 },
+  medium: { label: 'средняя', px: 1, shadow: 1024, fog: 0.6, radius: 1000, tex: 512, treeNear: 250, detailFar: 300, carsFar: 220 },
+  low: { label: 'низкая', px: 0.75, shadow: 0, fog: 0.4, radius: 700, tex: 256, treeNear: 150, detailFar: 180, carsFar: 150 },
+};
+let qChosen = flags.get('q');
+try { qChosen = QUALITY[qChosen] ? qChosen : localStorage.getItem('quality'); } catch {}
+let qName = lite ? 'low' : QUALITY[qChosen] ? qChosen : isTouch ? 'medium' : 'high';
+let Q = QUALITY[qName];
 if (flags.has('nohud')) document.documentElement.classList.add('nohud');
 
 async function main() {
@@ -98,23 +113,23 @@ async function main() {
     antialias: flags.has('aa') || (!isTouch && !flags.has('noaa')),
     powerPreference: flags.has('lowpower') ? 'low-power' : 'default',
   });
-  renderer.setPixelRatio(lite ? 1 : Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, Q.px));
   renderer.setSize(innerWidth, innerHeight);
-  renderer.shadowMap.enabled = !lite;
+  renderer.shadowMap.enabled = Q.shadow > 0;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.body.prepend(renderer.domElement);
 
   const scene = new THREE.Scene();
   const sky = new THREE.Color(HORIZON); // туман = цвет горизонта неба (sky.js)
   scene.background = sky;
-  scene.fog = new THREE.Fog(sky, 250, 1600);
+  scene.fog = new THREE.Fog(sky, 250 * Q.fog, 1600 * Q.fog);
   const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.5, 4000);
 
   const hemi = new THREE.HemisphereLight('#dfe9f5', '#5a5444', 1.4);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.setScalar(isTouch ? 1024 : 2048);
+  sun.shadow.mapSize.setScalar(Q.shadow || 512);
   Object.assign(sun.shadow.camera, { left: -120, right: 120, top: 120, bottom: -120, near: 1, far: 600 });
   sun.shadow.bias = -0.0005;
   scene.add(sun, sun.target);
@@ -126,7 +141,7 @@ async function main() {
   progress(0.66, 'Ставлю мосты и достопримечательности…');
   await frame();
   // Город строится квадратами вокруг игрока (chunks.js); на телефоне — ближе и проще.
-  const chunks = new ChunkManager(world, scene, renderer, lite ? { radius: 800, texSize: 256 } : isTouch ? { radius: 1300, texSize: 512 } : { radius: 1800, texSize: 1024 });
+  const chunks = new ChunkManager(world, scene, renderer, { radius: Q.radius, texSize: Q.tex, treeNear: Q.treeNear, detailFar: Q.detailFar });
   // Подписи для разбивки треугольников в `?perf`: всё, что добавила в сцену make(), — под label.
   const owned = (label, make) => {
     const n = scene.children.length, r = make();
@@ -233,15 +248,37 @@ async function main() {
   await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
   progress(0.95, 'Трафик, заправки, светофоры…');
   await frame();
-  const skyDome = owned('небо', () => new Sky(scene, { low: lite || isTouch }));
+  const skyDome = owned('небо', () => new Sky(scene, { low: qName !== 'high' || isTouch }));
   // Ночь: фары своей машины — прожектор без теней (днём выключен, см. DayNight).
   const headlight = new THREE.SpotLight('#ffeccc', 0, 90, 0.62, 0.55, 1.1);
   scene.add(headlight, headlight.target);
-  const dayNight = new DayNight({ scene, hemi, sun, dir: SUN_DIR, sky: skyDome, ads: chunks.mats.ads, headlight });
+  const dayNight = new DayNight({ scene, hemi, sun, dir: SUN_DIR, sky: skyDome, ads: chunks.mats.ads, headlight, fogScale: Q.fog });
   const HEAD_POS = new THREE.Vector3(), HEAD_AIM = new THREE.Vector3();
   const fuel = owned('заправки', () => new Fuel(world, scene));
   const queues = owned('очереди', () => new Queues(world, fuel, scene));
   const traffic = owned('трафик', () => new Traffic(world, scene));
+  traffic.drawFar = Q.carsFar;
+  // Сменить уровень графики на ходу: квадраты текстур рельефа и радиус — для новых квадратов, остальное сразу.
+  const setQuality = (name) => {
+    if (name === qName || !QUALITY[name]) return;
+    qName = name;
+    Q = QUALITY[name];
+    renderer.setPixelRatio(Math.min(devicePixelRatio, Q.px));
+    renderer.setSize(innerWidth, innerHeight);
+    if (renderer.shadowMap.enabled !== Q.shadow > 0) {
+      renderer.shadowMap.enabled = Q.shadow > 0;
+      // Тени включены в шейдер — материалы пересобрать (разовая заминка).
+      scene.traverse((o) => { for (const m of [o.material].flat()) if (m) m.needsUpdate = true; });
+    }
+    if (Q.shadow && sun.shadow.mapSize.x !== Q.shadow) {
+      sun.shadow.mapSize.setScalar(Q.shadow);
+      sun.shadow.map?.dispose();
+      sun.shadow.map = null;
+    }
+    Object.assign(chunks, { radius: Q.radius, texSize: Q.tex, treeNear: Q.treeNear, detailFar: Q.detailFar });
+    traffic.drawFar = Q.carsFar;
+    dayNight.setFogScale(Q.fog);
+  };
   const signals = owned('светофоры', () => new Signals(world, traffic, scene));
   breakables.addSignals(signals);
   const cameras = owned('камеры', () => new Cameras(world, signals, scene));
@@ -453,6 +490,10 @@ async function main() {
     },
     camera: () => { camMode = (camMode + 1) % 4; cine.shot = null; cine.left = 0; },
     night: () => dayNight.toggle(),
+    quality: (q) => {
+      setQuality(q);
+      try { localStorage.setItem('quality', q); } catch {}
+    },
     fps: () => {
       fpsCap = FPS_CAPS[(FPS_CAPS.indexOf(fpsCap) + 1) % FPS_CAPS.length];
       try { localStorage.setItem('fps', fpsCap); } catch {}
@@ -515,7 +556,7 @@ async function main() {
   }
   raceLenEl.addEventListener('click', (e) => { const b = e.target.closest('[data-len]'); if (b) startRace(b.dataset.len); });
   // После любого действия (клавишей, кнопкой) меню показывает актуальные значения.
-  for (const [k, f] of Object.entries(actions)) actions[k] = () => { f(); menu.sync(); };
+  for (const [k, f] of Object.entries(actions)) actions[k] = (...a) => { f(...a); menu.sync(); };
   const menu = new Menu({
     actions,
     volume: {
@@ -523,7 +564,7 @@ async function main() {
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
     radio: { names: STATIONS.map((s) => s.name), get: () => radio.station, select: (i) => radio.select(i) },
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, night: dayNight.label, debug: debug.on, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, quality: Q.label, qName, night: dayNight.label, debug: debug.on, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
       money: formatMoney(wallet.balance), hopper: car.hopper > 0,
@@ -1259,6 +1300,21 @@ async function main() {
   setTimeout(() => citymap.prepare(), 3000); // подложку большой карты — заранее, чтобы она открылась сразу
   track('game_start', { model: garage.choice.model, touch: isTouch, room: net.room !== CITY });
   if (!choice.saved) garage.open();
+  // Телефон не тянет (меньше 20 кадров в секунду за 8 с после старта) — один раз ступенью ниже, если
+  // игрок уровень сам не выбирал. Выбор запоминается — дальше не проверяем.
+  if (isTouch && !QUALITY[qChosen] && qName !== 'low') {
+    let n = 0;
+    const from = performance.now() + 3000; // первые секунды — достройка квадратов, кадры неровные
+    const probe = (now) => {
+      if (now > from) n++;
+      if (now < from + 8000) { requestAnimationFrame(probe); return; }
+      if (n / 8 >= 20) return;
+      const next = qName === 'high' ? 'medium' : 'low';
+      actions.quality(next);
+      notice(`Графика понижена: ${QUALITY[next].label} — для плавности (меню → Графика)`);
+    };
+    requestAnimationFrame(probe);
+  }
   // Заставка с логотипом гаснет поверх уже идущей игры.
   $('loading').classList.add('done');
   setTimeout(() => $('loading').remove(), 600);
