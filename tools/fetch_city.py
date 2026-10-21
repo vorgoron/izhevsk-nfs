@@ -1600,10 +1600,11 @@ UNPAVED = {"unpaved", "ground", "gravel", "dirt", "compacted", "sand", "grass", 
 TREE_ROW_STEP = 7  # м между деревьями ряда
 # Полосы деревьев, которых нет в OSM, но они видны на снимке и делают место узнаваемым:
 # (здание way, сторона фасада, от и до — м от фасада, шаг сетки, узел-проход, полуширина прохода).
-# Куски заборов из OSM в проходе к зданию — другого вида: (здание way, сторона фасада, узел-проход,
-# полуширина прохода, до скольких м от фасада, вид). У завода проезд к колоннаде — меж белых стен.
+# Куски заборов из OSM перед фасадом здания — другого вида: (здание way, сторона фасада, узел-проход,
+# полуширина прохода — или None для всего фасада, до скольких м от фасада, вид). У завода весь забор
+# перед фасадом и стенки проезда к колоннаде — белые оштукатуренные.
 FENCE_WALLS = [
-    (90895162, "north", 5294741728, 7, 35, "stucco"),
+    (90895162, "north", None, None, 40, "stucco"),
 ]
 TREE_BELTS = [
     (90895162, "north", 7, 20, 6.5, 5294741728, 7),  # сквер перед главным корпусом завода, проход к башне; ближе 6 м к достопримечательности деревья не ставятся
@@ -1632,27 +1633,40 @@ def facade_edge(wid, side):
 
 
 def fence_walls(fence_list):
-    """Куски заборов в проходе из FENCE_WALLS — другим видом (забор режется на изломах прохода)."""
+    """Куски заборов перед фасадом из FENCE_WALLS — другим видом (забор режется по границе зоны)."""
     out = []
     zones = []
     for wid, side, gap_node, gap, depth, kind in FENCE_WALLS:
-        e = facade_edge(wid, side) if wid in ways and gap_node in nodes else None
-        if e:
-            L, ax, az, ex, ez, ox, oz = e
+        e = facade_edge(wid, side) if wid in ways else None
+        if not e or (gap_node is not None and gap_node not in nodes):
+            continue
+        L, ax, az, ex, ez, ox, oz = e
+        if gap_node is None:
+            t0, t1 = 0, L  # весь фасад
+        else:
             gx, gz = project(*nodes[gap_node])
-            zones.append((ax, az, ex, ez, ox, oz, (gx - ax) * ex + (gz - az) * ez, gap, depth, kind))
+            tg = (gx - ax) * ex + (gz - az) * ez
+            t0, t1 = tg - gap, tg + gap
+        zones.append((ax, az, ex, ez, ox, oz, t0, t1, depth, kind))
 
     def zone_of(x, z):
-        for ax, az, ex, ez, ox, oz, tg, gap, depth, kind in zones:
+        for ax, az, ex, ez, ox, oz, t0, t1, depth, kind in zones:
             t = (x - ax) * ex + (z - az) * ez
             d = (x - ax) * ox + (z - az) * oz
-            if abs(t - tg) < gap and -1 < d < depth:
+            if t0 < t < t1 and -1 < d < depth:
                 return kind
         return None
 
     changed = 0
     for f in fence_list:
         p = f["p"]
+        if zones and any(zone_of(x, z) for x, z in along(p, 4)):
+            # Дробим по 4 м, чтобы граница вида совпала с краем зоны, а не с вершиной длинного отрезка.
+            q = [p[0]]
+            for a, b in zip(p, p[1:]):
+                n = max(1, math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / 4))
+                q += [[round(a[0] + (b[0] - a[0]) * k / n, 2), round(a[1] + (b[1] - a[1]) * k / n, 2)] for k in range(1, n + 1)]
+            p = q
         kinds = [zone_of((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(p, p[1:])]
         runs, start = [], 0
         for i in range(1, len(kinds) + 1):
