@@ -43,6 +43,7 @@ const M = {
   salmon: lambert('#e98c78'),
   darkBrick: lambert('#7a2e1e'),
   warmBrick: lambert('#c65d3c'),
+  signalRed: lambert('#d23a2a'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -498,7 +499,9 @@ function doubleSided(mat) {
   if (!DOUBLE.has(mat)) DOUBLE.set(mat, Object.assign(mat.clone(), { side: THREE.DoubleSide }));
   return DOUBLE.get(mat);
 }
-function insetRoof(p, inset, h, y0, mat) {
+// Контур, сдвинутый на d внутрь (d < 0 — наружу): вершина — на пересечении сдвинутых рёбер
+// (у острых углов сдвиг ограничен).
+function offsetContour(p, d) {
   let area = 0;
   const n = p.length;
   for (let i = 0; i < n; i++) area += p[i][0] * p[(i + 1) % n][1] - p[(i + 1) % n][0] * p[i][1];
@@ -507,12 +510,15 @@ function insetRoof(p, inset, h, y0, mat) {
     const [x1, z1] = p[i], [x2, z2] = p[(i + 1) % n], L = Math.hypot(x2 - x1, z2 - z1) || 1;
     return [-s * (z2 - z1) / L, s * (x2 - x1) / L];
   };
-  // Вершина сдвинутого контура — на пересечении сдвинутых рёбер (у острых углов ограничена).
-  const q = p.map(([x, z], i) => {
+  return p.map(([x, z], i) => {
     const a = inward((i - 1 + n) % n), b = inward(i);
-    const k = inset / Math.max(0.25, 1 + a[0] * b[0] + a[1] * b[1]);
+    const k = d / Math.max(0.25, 1 + a[0] * b[0] + a[1] * b[1]);
     return [x + (a[0] + b[0]) * k, z + (a[1] + b[1]) * k];
   });
+}
+
+function insetRoof(p, inset, h, y0, mat) {
+  const n = p.length, q = offsetContour(p, inset);
   const pos = [];
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
@@ -1613,6 +1619,93 @@ function waterTower(r, a) {
   return mergeByMaterial(g);
 }
 
+// Центральный республиканский стадион (бывший «Зенит»; по фото): открытая чаша по контуру OSM —
+// белая наружная стена с синей полосой, внутрь спускаются ряды трибун (белые с синими секторами),
+// на восточной трибуне — «ЗЕНИТ» белым по синему; по диагоналям — четыре решётчатые мачты освещения
+// в красно-белую полоску. Поле и беговая дорожка — уже земля из OSM (areas).
+function stadium(pl) {
+  const g = new THREE.Group();
+  const W = 16, K = 12, rise = 0.55, H = 1.2 + K * rise, n = pl.length;
+  const rings = new Map();
+  const ring = (d) => rings.get(d) || rings.set(d, offsetContour(pl, d)).get(d);
+  // Полоса между сдвигами dA и dB на высотах yA и yB — по рёбрам from..to.
+  const band = (dA, dB, yA, yB, mat, from = 0, to = n) => {
+    const A = ring(dA), B = ring(dB), pos = [];
+    for (let i = from; i < to; i++) {
+      const j = (i + 1) % n;
+      pos.push(A[i][0], yA, A[i][1], A[j][0], yA, A[j][1], B[j][0], yB, B[j][1]);
+      pos.push(A[i][0], yA, A[i][1], B[j][0], yB, B[j][1], B[i][0], yB, B[i][1]);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    g.add(mesh(geo, doubleSided(mat)));
+  };
+  band(0, 0, -3, H + 1.2, M.white);
+  band(-0.05, -0.05, H - 0.2, H + 0.5, M.band);
+  band(0, 1.5, H + 1.2, H + 1.2, M.concrete);
+  band(1.5, 1.5, H, H + 1.2, M.white);
+  // Ряды: верхний — у стены, нижний — у дорожки; синие сектора через один в верхней половине.
+  const sectors = 14, per = Math.ceil(n / sectors);
+  for (let k = 0; k < K; k++) {
+    const dOut = 1.5 + (k * (W - 1.5)) / K, dIn = 1.5 + ((k + 1) * (W - 1.5)) / K, y = H - k * rise;
+    for (let sct = 0; sct < sectors; sct++) {
+      const from = sct * per, to = Math.min(n, from + per);
+      if (from >= to) continue;
+      band(dOut, dIn, y, y, (k < K / 2 && sct % 2) || k === K - 1 ? M.blue : M.white, from, to);
+    }
+    band(dIn, dIn, y - rise, y, M.stone);
+  }
+  band(W, W, 0, 1.2, M.blue);
+  // Мачты освещения — по диагоналям овала.
+  const xs = pl.map((q) => q[0]), zs = pl.map((q) => q[1]);
+  const hx = (Math.max(...xs) - Math.min(...xs)) / 2, hz = (Math.max(...zs) - Math.min(...zs)) / 2;
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    let best = pl[0];
+    for (const q of pl) if (q[0] * sx / hx + q[1] * sz / hz > best[0] * sx / hx + best[1] * sz / hz) best = q;
+    const d = Math.hypot(best[0], best[1]) || 1, ux = best[0] / d, uz = best[1] / d;
+    const x = best[0] + ux * 4, z = best[1] + uz * 4, Hm = 42, seg = 7;
+    for (let i = 0; i < seg; i++) {
+      const r0 = 1.4 - (i * 1.0) / seg, r1 = 1.4 - ((i + 1) * 1.0) / seg;
+      g.add(cyl(r0, Hm / seg, i % 2 ? M.white : M.signalRed, x, (i * Hm) / seg, z, 4, r1));
+    }
+    const lamp = new THREE.Group();
+    lamp.add(box(6, 4, 0.6, M.signalRed, 0, 0, 0));
+    lamp.add(box(5.4, 3.4, 0.2, M.white, 0, 0.3, 0.35));
+    lamp.position.set(x, Hm - 1, z);
+    lamp.rotation.y = Math.atan2(-ux, -uz);
+    g.add(lamp);
+  }
+  const merged = mergeByMaterial(g);
+  // «ЗЕНИТ» на восточной трибуне, по скату.
+  let east = null;
+  contourEdges(pl, (e) => { if (e.ox > 0.9 && (!east || e.len > east.len)) east = e; });
+  const mx = east.x + east.ex * east.len / 2, mz = east.z + east.ez * east.len / 2;
+  const A = [mx - east.ox * 1.5, mz - east.oz * 1.5], B = [mx - east.ox * W, mz - east.oz * W];
+  const run = Math.hypot(A[0] - B[0], A[1] - B[1]), tilt = Math.atan2(H - 1.2, run);
+  const c = document.createElement('canvas');
+  c.width = 1024;
+  c.height = 160;
+  const cx = c.getContext('2d');
+  cx.fillStyle = '#3f78b5';
+  cx.fillRect(0, 0, 1024, 160);
+  cx.fillStyle = '#ffffff';
+  cx.font = 'bold 130px sans-serif';
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+  cx.fillText('З Е Н И Т', 512, 86);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const len = Math.hypot(run, H - 1.2);
+  const word = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(len * 6.4, east.len * 0.9), len * 0.92), new THREE.MeshLambertMaterial({ map: t }));
+  word.rotation.order = 'YXZ';
+  word.rotation.y = Math.atan2(B[0] - A[0], B[1] - A[1]);
+  word.rotation.x = -(Math.PI / 2 - tilt);
+  word.position.set((A[0] + B[0]) / 2, (H + 1.2) / 2 + rise + 0.1, (A[1] + B[1]) / 2); // над углами ступеней
+  merged.add(word);
+  return merged;
+}
+
 function plantTower() {
   const g = new THREE.Group();
   const pink = M.pink, white = M.white;
@@ -1912,6 +2005,16 @@ export function buildLandmarks(world) {
         obj = place(plantMain(toLocal(p, f), t.x - f.cx, t.z - f.cz), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
+      case 'stadium': {
+        // Коллайдер — только наружная стена: внутри поле.
+        const f = fit(p, 0), q = offsetContour(p, 1.5);
+        obj = place(stadium(toLocal(p, f)), f.cx, baseY(world, p), f.cz, 0);
+        for (let i = 0; i < p.length; i++) {
+          const j = (i + 1) % p.length;
+          world.addCollider([p[i], p[j], q[j], q[i]]);
+        }
+        break;
+      }
       case 'water_tower': {
         const c = circleFit(p);
         obj = place(waterTower(c.R, Math.atan2(p[0][0] - c.cx, p[0][1] - c.cz)), c.cx, baseY(world, p), c.cz);
@@ -1941,7 +2044,7 @@ export function buildLandmarks(world) {
       default:
         break; // только перекраска (в buildBuildings)
     }
-    if (p && lm.mode === 'replace') world.addCollider(p);
+    if (p && lm.mode === 'replace' && lm.key !== 'stadium') world.addCollider(p); // у стадиона внутри поле
     if (obj) {
       group.add(obj);
       obj.traverse((o) => { if (o.userData.update) animated.push(o.userData.update); });
