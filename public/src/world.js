@@ -1025,6 +1025,19 @@ export class World {
     return best;
   }
 
+  // Знак «Уступи дорогу»/STOP впереди по курсу в пределах look м: { y, d } — знак и расстояние до его линии, или null.
+  // Знак — для едущих в его сторону (курс вдоль ux, uz) и в пределах полотна.
+  yieldAhead(x, z, dx, dz, look) {
+    let best = null;
+    for (const y of this.yields) {
+      const rx = y.x - x, rz = y.z - z;
+      if (Math.abs(rx) > look + 5 || Math.abs(rz) > look + 5 || dx * y.ux + dz * y.uz < 0.7) continue;
+      const ahead = rx * y.ux + rz * y.uz;
+      if (ahead > -1 && ahead < look && Math.abs(rx * y.uz - rz * y.ux) < y.w / 2 + 1 && (!best || ahead < best.d)) best = { y, d: ahead };
+    }
+    return best;
+  }
+
   // Высота общего настила между парными мостами в точке или null (точка не между ними).
   // Настил ровный поперёк: от края одного моста к краю другого.
   medianY(x, z) {
@@ -1468,11 +1481,16 @@ export class World {
       const p = onRoad(n);
       if (p) both(p, 'r');
     }
+    // «Уступи дорогу» (g) и STOP (s) — ещё и правило для трафика и игрока (yieldAhead, yields.js): линия у точки
+    // знака поперёк дороги, для едущих по ux, uz.
+    this.yields = [];
     for (const [n, s, dir] of c.signs || []) {
       const p = onRoad(n);
       if (!p) continue;
       // Направление не размечено — знак для тех, кто едет к ближайшему перекрёстку.
-      sign(p, s, dir || (toJunction(p, 1) <= toJunction(p, -1) ? 1 : -1));
+      const d = dir || (toJunction(p, 1) <= toJunction(p, -1) ? 1 : -1);
+      sign(p, s, d);
+      if (!p.road.br) this.yields.push({ s, x: p.x, z: p.z, ux: p.dx * d, uz: p.dz * d, w: p.w, ow: p.road.ow });
     }
     for (const n of c.gates || []) {
       const p = onRoad(n);

@@ -19,6 +19,9 @@ const GRID = 100; // м: клетка сетки рёбер
 const CORNER = 9; // м: столько до узла и после него поворот идёт по кривой, а не углом
 const TURN = 0.3; // рад: излом маршрута круче — поворот, его кривая берёт прямую и через короткие рёбра
 const ROUTE = 80; // м: маршрут машины известен на столько вперёд и назад
+// У знака STOP — полная остановка на STOP_WAIT с; у «Уступи дорогу» — подъезд не быстрее GIVE_V м/с. Дальше — только если
+// к перекрёстку (YIELD_AHEAD м за знаком) по поперечной улице никто не едет ближе YIELD_R м.
+const STOP_WAIT = 1, GIVE_V = 5, YIELD_AHEAD = 7, YIELD_R = 35;
 const BUS_PALETTE = ['#f2c230', '#e8e8e8', '#3d8f4f', '#d9442f'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
 // Удары: массы в тоннах (игрок — легковушка), упругость (кузова мнутся — отскок слабый), трение
@@ -257,6 +260,20 @@ export class Traffic {
     this.#sync(dt, px, pz);
   }
 
+  // Едет ли кто к перекрёстку за знаком y поперёк (трафик и игрок; стоящие не мешают — иначе на двух «Уступи»
+  // друг против друга ждали бы вечно).
+  #crossing(y, v, car) {
+    const jx = y.x + y.ux * YIELD_AHEAD, jz = y.z + y.uz * YIELD_AHEAD;
+    const near = (x, z, dx, dz, speed) => {
+      if (speed < 1.5 || Math.abs(dx * y.ux + dz * y.uz) > 0.6) return false;
+      const rx = jx - x, rz = jz - z;
+      return Math.abs(rx) < YIELD_R && Math.abs(rz) < YIELD_R && Math.hypot(rx, rz) < YIELD_R && rx * dx + rz * dz > -4;
+    };
+    for (const o of this.vehicles) if (o !== v && o.active && !o.knock && near(o.x, o.z, o.dx, o.dz, o.speed)) return true;
+    const f = car.forward;
+    return !car.air && near(car.pos.x, car.pos.y, f.x, f.y, Math.abs(car.speed));
+  }
+
   #drive(v, dt, car) {
     const e = v.edge;
     let limit = Math.min(v.maxSpeed, e.v) * v.mood;
@@ -271,6 +288,18 @@ export class Traffic {
     // Лежачий полицейский впереди — переваливаем шагом.
     const bump = this.world.bumpAhead(v.x, v.z, v.dx, v.dz, 30);
     if (bump < Infinity) limit = Math.min(limit, 3 + bump * 0.35);
+
+    // «Уступи дорогу» / STOP впереди.
+    const yl = this.world.yieldAhead(v.x, v.z, v.dx, v.dz, 35);
+    if (yl) {
+      const stop = yl.d - v.len / 2, hold = Math.max(0, (stop - 1) * 0.7);
+      if (v.yieldAt !== yl.y) { v.yieldAt = yl.y; v.yieldT = 0; }
+      if (yl.y.s === 's' && v.yieldT < STOP_WAIT) {
+        limit = Math.min(limit, hold);
+        if (stop < 3 && v.speed < 0.5) v.yieldT += dt;
+      } else if (this.#crossing(yl.y, v, car)) limit = Math.min(limit, hold);
+      else limit = Math.min(limit, GIVE_V + Math.max(0, stop) * 0.4);
+    }
 
     // Светофор на этом или следующем ребре: стоим у стоп-линии на красный и на жёлтый,
     // если ещё успеваем затормозить.

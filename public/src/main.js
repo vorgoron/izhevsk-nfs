@@ -35,6 +35,7 @@ import { Net, CITY } from './net.js';
 import { track } from './analytics.js';
 import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
 import { Cameras } from './cameras.js';
+import { StopSigns } from './yields.js';
 import { Drift } from './drift.js';
 import { RouteGuide } from './guide.js';
 import { CityMap } from './citymap.js';
@@ -1135,13 +1136,16 @@ async function main() {
 
   // ---------------------------------------------------------------- штрафы и награды
 
-  // Штраф — вспышка камеры по экрану. Красный — signals.js (только у камер), скорость — камеры (cameras.js).
+  // Штраф — вспышка камеры по экрану. Красный — signals.js (только у камер), скорость — камеры (cameras.js);
+  // STOP без остановки — yields.js, без камеры и без вспышки.
+  const stopSigns = new StopSigns(world);
   const flash = () => { const f = $('flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on'); };
   // В гонке (и на отсчёте) не штрафуют. Проверки всё равно идут — иначе скорость, снятая камерой на заезде,
   // пришла бы штрафом сразу после финиша.
   function fines(dt) {
-    const red = signals.checkPlayer(car), shot = cameras.update(dt, car);
+    const red = signals.checkPlayer(car), shot = cameras.update(dt, car), stop = stopSigns.checkPlayer(car, dt);
     if (race.state === 'countdown' || race.state === 'running') return;
+    if (stop) wallet.fine(PRICES.stopSign, 'STOP без остановки');
     if (red) { wallet.fine(PRICES.redLight, 'проезд на красный'); flash(); }
     if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); }
   }
