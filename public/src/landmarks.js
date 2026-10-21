@@ -526,7 +526,33 @@ function offsetContour(p, d) {
   });
 }
 
-function insetRoof(p, inset, h, y0, mat) {
+// Наименьшее расстояние между встречными стенами контура (рёбра с почти противоположными направлениями) —
+// ширина самого узкого крыла или прохода.
+function narrowest(p) {
+  const n = p.length, segDist = (px, pz, [ax, az], [bx, bz]) => {
+    const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / L2));
+    return Math.hypot(px - ax - t * dx, pz - az - t * dz);
+  };
+  const dir = (i) => { const a = p[i], b = p[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
+  let best = Infinity;
+  for (let i = 0; i < n; i++) {
+    const di = dir(i), A = p[i], B = p[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if ((j + 1) % n === i) continue;
+      const dj = dir(j);
+      if (di[0] * dj[0] + di[1] * dj[1] > -0.3) continue; // не встречные
+      const C = p[j], D = p[(j + 1) % n];
+      best = Math.min(best, segDist(...A, C, D), segDist(...B, C, D), segDist(...C, A, B), segDist(...D, A, B));
+    }
+  }
+  return best;
+}
+
+// Сдвиг ската ограничен узкими крыльями: иначе сдвинутые рёбра перехлёстываются, и крышка ложится
+// поперёк двора (так было у Арсенала); высота уменьшается вместе со сдвигом — уклон тот же.
+function insetRoof(p, inset0, h0, y0, mat) {
+  const inset = Math.min(inset0, 0.45 * narrowest(p)), h = (h0 * inset) / inset0;
   const n = p.length, q = offsetContour(p, inset);
   const pos = [];
   for (let i = 0; i < n; i++) {
