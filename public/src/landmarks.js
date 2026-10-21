@@ -2246,8 +2246,8 @@ function deryabinBust() {
   g.add(mesh(new THREE.SphereGeometry(0.26, 8, 6), M.bronze, 0, 5.05, 0));
   for (const x of [-3.2, 3.2]) {
     g.add(cyl(0.12, 4, M.dark, x, 0, 0.6, 6));
-    g.add(box(0.08, 0.08, 1.4, M.dark, x, 3.6, 0.6)); // перекладина — поперёк линии фонарей (по отзыву)
-    for (const dz of [-0.65, 0, 0.65]) g.add(box(0.28, 0.42, 0.28, M.cream, x, dz ? 3.7 : 4, 0.6 + dz));
+    g.add(box(1.4, 0.08, 0.08, M.dark, x, 3.6, 0.6)); // перекладина — вдоль берега, как ряд фонарей
+    for (const dx of [-0.65, 0, 0.65]) g.add(box(0.28, 0.42, 0.28, M.cream, x + dx, dx ? 3.7 : 4, 0.6));
   }
   return mergeByMaterial(g);
 }
@@ -2637,8 +2637,9 @@ export function buildLandmarks(world) {
       }
       case 'deryabin':
       case 'gerd': {
-        // Дерябин — спиной к пруду (он на востоке), Герд — лицом к улице Коммунаров.
-        const [fx, fz] = lm.key === 'deryabin' ? [-0.98, -0.18] : toStreet(world, lm, /Коммунаров/, 1, 0);
+        // Дерябин — спиной к пруду: берег в 10 м к северу и идёт с востока на запад (ближайшая точка на рёбрах
+        // воды, а не вершина — вершины берега редкие); Герд — лицом к улице Коммунаров.
+        const [fx, fz] = lm.key === 'deryabin' ? [0, 1] : toStreet(world, lm, /Коммунаров/, 1, 0);
         const m = lm.key === 'deryabin' ? deryabinBust() : gerdStatue();
         m.rotation.y = Math.atan2(fx, fz);
         obj = place(new THREE.Group().add(m), lm.x, world.terrain(lm.x, lm.z), lm.z);
@@ -2647,8 +2648,8 @@ export function buildLandmarks(world) {
       }
       case 'gunsmiths':
       case 'kirov': {
-        // Оружейники — спиной к пруду (он на западе), Киров — лицом ко входу в парк с улицы Кирова (восток).
-        const m = lm.key === 'gunsmiths' ? gunsmiths() : kirovStatue(), a = lm.key === 'gunsmiths' ? Math.atan2(0.96, 0.29) : Math.PI / 2;
+        // Оружейники — спиной к пруду (берег на западе, идёт с севера на юг), Киров — лицом ко входу в парк с улицы Кирова (восток).
+        const m = lm.key === 'gunsmiths' ? gunsmiths() : kirovStatue(), a = lm.key === 'gunsmiths' ? Math.atan2(1, -0.05) : Math.PI / 2;
         m.rotation.y = a;
         obj = place(new THREE.Group().add(m), lm.x, world.terrain(lm.x, lm.z), lm.z);
         world.addCollider(square(lm.x, lm.z, lm.key === 'gunsmiths' ? 4 : 1.5));
