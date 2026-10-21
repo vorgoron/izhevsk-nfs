@@ -34,13 +34,15 @@ export const optionKey = (model, slot, v) => `${model}:${slot}:${v}`;
 
 export class Garage {
   // onChange(model, color, options) — сразу при выборе (меняем машину на глазах); onClose(changed);
-  // onUpgrade() — куплено улучшение (пересчитать характеристики). wallet — кошелёк (money.js): покупки и оплата.
-  constructor(choice, { onChange, onClose, onUpgrade, wallet }) {
+  // onUpgrade() — куплено улучшение (пересчитать характеристики); onGear(garage) — поменялось, что показать на
+  // машине (gear(): в гараже — с корзиной). wallet — кошелёк (money.js): покупки и оплата.
+  constructor(choice, { onChange, onClose, onUpgrade, onGear, wallet }) {
     this.choice = { ...choice };
     this.wallet = wallet;
     this.onChange = onChange;
     this.onClose = onClose;
     this.onUpgrade = onUpgrade;
+    this.onGear = onGear;
     this.isOpen = false;
     this.tab = 'look';
     this.keys = Object.keys(MODELS);
@@ -108,6 +110,9 @@ export class Garage {
     this.#render();
     this.onChange(model, color, options);
   }
+
+  // Тюнинг выбранной машины для вида: купленный и лежащий в корзине (уровни, как в tuned()).
+  gear() { return this.wallet ? tuned(this.#view(), this.choice.model) : {}; }
 
   // Куплено или лежит в корзине — для предпросмотра улучшений и характеристик.
   #has(key) { return this.wallet.owns(key) || this.cart.has(key); }
@@ -216,6 +221,7 @@ export class Garage {
     go.innerHTML = !foreign ? 'Поехать' : inCart ? 'В корзине' : `В корзину · ${formatMoney(carPrice(model))}`;
     go.classList.toggle('poor', inCart);
     this.el.querySelector('.back').hidden = !foreign;
+    this.onGear?.(this);
   }
 
   // Корзина: строки с ценой и крестиком, итог и «Купить» (не хватает денег — сколько).
@@ -333,6 +339,7 @@ export class Garage {
     if (!this.isOpen) return;
     this.#settle();
     this.isOpen = false;
+    this.onGear?.(this); // на машине — только купленное
     this.el.classList.remove('open');
     document.body.classList.remove('in-garage');
     save(this.choice);

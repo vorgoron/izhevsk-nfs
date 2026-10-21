@@ -492,6 +492,7 @@ export function buildPlayerModel(key, color, options) {
   g.userData.width = spec.width;
   g.userData.plateHost = meshes[1];
   g.userData.plateSpots = plateSpots(spec, parts.detail);
+  g.userData.mounts = gearMounts(spec, g, meshes.slice(0, 2), parts.length);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   // Ночью — ореолы фар и фонарей (свет на дорогу у своей машины — прожектор в main.js).
   const glow = new THREE.Mesh(carGlows(parts.lights), glowMaterial());
@@ -499,6 +500,98 @@ export function buildPlayerModel(key, color, options) {
   glow.frustumCulled = false;
   body.add(glow);
   return g;
+}
+
+// ---------------------------------------------------------------- тюнинг на машине
+
+// Точки крепления навесного — лучом снаружи по кузову (краска и детали), чтобы сидело на поверхности: сопла
+// «Кузнечика» на порогах между колёсами и под днищем, сопло нитро справа сзади, глушитель слева сзади.
+// Струи, пламя нитро и выхлоп (effects.js) бьют из этих же точек.
+function gearMounts(spec, g, meshes, len) {
+  g.updateMatrixWorld(true);
+  const ray = new THREE.Raycaster();
+  // С обеих сторон граней: у готовых моделей низ бампера — одна грань, изнутри.
+  const hit = (o, d) => {
+    ray.set(new THREE.Vector3(...o), new THREE.Vector3(...d));
+    for (const m of meshes) m.material.side = THREE.DoubleSide;
+    const p = ray.intersectObjects(meshes, false)[0]?.point;
+    for (const m of meshes) m.material.side = THREE.FrontSide;
+    return p;
+  };
+  const { r, front, rear } = spec.wheels, mid = (front + rear) / 2, w = spec.width / 2;
+  const side = [];
+  for (const s of [1, -1]) {
+    for (const [z, isFront] of [[front - r - 0.28, true], [rear + r + 0.28, false]]) {
+      side.push({ side: s, front: isFront, x: hit([s * 3, 0.45, z], [-s, 0, 0])?.x ?? s * w, y: 0.45, z });
+    }
+  }
+  const down = [0.3, -0.3].map((k) => { const z = mid + k * (front - rear); return { x: 0, y: hit([0, -1, z], [0, 1, 0])?.y ?? 0.3, z }; });
+  // Задний торец: бампер бывает выше трубы — самая задняя точка кузова на высоте 0.2…0.6 м; труба — под нижним
+  // краем бампера (у низкого бампера «Оды» — ниже 0.33 м, иначе пряталась в нём).
+  const back = (x, y) => {
+    let z = Infinity;
+    for (let h = 0.2; h <= 0.6; h += 0.05) z = Math.min(z, hit([x, h, -10], [0, 0, 1])?.z ?? Infinity);
+    z = Number.isFinite(z) ? z : -len / 2;
+    const bottom = hit([x, -1, z + 0.06], [0, 1, 0])?.y;
+    return { x, y: bottom ? Math.max(0.17, Math.min(y, bottom - 0.045)) : y, z };
+  };
+  return { side, down, exhaust: back(-0.45, 0.33), nitro: back(0.45, 0.33) };
+}
+
+const gearMats = {};
+const gearMat = (color) => (gearMats[color] ??= new THREE.MeshLambertMaterial({ color }));
+const CHROME = '#c9ccd0', DARK = '#1c1d20', NOZZLE = '#3a3d42', HOT = '#ff8a2a';
+const HOP_OUT = 0.04; // насколько сопло «Кузнечика» выходит из кузова, м (у «М» — в 1.35 раза больше)
+
+// Видимый тюнинг (уровни — как в tuned(), shop.js): двигатель — насадка глушителя (III — двойная), шины — тонкий
+// цветной ободок на боковине вокруг диска (жёлтый / красный), нитро — синее сопло сзади (двойной баллон — два), «Кузнечик» — сопла
+// на порогах и под днищем, выходят из кузова на 4 см («Кузнечик-М» — те же, крупнее). Трубы — вровень с бампером.
+export function setGear(model, { engine = 0, tires = 0, nitro = 0, hopper = 0 } = {}) {
+  const ud = model.userData, key = `${engine}${tires}${nitro}${hopper}`;
+  if (!ud.mounts || ud.gearKey === key) return;
+  ud.gearKey = key;
+  for (const m of ud.gear ?? []) { m.removeFromParent(); m.geometry.dispose(); }
+  ud.gear = [];
+  const lift = -ud.body.position.y; // меши кузова опущены на центр крена
+  const add = (parent, geo, color, y = lift) => {
+    const m = new THREE.Mesh(geo, gearMat(color));
+    m.position.y = y;
+    parent.add(m);
+    ud.gear.push(m);
+  };
+  // Труба вдоль машины: от z + 0.2 до z − out (z — задний край бампера).
+  const pipe = ({ x, y, z }, r, color, out) => {
+    const l = 0.2 + out;
+    add(ud.body, new THREE.CylinderGeometry(r, r, l, 14).rotateX(Math.PI / 2).translate(x, y, z + 0.2 - l / 2), color);
+    add(ud.body, new THREE.CircleGeometry(r * 0.7, 14).rotateY(Math.PI).translate(x, y, z - out - 0.001), DARK);
+  };
+  const { side, down, exhaust, nitro: nz } = ud.mounts;
+  if (engine) {
+    const tips = engine === 3 ? [-0.042, 0.042] : [0];
+    for (const dx of tips) pipe({ ...exhaust, x: exhaust.x + dx }, engine === 1 ? 0.028 : 0.034, CHROME, 0.005);
+  }
+  if (nitro) for (const dx of nitro === 2 ? [-0.028, 0.028] : [0]) pipe({ ...nz, x: nz.x + dx }, 0.021, '#2a62d8', -0.005);
+  if (hopper) {
+    // Сопло: фланец на кузове, из него наружу — конус на HOP_OUT, на срезе — раскалённое кольцо.
+    // «Кузнечик-М» — такие же, только крупнее.
+    const k = hopper === 2 ? 1.35 : 1, out = HOP_OUT * k;
+    const nozzle = (r, flip, place) => [
+      [new THREE.CylinderGeometry(r * 1.35, r * 1.35, 0.02, 18), NOZZLE, 0],
+      [new THREE.CylinderGeometry(r * 0.8, r, out, 18).translate(0, out / 2, 0), NOZZLE, 0],
+      [new THREE.CylinderGeometry(r * 0.58, r * 0.58, 0.004, 18), HOT, out + 0.001],
+    ].forEach(([geo, color, at]) => add(ud.body, place(flip(geo.translate(0, at, 0))), color));
+    for (const m of side) nozzle(0.034 * k, (g) => g.rotateZ(-m.side * Math.PI / 2), (g) => g.translate(m.x, m.y, m.z));
+    for (const m of down) nozzle(0.06 * k, (g) => g.rotateX(Math.PI), (g) => g.translate(0, m.y, m.z));
+  }
+  if (tires) {
+    for (const wh of ud.wheels) {
+      const geo = wh.w.children[0].geometry;
+      geo.boundingBox ?? geo.computeBoundingBox();
+      const s = Math.sign(wh.pivot.position.x), r = geo.boundingBox.max.y;
+      const x = s < 0 ? geo.boundingBox.min.x - 0.002 : geo.boundingBox.max.x + 0.002;
+      add(wh.w, new THREE.TorusGeometry(r * 0.7, 0.007, 4, 32).rotateY(Math.PI / 2).translate(x, 0, 0), tires === 2 ? '#ff3b30' : '#ffd23f', 0);
+    }
+  }
 }
 
 // ---------------------------------------------------------------- номер с именем игрока

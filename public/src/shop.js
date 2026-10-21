@@ -25,11 +25,12 @@ export function upLevel(wallet, model, up) {
   return n;
 }
 
-// Характеристики машины с улучшениями — для физики (Car.setModel): nitro и hopper — уровни систем.
+// Характеристики машины с улучшениями — для физики (Car.setModel): nitro и hopper — уровни систем; engine и tires —
+// уровни улучшений, для вида (setGear в vehicles.js).
 export function tuned(wallet, model) {
   const s = MODELS[model].stats, lv = (k) => upLevel(wallet, model, k);
   const e = lv('engine'), t = lv('tires');
-  return { ...s, kmh: s.kmh * (1 + 0.05 * e), accel: s.accel * (1 + 0.07 * e), grip: s.grip * (1 + 0.05 * t), nitro: lv('nitro'), hopper: lv('hopper') };
+  return { ...s, kmh: s.kmh * (1 + 0.05 * e), accel: s.accel * (1 + 0.07 * e), grip: s.grip * (1 + 0.05 * t), nitro: lv('nitro'), hopper: lv('hopper'), engine: e, tires: t };
 }
 
 // Автосалон появился позже денег: у кого кошелёк уже был, тому — машина, на которой ездил, с нитро и «Кузнечиком»,
