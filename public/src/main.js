@@ -181,7 +181,11 @@ async function main() {
   scene.add(model);
   const car = new Car(world, model, tuned(wallet, choice.model));
   // Тюнинг на машине: в гараже — и то, что в корзине, в городе — купленное.
-  const showGear = (g) => setGear(car.model, g.isOpen ? g.gear() : tuned(wallet, g.choice.model));
+  // Другим игрокам — только купленное (net.setGear).
+  const showGear = (g) => {
+    setGear(car.model, g.isOpen ? g.gear() : tuned(wallet, g.choice.model));
+    net.setGear(tuned(wallet, g.choice.model));
+  };
   const setVehicle = (key, color, options) => {
     scene.remove(car.model);
     car.model.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); } });
@@ -307,6 +311,7 @@ async function main() {
     if (window.game?.menu?.isOpen) game.menu.sync();
   });
   setPlate(car.model, net.name);
+  net.setGear(tuned(wallet, choice.model));
   // Общая гонка: новая (ещё до старта) — встаём в сетку; та же — обновились результаты.
   net.onRace = (v) => {
     if (!v) { race.shared = false; return; }

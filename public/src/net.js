@@ -8,7 +8,7 @@
 // В общем городе пока никого не видно и ничего не шлём (лимиты Firebase): связь — только в своей комнате. Нет связи с Firebase — игра идёт как раньше, одна.
 import * as THREE from 'three';
 import { firebaseConfig, FIREBASE_SDK } from './firebase-config.js';
-import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates, optionsCode, optionsFrom } from './vehicles.js';
+import { MODELS, DEFAULT_MODEL, buildPlayerModel, setPlate, disposePlates, optionsCode, optionsFrom, setGear } from './vehicles.js';
 import { paintIndex, paintFrom, plainColor } from './paints.js';
 
 export const CITY = 'city'; // общий город — комната по умолчанию
@@ -33,6 +33,10 @@ const SAME_LEVEL = 3; // м: по высоте дальше — разные у�
 // Что делает машина — 12-м числом в s (флаги): 1 — газ, 2 — нитро, 4 — ручник, 8 — грунт; биты 4–6 — трюк в воздухе
 // (номер в AIR_KINDS), 128 — оборот влево (air.dir < 0). По ним у других — звук мотора и эффекты (ghostfx.js).
 export const AIR_KINDS = ['', 'kick', 'back', 'roll', 'ramp', 'fall'];
+
+// Тюнинг (уровни как в tuned(), shop.js) — 14-м числом в s: двигатель 0…3, шины, нитро, «Кузнечик» 0…2 — по два бита.
+export const gearCode = ({ engine = 0, tires = 0, nitro = 0, hopper = 0 } = {}) => engine | tires << 2 | nitro << 4 | hopper << 6;
+export const gearFrom = (c) => ({ engine: c & 3, tires: c >> 2 & 3, nitro: c >> 4 & 3, hopper: c >> 6 & 3 });
 
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, NAME_MAX);
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
@@ -78,6 +82,7 @@ export class Net {
     this.model = model;
     this.color = color;
     this.opts = optionsCode(MODELS[model], options); // детали (гараж) числом
+    this.gear = 0; // тюнинг числом (gearCode)
     this.status = 'solo'; // 'solo' (общий город, без сети) | 'connecting' | 'online' | 'offline'
     this.ghosts = new Map();    // uid → { name, model, color, opts, mesh, label, buf, offset, spin }
     const r = new URLSearchParams(location.search).get('room')?.toLowerCase();
@@ -199,6 +204,12 @@ export class Net {
     this.sendT = 0;
   }
 
+  // Купленный тюнинг своей машины (tuned(), shop.js) — виден на ней у других (setGear).
+  setGear(levels) {
+    const c = gearCode(levels);
+    if (c !== this.gear) { this.gear = c; this.sendT = 0; }
+  }
+
   // Никто в комнате не шлёт обновлений — смотреть на нашу машину некому.
   #alone(now) {
     for (const g of this.ghosts.values()) if (now - g.at <= STALE) return false;
@@ -212,8 +223,8 @@ export class Net {
       this.sendT = this.#alone(now) ? HEARTBEAT : SEND_EVERY;
       const f = (v, n = 2) => +v.toFixed(n);
       const s = [f(car.pos.x), f(car.y), f(car.pos.y), f(car.heading, 3), f(wrap(car.pitch - car.flipP), 3), f(wrap(car.roll + car.flip), 3),
-        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts, fxFlags(car), paintIndex(this.color)].join(',');
-      // Детали — 11-м числом в s, флаги — 12-м, покрытие (paints.js) — 13-м, а не своими полями: правила базы не пускают
+        f(car.bodyRoll, 3), f(car.speed, 1), f(car.steer), Math.round(performance.now()), this.opts, fxFlags(car), paintIndex(this.color), this.gear].join(',');
+      // Детали — 11-м числом в s, флаги — 12-м, покрытие (paints.js) — 13-м, тюнинг — 14-м, а не своими полями: правила базы не пускают
       // новые поля, а старые клиенты читают первые 10. В c — всегда '#hex': у покрытия похожий обычный цвет.
       const data = { n: this.name, s, m: this.model };
       if (this.color) data.c = plainColor(this.color);
@@ -253,7 +264,7 @@ export class Net {
     if (!v || typeof v.s !== 'string') return;
     const n = v.s.split(',').map(Number);
     if (n.length < 10 || n.some((x) => !Number.isFinite(x))) return;
-    const [x, y, z, h, p, r, br, sp, st, t, opts = 0, fx = 0, paint = 0] = n;
+    const [x, y, z, h, p, r, br, sp, st, t, opts = 0, fx = 0, paint = 0, gear = 0] = n;
     const model = Object.hasOwn(MODELS, v.m ?? '') ? v.m : DEFAULT_MODEL;
     const color = paintFrom(paint) ?? (/^#[0-9a-f]{6}$/i.test(v.c ?? '') ? v.c : undefined);
     const name = cleanName(v.n) || 'Гонщик';
@@ -269,9 +280,10 @@ export class Net {
       g.mesh = buildPlayerModel(model, color, optionsFrom(MODELS[model], opts));
       g.mesh.userData.perf = 'другие игроки';
       this.scene.add(g.mesh);
-      g.model = model; g.color = color; g.opts = opts;
+      g.model = model; g.color = color; g.opts = opts; g.gear = null;
       g.mesh.visible = false; // до первой расстановки
     }
+    if (g.gear !== gear) { setGear(g.mesh, gearFrom(gear)); g.gear = gear; }
     if (g.name !== name) {
       if (g.label) { this.scene.remove(g.label); g.label.material.map.dispose(); g.label.material.dispose(); }
       g.label = makeLabel(name);
