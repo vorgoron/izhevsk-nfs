@@ -1861,7 +1861,7 @@ function suburban(L, W, f) {
 // Театр кукол (Ломоносова, 9; по фото): светлый корпус с тёмным каменным низом, белыми тягами,
 // арочными окнами-витражами и рядом окошек с треугольными навершиями под карнизом. На фасаде к улице —
 // сказочная краснокирпичная башня с белыми углами: арка входа, кованый балкон, три арочки, розетка,
-// зубчатый парапет, зелёный шатёр с флюгером и две башенки. (fx, fz) — направление к улице.
+// зубчатый парапет, зелёный шатёр с флюгером и две башенки. (fx, fz) — куда смотрит вход.
 function puppets(pl, fx, fz) {
   const g = new THREE.Group(), H = 12;
   g.add(prism(pl, -3, 5, M.slateDark));
@@ -2341,7 +2341,8 @@ export function buildLandmarks(world) {
       }
       case 'general':
       case 'puppets': {
-        const [fx, fz] = lm.key === 'general' ? toStreet(world, lm, /Милиционная/, -1, 0) : toStreet(world, lm, /Ломоносова/, 0, 1);
+        // Вход театра кукол с башней — на западном фасаде, спиной к Ломоносова (проверено в игре по отзыву).
+        const [fx, fz] = lm.key === 'general' ? toStreet(world, lm, /Милиционная/, -1, 0) : [-1, 0];
         const f = fit(p, 0);
         obj = place({ general, puppets }[lm.key](toLocal(p, f), fx, fz), f.cx, baseY(world, p), f.cz, 0);
         break;
