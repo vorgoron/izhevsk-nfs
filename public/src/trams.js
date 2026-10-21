@@ -2,6 +2,7 @@
 // вдоль ломаной), рисуются только ближние. Остановки с ожиданием, на конечной — обратный рейс того
 // же номера. Номер маршрута — на табло спереди и сзади. Стоит перед игроком и звенит.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const SPACING = 4200;     // м между трамваями одного направления
 const MAX_V = 11;         // м/с ≈ 40 км/ч
@@ -56,30 +57,45 @@ export class Trams {
     const grey = new THREE.MeshLambertMaterial({ color: '#8b8f94' });
     const lamp = new THREE.MeshBasicMaterial({ color: '#fff6d8' });
     const tail = new THREE.MeshBasicMaterial({ color: '#ff2a1a' });
-    const box = (w, h, d, m, x, y, z) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.castShadow = true; return o; };
+    // Коробки кузова — сразу по геометрии на материал (общей для всех трамваев пула): было 24 меша на трамвай.
+    const parts = new Map();
+    const box = (w, h, d, m, x, y, z, rx = 0) => {
+      const geo = new THREE.BoxGeometry(w, h, d).rotateX(rx).translate(x, y, z);
+      if (!parts.has(m)) parts.set(m, []);
+      parts.get(m).push(geo);
+    };
+    // Кузов: красный низ, светлый верх с окнами, скруглённые торцы условно — скосом стёкол.
+    box(2.5, 1.3, LEN, red, 0, 0.95, 0);
+    box(2.52, 1.25, LEN - 1.2, cream, 0, 2.2, 0);
+    box(2.55, 0.95, LEN - 2.2, glass, 0, 2.25, 0);      // окна салона
+    box(2.4, 0.35, LEN - 0.6, cream, 0, 3.0, 0);         // крыша
+    box(1.6, 0.3, 3.2, grey, 0, 3.3, 0);                // крышевое оборудование
+    // Пантограф: ромб из двух рычагов и полоз.
+    box(0.06, 0.06, 1.6, dark, 0, 3.95, 0.3, 0.7);
+    box(0.06, 0.06, 1.6, dark, 0, 3.95, 0.3, -0.7);
+    box(1.4, 0.06, 0.1, dark, 0, 4.5, 0.3);
+    for (const sgn of [1, -1]) {
+      // Торцы: лобовое стекло, фары/фонари; тележки.
+      box(2.3, 1.15, 0.12, glass, 0, 2.15, sgn * (LEN / 2 + 0.02));
+      box(2.5, 1.2, 0.3, red, 0, 0.95, sgn * (LEN / 2 - 0.1));
+      for (const sx of [-0.85, 0.85]) box(0.3, 0.2, 0.05, sgn > 0 ? lamp : tail, sx, 0.75, sgn * (LEN / 2 + 0.06));
+      box(2.1, 0.5, 2.6, dark, 0, 0.3, sgn * 4.4);
+    }
+    const body = [...parts].map(([m, geos]) => [mergeGeometries(geos), m]);
     for (let i = 0; i < POOL; i++) {
       const g = new THREE.Group();
-      // Кузов: красный низ, светлый верх с окнами, скруглённые торцы условно — скосом стёкол.
-      g.add(box(2.5, 1.3, LEN, red, 0, 0.95, 0));
-      g.add(box(2.52, 1.25, LEN - 1.2, cream, 0, 2.2, 0));
-      g.add(box(2.55, 0.95, LEN - 2.2, glass, 0, 2.25, 0));      // окна салона
-      g.add(box(2.4, 0.35, LEN - 0.6, cream, 0, 3.0, 0));         // крыша
-      g.add(box(1.6, 0.3, 3.2, grey, 0, 3.3, 0));                // крышевое оборудование
-      // Пантограф: ромб из двух рычагов и полоз.
-      const arm = (a) => { const o = box(0.06, 0.06, 1.6, dark, 0, 3.95, 0.3); o.rotation.x = a; return o; };
-      g.add(arm(0.7), arm(-0.7), box(1.4, 0.06, 0.1, dark, 0, 4.5, 0.3));
+      for (const [geo, m] of body) {
+        const o = new THREE.Mesh(geo, m);
+        o.castShadow = true;
+        g.add(o);
+      }
       for (const sgn of [1, -1]) {
-        // Торцы: лобовое стекло, табло с номером, фары/фонари.
-        g.add(box(2.3, 1.15, 0.12, glass, 0, 2.15, sgn * (LEN / 2 + 0.02)));
-        g.add(box(2.5, 1.2, 0.3, red, 0, 0.95, sgn * (LEN / 2 - 0.1)));
-        for (const sx of [-0.85, 0.85]) g.add(box(0.3, 0.2, 0.05, sgn > 0 ? lamp : tail, sx, 0.75, sgn * (LEN / 2 + 0.06)));
+        // Табло с номером на торцах.
         const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.42), new THREE.MeshBasicMaterial({ color: '#fff' }));
         sign.position.set(0, 2.98, sgn * (LEN / 2 + 0.05));
         if (sgn < 0) sign.rotation.y = Math.PI;
         g.add(sign);
         (g.userData.signs ||= []).push(sign);
-        // Тележки.
-        g.add(box(2.1, 0.5, 2.6, dark, 0, 0.3, sgn * 4.4));
       }
       // Боковое табло с номером (справа по ходу).
       const side = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.5), new THREE.MeshBasicMaterial({ color: '#fff' }));

@@ -774,6 +774,7 @@ export class Traffic {
     for (const k of this.kinds) {
       for (const m of k.meshes) {
         m.count = k.used;
+        m.visible = k.used > 0; // пустой — всё равно вызов отрисовки
         m.instanceMatrix.needsUpdate = true;
       }
       k.meshes[k.paint].instanceColor.needsUpdate = true;

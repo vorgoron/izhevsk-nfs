@@ -198,6 +198,7 @@ export class Queues {
       // обсчитывает — 208 машин по ~7 тыс. треугольников, дважды (кадр и тени).
       for (const m of meshes) {
         m.count = (used[key] ?? -1) + 1;
+        m.visible = m.count > 0; // пустой InstancedMesh — всё равно вызов отрисовки (и в тенях)
         m.instanceMatrix.needsUpdate = true;
       }
       meshes[0].instanceColor.needsUpdate = true;

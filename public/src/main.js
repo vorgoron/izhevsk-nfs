@@ -86,7 +86,9 @@ const lite = flags.has('lite');
 const QUALITY = {
   high: { label: 'высокая', px: 2, shadow: 2048, fog: 1, radius: 1800, tex: 1024, treeNear: 450, detailFar: Infinity, carsFar: 300 },
   medium: { label: 'средняя', px: 1, shadow: 1024, fog: 0.6, radius: 1000, tex: 512, treeNear: 250, detailFar: 300, carsFar: 220 },
-  low: { label: 'низкая', px: 0.75, shadow: 0, fog: 0.4, radius: 700, tex: 256, treeNear: 150, detailFar: 180, carsFar: 150 },
+  // treeNear −1 — деревья всегда простые: подробность меняется на весь квадрат 510 м, и вблизи все ~1000 деревьев
+  // квадрата шли по 400–580 треугольников (на слабом телефоне — 0,3 млн из 0,6).
+  low: { label: 'низкая', px: 0.75, shadow: 0, fog: 0.4, radius: 700, tex: 256, treeNear: -1, detailFar: 180, carsFar: 150 },
 };
 let qChosen = flags.get('q');
 try { qChosen = QUALITY[qChosen] ? qChosen : localStorage.getItem('quality'); } catch {}
