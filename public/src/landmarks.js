@@ -476,6 +476,12 @@ function contourWindows(g, p, rows, { step = 3.6, w = 1.1, frame = M.white, min 
   });
 }
 
+// Треугольник фронтона (основание 2b, высота h) лицом в +z: от z на depth вперёд.
+function tri(b, h, depth, mat, y, z) {
+  const s = new THREE.Shape([new THREE.Vector2(-b, 0), new THREE.Vector2(b, 0), new THREE.Vector2(0, h)]);
+  return mesh(new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: false }), mat, 0, y, z);
+}
+
 // Арочное окно лицом в +z (archWindow смотрит в +x).
 const archWindowZ = (w, h) => {
   const o = new THREE.Group();
@@ -1390,10 +1396,6 @@ function national(pl, fx, fz) {
     }
   }
   c.add(box(cw + 0.6, 0.7, 2.6, M.white, 0, Hc, -0.6));
-  const tri = (b, h, depth, mat, y, z) => {
-    const s = new THREE.Shape([new THREE.Vector2(-b, 0), new THREE.Vector2(b, 0), new THREE.Vector2(0, h)]);
-    return mesh(new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: false }), mat, 0, y, z);
-  };
   const pb = cw * 0.36;
   c.add(tri(cw / 2 + 0.3, 4.2, 14, M.terra, Hc + 0.6, -14));          // кровля в глубину
   c.add(tri(pb + 0.6, 3.6, 0.5, M.white, Hc + 0.7, 0.1));             // рама фронтона
@@ -1487,6 +1489,77 @@ function column() {
 // Башня Ижевского оружейного завода (по фото): над розовым корпусом с серой кровлей — круглый
 // ярус с арками между розовыми пилонами, белые карнизы и два барабана (между ними розовый
 // пологий выступ), золотой венец из военной арматуры, высокий столп, шар в клетке и игла.
+// Главный корпус оружейного завода (Дудин, 1808–1815; по фото): длинный розовый трёхэтажный корпус
+// по контуру, белые тяги и карниз (на высоте карниза под башней), внизу арочные окна. На фасаде к
+// пруду (север) — колоннада под башней: белый рустованный низ, колонны на два верхних этажа,
+// антаблемент с розовыми метопами; на концах фасада — павильоны с фронтонами и зелёной кровлей.
+// (tx, tz) — башня в локальных координатах.
+function plantMain(pl, tx, tz) {
+  const g = new THREE.Group();
+  const H = 11.4, pink = M.pink;
+  g.add(prism(pl, -3, 3.5, M.stone));
+  g.add(prism(pl, 0.5, H - 0.5, pink));
+  g.add(prism(pl, 4.4, 0.4, M.white, 0.15));
+  g.add(prism(pl, H, 0.6, M.white, 0.3));
+  g.add(insetRoof(pl, 7, 2.2, H + 0.6, M.silver));
+  let front = null;
+  contourEdges(pl, (e) => { if (e.oz < -0.7 && (!front || e.len > front.len)) front = e; });
+  const tc = (tx - front.x) * front.ex + (tz - front.z) * front.ez; // башня — метр фасада
+  const busy = (e, t) => e === front && (Math.abs(t - tc) < 18 || t < 14 || t > e.len - 14);
+  contourEdges(pl, (e) => {
+    if (e.len < 6) return;
+    const n = Math.floor(e.len / 4.2);
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) * (e.len / n);
+      if (busy(e, t)) continue;
+      g.add(onEdge(archWindowZ(1.5, 2.8).translateY(1.1), e, t, 0.05));
+      for (const y of [5.4, 8.4]) {
+        g.add(onEdge(box(1.8, 2.25, 0.12, M.white, 0, y - 0.15, 0), e, t, 0.06));
+        g.add(onEdge(box(1.4, 1.95, 0.16, M.glass, 0, y, 0), e, t, 0.08));
+      }
+      g.add(onEdge(box(0.7, H - 4.8, 0.25, M.white, 0, 4.8, 0), e, t + e.len / n / 2, 0.1)); // лопатки
+    }
+  });
+  // Колоннада под башней; вынесена так, чтобы основание башни (16 × 14 вокруг точки) было внутри.
+  const out = (tx - front.x) * front.ox + (tz - front.z) * front.oz;
+  const dd = Math.max(0.9, 7.2 + out);
+  const c = new THREE.Group(), cw = 32, n = 10;
+  c.add(box(cw + 1, 4.4 + 3, 2 + dd, M.white, 0, -3, -dd / 2));
+  for (let i = 0; i < 6; i++) c.add(box(cw + 1.1, 0.12, 2.1, M.stone, 0, -0.2 + i * 0.75, 0)); // руст
+  for (let i = 0; i < n - 1; i++) c.add(archWindowZ(1.6, 2.6).translateX(-cw / 2 + ((i + 1) * cw) / n).translateY(1).translateZ(1.02));
+  c.add(box(cw, H - 4.4, 0.4 + dd, pink, 0, 4.4, -0.6 - dd / 2));
+  for (let i = 0; i < n; i++) {
+    const x = -cw / 2 + 0.8 + (i * (cw - 1.6)) / (n - 1);
+    c.add(cyl(0.6, H - 5.4, M.white, x, 4.9, 0.6, 14, 0.5));
+    c.add(box(1.4, 0.5, 1.4, M.white, x, 4.4, 0.6));
+    c.add(box(1.4, 0.4, 1.4, M.white, x, H - 0.5, 0.6));
+    if (i < n - 1) for (const y of [5.6, 8.4]) c.add(box(1.4, 1.9, 0.16, M.glass, x + (cw - 1.6) / (n - 1) / 2, y, -0.35));
+  }
+  c.add(box(cw + 1.4, 1.4, 2.4 + dd, M.white, 0, H - 0.1, 0.4 - dd / 2));
+  for (let i = 0; i < 12; i++) c.add(box(1, 0.6, 0.1, pink, -cw / 2 + 1.5 + (i * (cw - 3)) / 11, H + 0.3, 1.62)); // метопы
+  g.add(onEdge(c, front, tc, dd));
+  // Концевые павильоны: выше корпуса, с фронтоном и зелёной кровлей.
+  const Hp = H + 2.4;
+  for (const t of [8, front.len - 8]) {
+    const q = new THREE.Group(), w = 15;
+    q.add(box(w, Hp + 3, 3, pink, 0, -3, -0.9));
+    for (const x of [-w / 2 + 0.6, w / 2 - 0.6, -w / 6, w / 6]) q.add(box(0.9, Hp - 4.8, 0.3, M.white, x, 4.8, 0.65));
+    for (const x of [-w / 3, 0, w / 3]) {
+      q.add(archWindowZ(1.6, 3).translateX(x).translateY(1).translateZ(0.62));
+      for (const y of [5.6, 9.2]) {
+        q.add(box(1.8, 2.5, 0.12, M.white, x, y - 0.15, 0.6));
+        q.add(box(1.4, 2.2, 0.16, M.glass, x, y, 0.64));
+      }
+    }
+    q.add(box(w + 0.6, 0.6, 3.6, M.white, 0, Hp, -0.9));
+    q.add(tri(w / 2 + 0.3, 3.4, 16, M.roofGreen, Hp + 0.6, -15.4));
+    q.add(tri(w / 2, 3, 0.4, M.white, Hp + 0.6, 0.6));
+    q.add(tri(w / 2 - 1, 2.2, 0.2, pink, Hp + 0.9, 0.95));
+    g.add(onEdge(q, front, t, 1.4));
+  }
+  return mergeByMaterial(g);
+}
+
 function plantTower() {
   const g = new THREE.Group();
   const pink = M.pink, white = M.white;
@@ -1781,6 +1854,11 @@ export function buildLandmarks(world) {
         obj = place(column(), lm.x, world.terrain(lm.x, lm.z), lm.z);
         world.addCollider(square(lm.x, lm.z, 2.2));
         break;
+      case 'plant': {
+        const f = fit(p, 0), t = world.city.landmarks.find((q) => q.key === 'plant_tower') || { x: f.cx, z: f.cz };
+        obj = place(plantMain(toLocal(p, f), t.x - f.cx, t.z - f.cz), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
       case 'plant_tower':
         obj = place(plantTower(), lm.x, world.terrain(lm.x, lm.z), lm.z);
         world.addCollider(square(lm.x, lm.z, 8));
@@ -1810,7 +1888,7 @@ export function buildLandmarks(world) {
       group.add(obj);
       obj.traverse((o) => { if (o.userData.update) animated.push(o.userData.update); });
     }
-    markers.push({ name: lm.name, x: lm.x, z: lm.z });
+    if (lm.key !== 'plant') markers.push({ name: lm.name, x: lm.x, z: lm.z }); // корпус — под меткой башни
   }
 
   group.userData.update = (t) => animated.forEach((fn) => fn(t));
