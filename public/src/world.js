@@ -1,4 +1,5 @@
 // Данные города: рельеф, пространственные индексы дорог и зданий.
+import { Walks } from './walks.js';
 
 export const ROAD_CLASSES = new Set([
   'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential',
@@ -45,8 +46,8 @@ const ROOF_CELL = 40; // м: клетка сетки зданий для roofAt
 const UTURN = 60;     // м: во столько обходится разворот в начале маршрута навигатора
 const NAV_STREET = 120; // м: улица из адреса дома не дальше — маршрут к дому подъезжает по ней
 const UTURN_R = 4;    // м: радиус дуги разворота, если улица позволяет (не меньше четверти ширины)
-// Тротуары вдоль городских улиц (в OSM их редко рисуют отдельно): [газон между проезжей частью и тротуаром,
-// ширина тротуара], м. Рисуются на земле (build.js), по ним едут как по асфальту (surfaceAt). На мостах и в тоннелях — нет.
+// Тротуары вдоль городских улиц, где в OSM своего нет (walks.js): [газон между проезжей частью и тротуаром,
+// ширина тротуара], м. По ним едут как по асфальту (surfaceAt). На мостах и в тоннелях — нет.
 export const SIDEWALK = { primary: [2, 3], secondary: [1.5, 3], tertiary: [1, 2.5], residential: [0, 2], unclassified: [0, 2] };
 // Лежачие полицейские (bumps в city.json): вид → [длина вдоль дороги, высота], м. Приподнятый переход (2) —
 // ровная площадка с пандусами BUMP_RAMP м.
@@ -78,6 +79,7 @@ export class World {
     this.#initRailIndex();
     this.#initPoints();
     this.#initChunks();
+    this.walks = new Walks(this);
   }
 
   // ---------------------------------------------------------------- квадраты подгрузки
@@ -107,7 +109,7 @@ export class World {
     };
     const c = this.city;
     for (const a of c.areas) overlap(a.p, 0, (d) => d.areas.push(a));
-    for (const p of c.paths) overlap(p, 2, (d) => d.paths.push(p));
+    for (const p of c.paths) overlap(p.p, p.w, (d) => d.paths.push(p));
     for (const r of c.rails) overlap(r.p, 5, (d) => d.rails.push(r)); // запас: деревья не ближе 3.5 м к путям
     for (const w of c.waterways || []) overlap(w.p, w.w, (d) => d.waterways.push(w));
     for (const b of c.buildings) {
@@ -900,7 +902,7 @@ export class World {
   // Покрытие под точкой: 'road' — полотно дороги, 'dirt' — грунтовка (surface=unpaved… в OSM, sf у дороги),
   // 'paved' — площадь, парковка, промзона, беговая дорожка; иначе 'ground' (трава, парк, лес, пустырь) — там едется тяжело.
   surfaceAt(x, z) {
-    let walk = false, dirt = false;
+    let dirt = false;
     for (const s of this.nearbyRoadSegments(x, z)) {
       const d = World.closest(s, x, z).d;
       if (d < s.w / 2 + 0.4) {
@@ -908,11 +910,9 @@ export class World {
         dirt = true; // грунтовка; асфальт поверх (перекрёсток с улицей) — всё же дорога
         continue;
       }
-      const sw = !s.road.br && !s.road.tu && SIDEWALK[s.road.k];
-      if (sw && d > s.w / 2 + sw[0] && d < s.w / 2 + sw[0] + sw[1]) walk = true;
     }
     if (dirt) return 'dirt';
-    if (walk) return 'paved';
+    if (this.walks.at(x, z) > -Infinity) return 'paved';
     const [ci, cj] = this.chunkAt(x, z);
     const d = this.chunkData.get(ci * 10000 + cj);
     if (!d) return 'ground';
@@ -966,6 +966,7 @@ export class World {
     }
     const m = this.medianY(x, z);
     if (m !== null && m <= lim) y = Math.max(y, m);
+    y = Math.max(y, this.walks.at(x, z, lim)); // тротуары и дорожки (walks.js)
     // Трамвайное полотно — по нему едут, а не проваливаются в плиту.
     for (const q of this.railsNear(x, z)) {
       if (q.k !== 'tram') continue;
@@ -1341,6 +1342,9 @@ export class World {
     }
     return best && this.#segY(best.s, best.c, x, z, this.terrain(x, z));
   }
+
+  // Высота полотна отрезка дороги s в точке (c — World.closest(s, x, z)).
+  segY(s, c, x, z) { return this.#segY(s, c, x, z, this.terrain(x, z)); }
 
   #segY(s, c, x, z, t) {
     if (s.ya !== undefined) return s.ya + (s.yb - s.ya) * c.t;
