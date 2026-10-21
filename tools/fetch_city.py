@@ -266,6 +266,9 @@ LANDMARKS = {
     "suburban": ("way", 48500411, "Пригородный вокзал", "replace"),
     "general": ("way", 168292306, "Генеральский дом", "replace"),
     "puppets": ("way", 48560212, "Театр кукол", "replace"),
+    "sobmech": ("way", 106413354, "Соборная мечеть", "replace"),
+    "izo": ("way", 59195140, "Музей изобразительных искусств", "replace"),
+    "armenian": ("way", 588383916, "Армянская церковь Святого Григория Просветителя", "replace"),
 }
 LANDMARK_BY_ELEMENT = {(t, i): key for key, (t, i, _, _) in LANDMARKS.items()}
 

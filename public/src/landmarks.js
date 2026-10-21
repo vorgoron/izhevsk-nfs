@@ -48,6 +48,8 @@ const M = {
   rust: lambert('#a35a3a'),
   peach: lambert('#e9c6b3'),
   slateDark: lambert('#5a5c60'),
+  coral: lambert('#e7765c'),
+  tuff: lambert('#cc9c95'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -1912,6 +1914,111 @@ function puppets(pl, fx, fz) {
   return mergeByMaterial(g);
 }
 
+// Соборная мечеть (Азина, 238; по фото): краснокирпичный зал по контуру с арочными окнами в белых
+// рамах и зелёной кровлей; на конце к улице — высокий кирпичный минарет с белыми поясами, балконом
+// и золотым шпилем, на другом конце — две башни с серебристыми куполами. Контур в системе fit
+// по длинному ребру; s = ±1 — конец к улице по локальной x.
+function sobmech(pl, s) {
+  const g = new THREE.Group(), H = 9;
+  g.add(prism(pl, -3, H + 3, M.redBrick));
+  g.add(prism(pl, H, 0.5, M.white, 0.25));
+  g.add(insetRoof(pl, 5, 2.6, H + 0.5, M.domeGreen));
+  contourWindows(g, pl, [[2.2, 4.2]], { step: 3.2, make: (h) => archWindowZ(1.4, h) });
+  const xs = pl.map((q) => q[0]);
+  const end = (k) => pl.reduce((b, q) => (q[0] * k > b[0] * k ? q : b));
+  const m = end(s), x0 = m[0] - s * 1.5, z0 = m[1];
+  g.add(cyl(1.7, 25, M.redBrick, x0, -3, z0, 8));
+  for (const y of [8, 14, 19]) g.add(cyl(1.85, 0.5, M.white, x0, y, z0, 8));
+  g.add(cyl(2.5, 0.5, M.white, x0, 22, z0, 8));
+  g.add(cyl(2.4, 1, M.dark, x0, 22.5, z0, 8, 2.4));
+  g.add(cyl(1.3, 4.5, M.white, x0, 22, z0, 8));
+  g.add(cyl(1.5, 0.4, M.white, x0, 26.5, z0, 8));
+  g.add(cone(1.4, 8, M.gold, x0, 26.9, z0, 8));
+  for (const k of [-1, 1]) {
+    const far = s > 0 ? Math.min(...xs) : Math.max(...xs);
+    const zz = pl.filter((q) => Math.abs(q[0] - far) < 4).map((q) => q[1]);
+    const z = zz.length ? (k > 0 ? Math.max(...zz) : Math.min(...zz)) - k * 1.8 : k * 4;
+    g.add(cyl(2, H + 3 + 2.5, M.stone, far + s * 1.8, -3, z, 12));
+    g.add(dome(2.1, M.tin, far + s * 1.8, H + 2.5, z, 0.9));
+    g.add(cone(0.12, 1.6, M.gold, far + s * 1.8, H + 4.3, z, 4));
+  }
+  return mergeByMaterial(g);
+}
+
+// Музей изобразительных искусств (Кирова, 128; по фото): двухэтажный коралловый дом с тёмным цоколем,
+// широким белым карнизом и аттиком; на фасаде к улице — ряд серых полуколонн с капителями
+// на оба этажа и лепные панели между окнами. (fx, fz) — направление к улице.
+function izo(pl, fx, fz) {
+  const g = new THREE.Group(), H = 10;
+  g.add(prism(pl, -3, 4, M.slateDark));
+  g.add(prism(pl, 1, H - 1, M.coral));
+  g.add(prism(pl, H, 1.2, M.white, 0.45));
+  g.add(insetRoof(pl, 4, 1.6, H + 1.2, M.silver));
+  let front = null;
+  contourEdges(pl, (e) => { if (e.ox * fx + e.oz * fz > 0.6 && (!front || e.len > front.len)) front = e; });
+  if (!front) contourEdges(pl, (e) => { if (!front || e.len > front.len) front = e; });
+  contourWindows(g, pl, [[1.8, 2.2], [5.8, 2.4]], { step: 2.8, w: 1.2, skip: (e) => e === front });
+  const n = Math.max(4, Math.round(front.len / 2.8));
+  for (let k = 0; k <= n; k++) {
+    const t = 0.5 + (k * (front.len - 1)) / n;
+    g.add(onEdge(cyl(0.45, H - 1.6, M.stone, 0, 1, 0.3, 12), front, t));
+    g.add(onEdge(box(1.2, 0.6, 0.9, M.stone, 0, H - 0.6, 0.3), front, t));
+    if (k === n) continue;
+    const tm = t + (front.len - 1) / n / 2;
+    if (Math.abs(tm - front.len / 2) < 1.5) {
+      g.add(onEdge(box(1.6, 3.2, 0.2, M.bronze, 0, 1, 0), front, tm, 0.05)); // дверь
+    } else {
+      g.add(onEdge(box(1.2, 2.2, 0.16, M.glass, 0, 1.8, 0), front, tm, 0.08));
+    }
+    g.add(onEdge(box(1.2, 2.4, 0.16, M.glass, 0, 5.8, 0), front, tm, 0.08));
+    g.add(onEdge(box(1.3, 0.9, 0.15, M.stone, 0, 4.4, 0), front, tm, 0.08));
+  }
+  g.add(onEdge(box(front.len * 0.4, 1.6, 0.6, M.white, 0, H + 1.2, -0.2), front, front.len / 2));
+  return mergeByMaterial(g);
+}
+
+// Армянская церковь Святого Григория Просветителя (10 лет Октября, 59; по фото): крестово-купольный
+// храм из розового туфа — крестом щипцовые кровли из красной черепицы, гранёный барабан с узкими окнами
+// и конической кровлей, арочный портал на торце к улице; перед ним — отдельная звонница из двух столбов
+// с арками и крестом. L × W — прямоугольник контура в системе fit, s = ±1 — торец к улице по x.
+function armenian(L, W, s) {
+  const g = new THREE.Group(), H = 9, tuff = M.tuff;
+  g.add(box(L, H + 3, W * 0.6, tuff, 0, -3, 0));
+  g.add(box(L * 0.55, H + 3, W, tuff, 0, -3, 0));
+  const roof = (len, b, h, rotY) => {
+    const sh = new THREE.Shape([new THREE.Vector2(-b, 0), new THREE.Vector2(b, 0), new THREE.Vector2(0, h)]);
+    const geo = new THREE.ExtrudeGeometry(sh, { depth: len, bevelEnabled: false }).translate(0, 0, -len / 2).rotateY(rotY);
+    return mesh(geo, M.terra, 0, H, 0);
+  };
+  g.add(roof(L + 0.4, W * 0.3 + 0.3, 2.6, Math.PI / 2));
+  g.add(roof(W + 0.4, L * 0.275 + 0.3, 2.6, 0));
+  g.add(cyl(3.3, 6, tuff, 0, H + 1.5, 0, 12));
+  for (let i = 0; i < 12; i += 2) {
+    const a = (i / 12) * Math.PI * 2, w = box(0.5, 2, 0.3, M.glass, Math.sin(a) * 3.2, H + 3.6, Math.cos(a) * 3.2);
+    w.rotation.y = a;
+    g.add(w);
+  }
+  g.add(cone(3.7, 3.6, M.terra, 0, H + 7.5, 0, 12));
+  const cross = (x, y, z) => { g.add(box(0.15, 1.6, 0.15, M.dark, x, y, z)); g.add(box(0.9, 0.15, 0.15, M.dark, x, y + 1, z)); };
+  cross(0, H + 11.1, 0);
+  // Портал на торце к улице.
+  const p = new THREE.Group();
+  p.add(box(3.6, 5.5, 0.8, tuff, 0, 0, 0));
+  p.add(halfDisc(1.8, 0.8, tuff).translateY(5.5));
+  p.add(box(2.2, 3.6, 0.2, M.dark, 0, 0, 0.35));
+  p.add(halfDisc(1.1, 0.2, M.dark).translateY(3.6).translateZ(0.35));
+  p.position.x = s * (L / 2 + 0.4);
+  p.rotation.y = s * Math.PI / 2;
+  g.add(p);
+  for (const e of [s, -s]) for (const z of [-W * 0.3, W * 0.3]) for (const y of [2, 5.5]) g.add(box(0.2, 2, 0.6, M.glass, e * (L / 2 + 0.05), y, z * 0.6));
+  // Звонница: два столба с перемычками и аркой, впереди слева от входа.
+  const bx = s * (L / 2 + 12), bz = -W * 0.9;
+  for (const z of [-1.3, 1.3]) g.add(box(1.4, 18, 1.4, tuff, bx, 0, bz + z));
+  for (const y of [7, 12.5, 17.2]) g.add(box(1.6, 0.8, 4, tuff, bx, y, bz));
+  cross(bx, 18, bz);
+  return mergeByMaterial(g);
+}
+
 function plantTower() {
   const g = new THREE.Group();
   const pink = M.pink, white = M.white;
@@ -2216,6 +2323,20 @@ export function buildLandmarks(world) {
         // Надписи «ВОКЗАЛ» / «ПРИГОРОДНЫЙ ВОКЗАЛ» — к привокзальной площади на западе, «ИЖЕВСК» — к путям на востоке.
         const f = fit(p, longestEdgeAngle(p)), side = Math.sin(f.angle) > 0 ? 1 : -1; // знак (−1, 0)·(локальная z)
         obj = place({ station, suburban }[lm.key](f.L, f.W, side), f.cx, baseY(world, p), f.cz, f.angle);
+        break;
+      }
+      case 'sobmech':
+      case 'armenian': {
+        // Минарет / портал — на конце длинной оси, обращённом к улице.
+        const [fx, fz] = lm.key === 'sobmech' ? toStreet(world, lm, /Азина/, 1, 0) : toStreet(world, lm, /10 лет Октября/, 1, 0);
+        const f = fit(p, longestEdgeAngle(p)), s = fx * Math.cos(f.angle) + fz * Math.sin(f.angle) >= 0 ? 1 : -1;
+        const m = lm.key === 'sobmech' ? sobmech(toLocal(p, f), s) : armenian(f.L, f.W, s);
+        obj = place(m, f.cx, baseY(world, p), f.cz, f.angle);
+        break;
+      }
+      case 'izo': {
+        const [fx, fz] = toStreet(world, lm, /Кирова/, 0, 1), f = fit(p, 0);
+        obj = place(izo(toLocal(p, f), fx, fz), f.cx, baseY(world, p), f.cz, 0);
         break;
       }
       case 'general':
