@@ -82,8 +82,8 @@ const TOWERS = {
 };
 
 // Знаки: атлас 128 px на знак, верхний ряд — лицевые стороны, нижний — серые изнанки той же формы.
-const SIGNS = ['g', 's', 'z', 'b', 'r'];
-const SIGN_SIZE = { g: 0.8, s: 0.7, z: 0.7, b: 0.7, r: 1.2 }, SIGN_Y = 2.2;
+const SIGNS = ['g', 's', 'z', 'b'];
+const SIGN_SIZE = { g: 0.8, s: 0.7, z: 0.7, b: 0.7 }, SIGN_Y = 2.2;
 function drawSign(g, s, face) {
   const red = face ? '#c8242a' : '#7c7f82', white = face ? '#f4f4ef' : '#8d9093', blue = face ? '#1e5aa8' : '#7c7f82', ink = face ? '#1b1b1b' : '#8d9093';
   const poly = (pts, fill) => { g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fillStyle = fill; g.fill(); };
@@ -104,15 +104,6 @@ function drawSign(g, s, face) {
       g.fillStyle = ink; for (let i = 0; i < 4; i++) g.fillRect(34 + i * 16, 92, 9, 10);
     }
     if (face && s === 'b') { g.fillStyle = ink; g.beginPath(); g.ellipse(64, 96, 30, 22, 0, Math.PI, 0); g.fill(); g.fillRect(24, 94, 80, 6); }
-  }
-  if (s === 'r') {
-    for (const a of [Math.PI / 4, -Math.PI / 4]) {
-      g.save(); g.translate(64, 64); g.rotate(a);
-      g.fillStyle = red; g.fillRect(-62, -12, 124, 24);
-      g.fillStyle = white; g.fillRect(-58, -7, 116, 14);
-      if (face) { g.fillStyle = red; for (let x = -40; x < 58; x += 32) g.fillRect(x, -7, 14, 14); }
-      g.restore();
-    }
   }
 }
 
