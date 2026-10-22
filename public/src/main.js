@@ -703,6 +703,9 @@ async function main() {
   // или ниже), колесо мыши — ближе/дальше. Отпустил — через 3 с облёт продолжается с того же места.
   let orbit = 0, orbitPitch = 0.24, orbitDist = 6.7, orbitIdle = 99;
   let lag = 0; // отставание камеры при разгоне, м
+  let turnLook = 0, lastHeading = null; // доворот камеры в поворот, рад
+  let camRoll = 0; // крен камеры, рад
+  const UP = new THREE.Vector3(0, 1, 0);
   // Зум вида сзади: колесо мыши и щипок двумя пальцами, 1 — близко, как в NFS (5 м за центром машины), 1.6 — прежние
   // 8 м; запоминается (localStorage.camZoom).
   const ZOOM_MIN = 0.85, ZOOM_MAX = 2.4;
@@ -920,16 +923,28 @@ async function main() {
     // Разгон — камера отстаёт (тянется назад пропорционально ускорению), торможение — подъезжает;
     // нитро — ещё дальше, шире угол и лёгкая тряска.
     lag += (Math.max(-6, Math.min(16, car.accel_ ?? 0)) * 0.09 + (car.nitroOn ? 1.2 : 0) - lag) * Math.min(1, dt * 3);
+    // В повороте на скорости камера чуть доворачивает в сторону поворота: пропорционально скорости поворота
+    // курса, до 0.08 рад. Отставание камеры само уводит взгляд наружу поворота (≈ 0.13 × рад/с) — доворот его
+    // почти гасит, в поворот не смотрит (сильнее — укачивает). Переброску (скачок курса) не считаем.
+    const dh = lastHeading === null ? 0 : Math.atan2(Math.sin(car.heading - lastHeading), Math.cos(car.heading - lastHeading));
+    lastHeading = car.heading;
+    const rate = dt > 0 && Math.abs(dh) < 0.5 ? dh / dt : 0;
+    const turnWant = Math.max(-0.08, Math.min(0.08, rate * 0.1 * Math.min(1, speed / 20)));
+    turnLook += (turnWant - turnLook) * Math.min(1, dt * 3);
+    // Крен камеры вокруг продольной оси — в обратную сторону от крена кузова (как в NFS), пятая часть его и не
+    // больше 1°; сглажен, чтобы толчки подвески и удары не качали картинку.
+    camRoll += (Math.max(-0.02, Math.min(0.02, car.bodyRoll * 0.2)) - camRoll) * Math.min(1, dt * 3);
     // В кино обычная камера всё равно считается, как «сзади»: вернёмся из кино — она уже на месте.
     const mode = camMode === 3 ? 0 : camMode;
-    // Сзади: близко и низко, как в NFS; зум отводит камеру назад и вверх (на 1.6 — прежние 8 м и 3.3 м).
+    // Сзади: близко, как в NFS, но на 2.3 м — под горку через крышу видно машины впереди; зум отводит камеру
+    // назад и вверх (на 1.6 — прежние 8 м и 3.3 м).
     const back = [5 * camZoom + speed * 0.015 + lag, 0.2, 70][mode];
-    const up = [1.9 + (camZoom - 1) * 2.33, 1.25, 55][mode];
+    const up = [2.3 + (camZoom - 1) * 1.67, 1.25, 55][mode];
     // Наклон: поднимаем камеру по дуге вокруг машины.
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
     const want = new THREE.Vector3(car.pos.x - f.x * back * cp, car.y + up + back * sp, car.pos.y - f.y * back * cp);
     want.y = Math.max(want.y, world.ground(want.x, want.z, want.y) + 1.2);
-    const look = new THREE.Vector3(car.pos.x + f.x * 6, car.y + (mode === 0 ? 1.05 + (camZoom - 1) * 0.4 : 1.3), car.pos.y + f.y * 6);
+    const look = new THREE.Vector3(car.pos.x + f.x * 6, car.y + (mode === 0 ? 1.15 + (camZoom - 1) * 0.25 : 1.3), car.pos.y + f.y * 6);
     const k = camMode === 1 ? 1 : 1 - Math.exp(-dt * 7);
     // Сглаживаем смещение камеры относительно машины, а не точку в мире: иначе на скорости
     // камера отстаёт сама собой и машина уезжает вдаль. Отставание при разгоне задаёт lag.
@@ -967,6 +982,10 @@ async function main() {
     const ov = window.game?.camOverride; // отладка: { pos: [x,y,z], look: [x,y,z] }
     if (ov) camera.position.set(...ov.pos);
     camera.lookAt(ov ? new THREE.Vector3(...ov.look) : lookAt);
+    if (!ov && camMode === 0) {
+      camera.rotateOnWorldAxis(UP, turnLook);
+      camera.rotateZ(camRoll); // ось Z камеры смотрит назад: +camRoll — против крена кузова
+    }
     const fov = 62 + Math.min(12, speed * 0.2) + (car.nitroOn ? 6 : 0);
     camera.fov += (fov - camera.fov) * Math.min(1, dt * 3);
     camera.updateProjectionMatrix();
