@@ -9,6 +9,7 @@ import { tuned, ownsCar, grandfather } from './shop.js';
 import { paintOf, paintKey } from './paints.js';
 import { Race, formatTime, LENGTHS } from './race.js';
 import { Ramps } from './ramps.js';
+import { Boundary } from './boundary.js';
 import { Pickups, NITRO_GIVE } from './pickups.js';
 import { buildLandmarks } from './landmarks.js';
 import { planFootbridges, buildFootbridges } from './footbridges.js';
@@ -230,6 +231,7 @@ async function main() {
   jetFx.attach(car.model);
   const race = new Race(world, scene);
   const ramps = owned('трамплины', () => new Ramps(world, scene));
+  const boundary = owned('край карты', () => new Boundary(world, scene));
   const pickups = owned('бонусы гонки', () => new Pickups(world, scene));
   car.ramp = (x, z, y, fx, fz) => ramps.at(x, z, y, fx, fz);
   // Догонялка в общей гонке: отставшему на CATCH_UP м и больше нитро наполняется вдвое быстрее.
@@ -387,7 +389,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, ramps, pickups, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
+  window.game = { world, car, race, ramps, pickups, boundary, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -1579,6 +1581,7 @@ async function main() {
     sound.players(dt, net, car);
     sound.smash(breakables.smashes.splice(0), car);
     landmarks.group.userData.update(performance.now() / 1000);
+    boundary.update(performance.now() / 1000, car.pos.x, car.y, car.pos.y);
     // Стрелки на дороге: в гонке — по её маршруту, иначе — до точки, выбранной на карте.
     const route = race.state === 'running' || race.state === 'countdown' ? race.route : navRoute;
     if (route !== guide.route) guide.set(route, route === navRoute ? '#4ab3ff' : '#ffd23f');

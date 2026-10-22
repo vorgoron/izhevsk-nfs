@@ -34,6 +34,8 @@ const TRAM_GRASS_WIN = 8; // м: газон только где соседнег
 const WALL_CLEAR = 0.5; // м: забор ниже машины на столько не замечаем (низкий забор у дороги на подъёме — держит)
 const STEP = 2; // м: на сколько выше машины поверхность ещё «под колёсами» (ground)
 export const TERRAIN_SEG = 15; // м: шаг сетки меша рельефа
+// м: край карты — забор (boundary.js) на столько внутрь от bounds, дальше не проехать: за ним кончается рельеф.
+export const EDGE_INSET = 20;
 export const CHUNK_CELLS = 34; // квадрат подгрузки = 34 клетки сетки рельефа (~510 м)
 
 function pointInRing(x, z, p) {
@@ -65,6 +67,8 @@ export class World {
   constructor(city) {
     this.city = city;
     this.bounds = city.bounds;
+    const [bx0, bz0, bx1, bz1] = city.bounds;
+    this.edge = [bx0 + EDGE_INSET, bz0 + EDGE_INSET, bx1 - EDGE_INSET, bz1 - EDGE_INSET];
     this.nodes = city.roadNodes;
     this.roads = city.roads.filter((r) => ROAD_CLASSES.has(r.k) && !r.tu);
     this.patches = [];
@@ -1574,6 +1578,12 @@ export class World {
       }
       if (!moved) break;
     }
+    // Забор по краю карты держит всегда — и в прыжке, и с крыши.
+    const [x0, z0, x1, z1] = this.edge;
+    if (pos.x < x0 + r) { pos.x = x0 + r; hit = { x: 1, z: 0 }; }
+    if (pos.x > x1 - r) { pos.x = x1 - r; hit = { x: -1, z: 0 }; }
+    if (pos.y < z0 + r) { pos.y = z0 + r; hit = { x: 0, z: 1 }; }
+    if (pos.y > z1 - r) { pos.y = z1 - r; hit = { x: 0, z: -1 }; }
     return hit;
   }
 
@@ -1584,6 +1594,7 @@ export class World {
   // Ребро — [узел, цена, улица].
   buildGraph() {
     const adj = new Map(), nav = new Map();
+    const [x0, z0, x1, z1] = this.edge, inside = ([x, z]) => x > x0 && x < x1 && z > z0 && z < z1;
     const link = (m, a, b, cost, r) => (m.get(a) || m.set(a, []).get(a)).push([b, cost, r]);
     const raceClasses = new Set(['primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'trunk',
       'primary_link', 'secondary_link', 'tertiary_link', 'living_street']);
@@ -1592,6 +1603,7 @@ export class World {
       for (let i = 1; i < r.n.length; i++) {
         const a = r.n[i - 1], b = r.n[i];
         const pa = this.nodes[a], pb = this.nodes[b];
+        if (!inside(pa) || !inside(pb)) continue; // за забором по краю карты маршрутов нет
         // Главные улицы «дешевле» — маршрут тянется по проспектам, а не по дворам.
         const cost = Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) * (MARKED_CLASSES.has(r.k) ? 1 : 1.6);
         link(adj, a, b, cost, r);
@@ -1650,6 +1662,7 @@ export class World {
     let best = null, named = null;
     for (const s of this.segmentsNear(x, z, maxD)) {
       if (!this.nav.get(s.road.n[s.i - 1])?.some((e) => e[2] === s.road)) continue;
+      if (!this.graph.get(s.road.n[s.i - 1])?.some((e) => e[0] === s.road.n[s.i])) continue; // отрезок за забором
       if (part != null && this.part.get(s.road.n[s.i - 1]) !== part) continue;
       const c = World.closest(s, x, z);
       if (c.d > maxD) continue;

@@ -158,10 +158,12 @@ export class Traffic {
     this.out = new Map();
     this.edges = [];
     this.grid = new Map();
+    // За забором по краю карты (world.edge) не ездим: улица, уходящая за край, — тупик, там разворот.
+    const [x0, z0, x1, z1] = w.edge, inside = (x, z) => x > x0 && x < x1 && z > z0 && z < z1;
     const add = (a, b, road, forward) => {
       const [ax, az] = w.nodes[a], [bx, bz] = w.nodes[b];
       const len = Math.hypot(bx - ax, bz - az);
-      if (len < 0.05) return;
+      if (len < 0.05 || !inside(ax, az) || !inside(bx, bz)) return;
       // Полосы в своём направлении: из OSM (lanes, lanes:forward/backward) или по ширине.
       const total = road.ln ?? Math.max(1, Math.round((road.w - 1) / 3.3));
       const lanes = Math.max(1, road.ow ? total : (forward ? road.lf : road.lb) ?? Math.floor(total / 2));
