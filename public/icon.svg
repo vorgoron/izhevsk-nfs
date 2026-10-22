@@ -1,42 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#23303d"/><stop offset="1" stop-color="#0f1418"/></linearGradient>
-    <clipPath id="shield"><path d="M88 52 H424 V262 C424 372 344 430 256 466 C168 430 88 372 88 262 Z"/></clipPath>
-    <clipPath id="gearIn"><circle cx="256" cy="270" r="122"/></clipPath>
-  </defs>
-  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
-  <!-- По мотивам советских гербов Ижевска: щит синий/красный, шестерня, башня оружейного завода,
-       автомобиль ИЖ-2126 «Ода». -->
-  <g clip-path="url(#shield)">
-    <rect x="80" y="40" width="176" height="440" fill="#2f6fd0"/>
-    <rect x="256" y="40" width="176" height="440" fill="#e0342b"/>
-    <g clip-path="url(#gearIn)">
-      <rect x="100" y="100" width="320" height="178" fill="#c62828"/>
-      <rect x="100" y="278" width="320" height="140" fill="#1f4f9e"/>
-    </g>
-    <path d="M256.0,124.0 L264.5,104.2 L279.6,105.7 L284.2,126.7 L297.1,129.9 L310.9,113.3 L325.0,119.0 L323.4,140.5 L334.9,147.2 L352.8,135.1 L364.7,144.5 L357.2,164.7 L366.3,174.4 L386.9,167.9 L395.6,180.3 L382.7,197.5 L388.8,209.3 L410.3,208.9 L415.3,223.2 L398.0,236.1 L400.5,249.2 L421.3,254.9 L422.0,270.0 L401.8,277.5 L400.5,290.8 L418.9,302.0 L415.3,316.8 L393.8,318.3 L388.8,330.7 L403.3,346.6 L395.6,359.7 L374.6,355.1 L366.3,365.6 L375.7,385.0 L364.7,395.5 L345.8,385.1 L334.9,392.8 L338.5,414.1 L325.0,421.0 L309.7,405.7 L297.1,410.1 L294.5,431.5 L279.6,434.3 L269.3,415.4 L256.0,416.0 L247.5,435.8 L232.4,434.3 L227.8,413.3 L214.9,410.1 L201.1,426.7 L187.0,421.0 L188.6,399.5 L177.1,392.8 L159.2,404.9 L147.3,395.5 L154.8,375.3 L145.7,365.6 L125.1,372.1 L116.4,359.7 L129.3,342.5 L123.2,330.7 L101.7,331.1 L96.7,316.8 L114.0,303.9 L111.5,290.8 L90.7,285.1 L90.0,270.0 L110.2,262.5 L111.5,249.2 L93.1,238.0 L96.7,223.2 L118.2,221.7 L123.2,209.3 L108.7,193.4 L116.4,180.3 L137.4,184.9 L145.7,174.4 L136.3,155.0 L147.3,144.5 L166.2,154.9 L177.1,147.2 L173.5,125.9 L187.0,119.0 L202.3,134.3 L214.9,129.9 L217.5,108.5 L232.4,105.7 L242.7,124.6 Z M378,270 A122,122 0 1,0 134,270 A122,122 0 1,0 378,270 Z" fill="#9aa4ae" stroke="#5d6670" stroke-width="3" fill-rule="evenodd"/>
-    <rect x="134" y="278" width="244" height="5" fill="#f4f1ea"/>
-    <g stroke="#1b2633" stroke-width="2.5" stroke-linejoin="round">
-      <rect x="208" y="214" width="96" height="64" fill="#f4f1ea"/>
-      <rect x="210" y="218" width="12" height="60" fill="#e7a99a"/><rect x="236" y="218" width="12" height="60" fill="#e7a99a"/><rect x="264" y="218" width="12" height="60" fill="#e7a99a"/><rect x="290" y="218" width="12" height="60" fill="#e7a99a"/>
-      <path d="M222 278 V238 Q229.0 224 236 238 V278 Z" fill="#1b2633"/><path d="M248 278 V238 Q256.0 224 264 238 V278 Z" fill="#1b2633"/><path d="M276 278 V238 Q283.0 224 290 238 V278 Z" fill="#1b2633"/>
-      <rect x="202" y="206" width="108" height="10" fill="#f4f1ea"/>
-      <rect x="212" y="182" width="88" height="24" fill="#f4f1ea"/>
-      <path d="M204 184 L308 184 L300 176 L212 176 Z" fill="#e7a99a"/>
-      <rect x="216" y="156" width="80" height="20" fill="#f4f1ea"/>
-      <path d="M212 158 L214,154 L218,140 L224,150 L230,134 L238,148 L246,130 L256,146 L266,130 L274,148 L282,134 L288,150 L294,140 L298,154 L300 158 Z" fill="#d9a93a"/>
-      <rect x="249" y="98" width="14" height="38" fill="#c9ccd0"/>
-      <rect x="244" y="92" width="24" height="7" rx="2" fill="#5d6670"/>
-    </g>
-    <circle cx="256" cy="84" r="6" fill="#d9a93a" stroke="#1b2633" stroke-width="2"/>
-    <g fill="none" stroke="#1b2633" stroke-width="2"><rect x="246" y="77" width="20" height="14"/></g>
-    <line x1="256" y1="77" x2="256" y2="58" stroke="#1b2633" stroke-width="2.5"/>
-    <g stroke="#ffd23f" stroke-width="6" stroke-linecap="round"><line x1="150" y1="330" x2="172" y2="330"/><line x1="146" y1="347" x2="166" y2="347"/></g>
-    <path d="M184.9,349.5 L327.1,349.5 L327.8,340.4 L324.6,332.7 L289.2,328.5 L189.5,327.1 L184.2,338.3 Z" fill="#f4f1ea"/>
-    <path d="M289.2,329.2 L262.3,311.4 L213.3,311.0 L188.4,326.4 L189.5,328.5 Z" fill="#1b2633"/>
-    <rect x="260.3" y="311.7" width="4" height="17.5" fill="#f4f1ea"/>
-    <rect x="322.5" y="336.2" width="7" height="7" rx="2" fill="#ffd23f"/>
-    <circle cx="300.1" cy="349.9" r="11.2" fill="#13161a"/><circle cx="300.1" cy="349.9" r="4.5" fill="#c9ccd0"/><circle cx="213.7" cy="349.9" r="11.2" fill="#13161a"/><circle cx="213.7" cy="349.9" r="4.5" fill="#c9ccd0"/>
+  <rect width="512" height="512" rx="104" fill="#111"/>
+  <rect x="26" y="26" width="460" height="460" rx="82" fill="none" stroke="#ffd23f" stroke-width="14"/>
+  <g transform="translate(132.6 121.6) scale(1.2) skewX(-21)" fill="#ffd23f">
+    <path transform="translate(0 0)" d="M0 0h40v100h-40Z"/>
+    <path transform="translate(50 0)" d="M0 0H88V24H80C74 24 72 26 70 30L52 70C50 74 52 76 58 76H88V100H0V76H8C14 76 16 74 18 70L36 30C38 26 36 24 30 24H0Z"/>
+    <path transform="translate(148 0)" d="M0 0h40v100h-40ZM56 0h40v100h-40ZM40 40h16v20h-16Z"/>
   </g>
-  <path d="M88 52 H424 V262 C424 372 344 430 256 466 C168 430 88 372 88 262 Z" fill="none" stroke="#e2b34a" stroke-width="12" stroke-linejoin="round"/>
+  <g transform="translate(99.0 270.4) scale(1.2) skewX(-21)" fill="#ffd23f">
+    <path transform="translate(0 0)" d="M0 0h40v100h-40ZM40 0h40v24h-40ZM40 76h40v24h-40Z"/>
+    <path transform="translate(90 0)" d="M0 0h40v100h-40ZM56 0h40v100h-40ZM40 0h16v24h-16ZM40 48h16v20h-16Z"/>
+    <path transform="translate(196 0)" d="M0 0h40v100h-40ZM40 0h56v24h-56ZM56 24h40v32h-40ZM40 38h16v18h-16ZM40 56H96C104 56 104 66 104 74V100H64V80C64 70 56 70 40 70Z"/>
+  </g>
 </svg>

@@ -1,8 +1,10 @@
-// Логотип «IZH CAR» → public/logo.svg. Начертание — по шильдику ИЖ: тяжёлые наклонные штампы,
+// Логотип «IZH CAR» → public/logo.svg, квадратная иконка (IZH над CAR) → public/icon.svg
+// и аватар Telegram-канала → tools/out/tg-avatar.svg. PNG (icon-512/192, apple-touch-icon 180 на фоне #111,
+// tg-avatar 640) — снимком страницы с <img> в headless Chrome: --screenshot --window-size=N,N. Начертание — по шильдику ИЖ: тяжёлые наклонные штампы,
 // узкие просветы, тонкие перемычки, изгибы там, где диагональ входит в горизонталь.
 // Буквы рисуются прямыми (высота 100), наклон даёт skewX.
 // Запуск: node tools/logo.mjs
-import { writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 
 const T = 24, S = 40, G = 16, M = 20; // толщина горизонталей, штамп, просвет, средняя черта
 const W2 = S * 2 + G;
@@ -19,21 +21,44 @@ const glyphs = {
 };
 const SPACE = 30, GAP = 10, SCALE = 1.05, SLANT = -21;
 
-let x = 0;
-const paths = [];
-for (const ch of 'IZH CAR') {
-  if (ch === ' ') { x += SPACE; continue; }
-  paths.push(`<path transform="translate(${x} 0)" d="${glyphs[ch].d}"/>`);
-  x += glyphs[ch].w + GAP;
-}
-const w = x - GAP;
-// Наклон сдвигает низ букв влево — центрируем по середине высоты.
-const tx = 410 - (w / 2 - 50 * Math.tan(-SLANT * Math.PI / 180)) * SCALE;
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 220">
-  <path d="M130 20 Q410 0 690 20 C826 30 826 190 690 200 Q410 220 130 200 C-6 190 -6 30 130 20Z" fill="#111" stroke="#ffd23f" stroke-width="8"/>
-  <g transform="translate(${tx.toFixed(1)} ${110 - 50 * SCALE}) scale(${SCALE}) skewX(${SLANT})" fill="#ffd23f">
+// Строка букв с центром в (cx, cy): наклон сдвигает низ букв влево — центрируем по середине высоты.
+function line(text, cx, cy, scale) {
+  let x = 0;
+  const paths = [];
+  for (const ch of text) {
+    if (ch === ' ') { x += SPACE; continue; }
+    paths.push(`<path transform="translate(${x} 0)" d="${glyphs[ch].d}"/>`);
+    x += glyphs[ch].w + GAP;
+  }
+  const tx = cx - ((x - GAP) / 2 - 50 * Math.tan(-SLANT * Math.PI / 180)) * scale;
+  return `<g transform="translate(${tx.toFixed(1)} ${(cy - 50 * scale).toFixed(1)}) scale(${scale}) skewX(${SLANT})" fill="#ffd23f">
     ${paths.join('\n    ')}
-  </g>
+  </g>`;
+}
+const out = (path, svg) => writeFileSync(new URL(path, import.meta.url), svg);
+
+out('../public/logo.svg', `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 220">
+  <path d="M130 20 Q410 0 690 20 C826 30 826 190 690 200 Q410 220 130 200 C-6 190 -6 30 130 20Z" fill="#111" stroke="#ffd23f" stroke-width="8"/>
+  ${line('IZH CAR', 410, 110, SCALE)}
 </svg>
-`;
-writeFileSync(new URL('../public/logo.svg', import.meta.url), svg);
+`);
+
+// Квадрат: тот же чёрный шильдик с жёлтой каймой, слова друг над другом.
+const SQ = 1.2, ROW = 62 * SQ;
+out('../public/icon.svg', `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="104" fill="#111"/>
+  <rect x="26" y="26" width="460" height="460" rx="82" fill="none" stroke="#ffd23f" stroke-width="14"/>
+  ${line('IZH', 256, 256 - ROW, SQ)}
+  ${line('CAR', 256, 256 + ROW, SQ)}
+</svg>
+`);
+
+// Аватар Telegram — круглый: чёрный круг с жёлтой каймой, за кругом прозрачно.
+const TG = 1.05, TROW = 60 * TG;
+mkdirSync(new URL('out', import.meta.url), { recursive: true });
+out('out/tg-avatar.svg', `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <circle cx="256" cy="256" r="249" fill="#111" stroke="#ffd23f" stroke-width="14"/>
+  ${line('IZH', 256, 256 - TROW, TG)}
+  ${line('CAR', 256, 256 + TROW, TG)}
+</svg>
+`);
