@@ -3090,7 +3090,7 @@ function toStreet(world, lm, re, fx, fz) {
 export function buildLandmarks(world) {
   const group = new THREE.Group();
   const animated = [];
-  const markers = []; // { name, x, z } для HUD и миникарты
+  const markers = []; // { name, x, z, r } для HUD и миникарты
   const far = []; // { obj, x, z, r } — для отсечения по расстоянию
   const keep = (obj) => {
     group.add(flatten(obj));
@@ -3338,7 +3338,11 @@ export function buildLandmarks(world) {
     if (p && lm.mode === 'replace' && lm.key !== 'stadium') world.addCollider(p); // у стадиона внутри поле
     if (obj) keep(obj);
     // Корпус завода — под меткой башни; у «Республик» метка одна на очередь.
-    if (lm.key !== 'plant' && !/^respublika.*_/.test(lm.key)) markers.push({ name: lm.name, x: lm.x, z: lm.z });
+    // r — радиус контура: метка в HUD меряет расстояние до края, а не до центра.
+    if (lm.key !== 'plant' && !/^respublika.*_/.test(lm.key)) {
+      const r = p ? Math.max(...p.map(([x, z]) => Math.hypot(x - lm.x, z - lm.z))) : 0;
+      markers.push({ name: lm.name, x: lm.x, z: lm.z, r });
+    }
   }
 
   // Парадные лестницы (walks.js, GRAND_STAIRS) — в координатах города, не в системе храма.

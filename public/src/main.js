@@ -814,6 +814,22 @@ async function main() {
     u.searchParams.set('utm_content', `poster${poster + 1}`);
     return u.href;
   };
+  // Приложение по диплинку (tg://…): страница ушла в фон за 1,5 с — открылось (opened в ad_open), нет — приложения,
+  // видимо, нет, подсказываем, что искать. Переход — в той же вкладке: неизвестную схему браузер просто не откроет.
+  const openApp = (ad, poster) => {
+    let left = false;
+    const away = () => { left = true; };
+    const hidden = () => { if (document.hidden) left = true; };
+    window.addEventListener('blur', away);
+    document.addEventListener('visibilitychange', hidden);
+    location.href = ad.app;
+    setTimeout(() => {
+      window.removeEventListener('blur', away);
+      document.removeEventListener('visibilitychange', hidden);
+      track('ad_open', { ad: ad.key, poster, url: ad.app, opened: left });
+      if (!left) notice(`Telegram не открылся — найдите канал ${ad.handle}`);
+    }, 1500);
+  };
   // Нажатие без перетаскивания — по рекламному щиту? Ссылка рекламодателя или действие игры (build.js, ADVERTISERS).
   let tapAt = null;
   cv.addEventListener('pointerdown', (e) => { tapAt = { x: e.clientX, y: e.clientY, t: performance.now() }; });
@@ -833,8 +849,9 @@ async function main() {
     // ad_click — нажатие (какой плакат, с какого расстояния, куда ведёт); ad_open — переход по ссылке,
     // opened: false — браузер не открыл вкладку (блокировщик всплывающих окон).
     const poster = chunks.mats.ads.sheets.find((sh) => sh.ad === ad)?.poster ?? 0;
-    track('ad_click', { ad: ad.key, poster, dist: Math.round(hit.distance), target: ad.url ? 'link' : ad.act });
-    if (ad.url) {
+    track('ad_click', { ad: ad.key, poster, dist: Math.round(hit.distance), target: ad.url ? 'link' : ad.app ? 'app' : ad.act });
+    if (ad.app) openApp(ad, poster);
+    else if (ad.url) {
       // Без 'noopener': с ним window.open всегда возвращает null и не узнать, открылась ли вкладка.
       const win = window.open(adLink(ad.url, ad.key, poster), '_blank');
       if (win) win.opener = null;
@@ -1288,6 +1305,8 @@ async function main() {
 
   const gauges = isTouch ? null : new Gauges($('tacho'));
   let lastStreet = '';
+  let nearMark = null;
+  const camDir = new THREE.Vector3();
   function updateHud(dt, inp) {
     gauges?.update(dt, car, inp);
     $('speed').textContent = Math.round(Math.abs(car.speed) * 3.6);
@@ -1301,12 +1320,27 @@ async function main() {
       lastStreet = street;
       $('street').textContent = street;
     }
-    let near = null, nd = 160;
+    // Метка — у того, что крупнее видно: радиус контура к расстоянию, сбоку от взгляда — в 1,5 раза,
+    // сзади — вдвое меньше. По одному расстоянию до центра подписывался Казанский храм у самой
+    // Карла Маркса, хотя в кадре собор в 70 м от дороги. Сменить метку можно, только если новая
+    // заметно крупнее, — иначе мигает при повороте камеры.
+    camera.getWorldDirection(camDir);
+    const camLen = Math.hypot(camDir.x, camDir.z) || 1;
+    let near = null, best = 0, cur = 0;
     for (const m of landmarks.markers) {
-      const d = Math.hypot(m.x - car.pos.x, m.z - car.pos.y);
-      if (d < nd) { nd = d; near = m; }
+      // Радиус — в пределах 8…40 м: у длинных контуров (Арсенал, стадион) он не про видимый размер.
+      const dx = m.x - car.pos.x, dz = m.z - car.pos.y, c = Math.hypot(dx, dz), r = Math.min(40, Math.max(8, m.r));
+      if (c - r > 160) continue;
+      const cos = (dx * camDir.x + dz * camDir.z) / (camLen * c || 1);
+      const size = r / Math.max(c, 1) / (1.5 - cos / 2);
+      if (size > best) { best = size; near = m; }
+      if (m === nearMark) cur = size;
     }
-    $('landmark').textContent = near ? near.name : '';
+    if (cur && best < cur * 1.15) near = nearMark;
+    if (near !== nearMark) {
+      nearMark = near;
+      $('landmark').textContent = near ? near.name : '';
+    }
     const banner = $('banner');
     if (race.state !== 'finished') banner.classList.remove('mini');
     if (garage.isOpen) {
