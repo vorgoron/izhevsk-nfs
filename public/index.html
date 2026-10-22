@@ -92,6 +92,16 @@
     #start .install:hover { background: none; opacity: 1; }
     #start .install-hint { margin: 0; font-size: 14px; line-height: 1.4; color: #8fd0ff; }
     #start .install[hidden], #start .install-hint[hidden] { display: none; }
+    /* Низ экрана «Поехали» — ссылка на Telegram-канал: #loading — колонка, блок по центру (margin: auto), это под ним. */
+    #loading { display: flex; flex-direction: column; align-items: center; }
+    #start-foot { padding: 14px 16px calc(4px + env(safe-area-inset-bottom)); text-align: center; animation: logo-in .4s ease-out both; }
+    #start-foot[hidden], #start-foot .tg-hint[hidden] { display: none; }
+    #start-foot .tg { font: inherit; font-size: 15px; font-weight: 600; color: rgba(255,255,255,.7); background: none; border: 0; padding: 4px; cursor: pointer;
+      text-decoration: underline; text-underline-offset: 3px; }
+    #start-foot .tg:hover { color: #fff; }
+    #start-foot .tg svg { width: 1.3em; height: 1.3em; vertical-align: -.3em; margin-right: 7px; } /* логотип Telegram */
+    #start-foot .tg-hint { margin: 4px 0 0; font-size: 14px; color: #8fd0ff; }
+    #start-foot .tg-hint a { color: #ffd23f; font-weight: 800; margin-left: 6px; }
     #start button kbd { margin-left: 10px; font-family: inherit; font-size: 12px; font-style: normal; font-weight: 600; text-transform: none; letter-spacing: 0;
       border: 1px solid rgba(0,0,0,.3); border-radius: 4px; padding: 0 5px; opacity: .6; vertical-align: middle; }
     body.touch #start button kbd { display: none; }
@@ -558,7 +568,8 @@
       <button class="friends"><span>👥 Играть с друзьями</span><small>получите ссылку — кто её откроет, окажется в городе рядом с вами</small></button></div>
       <button class="install" hidden>📲 Установить как приложение</button>
       <p class="install-hint" hidden>Нажмите «Поделиться» <b>⬆︎</b> внизу Safari, затем «На экран Домой».</p>
-    </div></div></div>
+    </div></div>
+    <div id="start-foot" hidden><button class="tg"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#fff"/><path fill="#2aabee" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>Новости игры в Telegram — @izh_car</button><p class="tg-hint" hidden></p></div></div>
   <div id="street" class="hud"></div>
   <div id="landmark" class="hud"></div>
   <div id="race" class="hud">

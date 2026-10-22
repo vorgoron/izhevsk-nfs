@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { World } from './world.js';
-import { MINIMAP_SCALE } from './build.js';
+import { MINIMAP_SCALE, ADVERTISERS } from './build.js';
 import { ChunkManager, MinimapTiles } from './chunks.js';
 import { Car } from './car.js';
 import { MODELS, buildPlayerModel, loadVehicleMeshes, setPlate, disposePlates, setGear } from './vehicles.js';
@@ -819,8 +819,8 @@ async function main() {
   // Приложение по диплинку (tg://…): страница ушла в фон за 1,5 с — открылось (opened в ad_open), нет — приложения,
   // видимо, нет: сообщение с запасной ссылкой (fallback). Сама её открыть игра не может — через 1,5 с это уже не
   // нажатие игрока, и браузер заблокирует вкладку; нажатие на ссылку — новое. Переход по диплинку — в той же
-  // вкладке: неизвестную схему браузер просто не откроет.
-  const openApp = (ad, poster) => {
+  // вкладке: неизвестную схему браузер просто не откроет. show — куда вывести сообщение (на заставке — под кнопкой).
+  const openApp = (ad, poster, show = notice) => {
     let left = false;
     const away = () => { left = true; };
     const hidden = () => { if (document.hidden) left = true; };
@@ -831,7 +831,7 @@ async function main() {
       window.removeEventListener('blur', away);
       document.removeEventListener('visibilitychange', hidden);
       track('ad_open', { ad: ad.key, poster, url: ad.app, opened: left });
-      if (!left) notice('Telegram не открылся —', {
+      if (!left) show('Telegram не открылся —', {
         href: ad.fallback, text: ad.fallback.replace('https://', ''),
         onClick: () => track('ad_open', { ad: ad.key, poster, url: ad.fallback, opened: true }),
       });
@@ -1268,16 +1268,18 @@ async function main() {
     const div = document.createElement('div');
     div.className = 'info';
     div.textContent = text;
-    if (link) {
-      const a = document.createElement('a');
-      Object.assign(a, { href: link.href, target: '_blank', rel: 'noopener', textContent: link.text });
-      a.addEventListener('click', () => link.onClick?.());
-      div.append(a);
-    }
+    if (link) div.append(linkEl(link));
     $('money-log').prepend(div);
     const life = link ? 7000 : 2600;
     setTimeout(() => div.classList.add('out'), life);
     setTimeout(() => div.remove(), life + 600);
+  }
+
+  function linkEl(link) {
+    const a = document.createElement('a');
+    Object.assign(a, { href: link.href, target: '_blank', rel: 'noopener', textContent: link.text });
+    a.addEventListener('click', () => link.onClick?.());
+    return a;
   }
 
   // ---------------------------------------------------------------- штрафы и награды
@@ -1431,6 +1433,17 @@ async function main() {
       const r = await install.prompt();
       if (r === 'ios') { hint.hidden = false; inst.hidden = true; }
       track('install', { result: String(r) });
+    });
+    // Внизу экрана — Telegram-канал тем же диплинком, что щит; не открылся — запасная ссылка тут же, под кнопкой
+    // (сообщения игры заставка закрывает).
+    const foot = $('start-foot'), tg = ADVERTISERS.find((a) => a.key === 'tg'), tgHint = foot.querySelector('.tg-hint');
+    foot.hidden = false;
+    foot.querySelector('.tg').addEventListener('click', () => {
+      track('ad_click', { ad: tg.key, poster: 'start', target: 'app' });
+      openApp(tg, 'start', (text, link) => {
+        tgHint.replaceChildren(text, linkEl(link));
+        tgHint.hidden = false;
+      });
     });
     return new Promise((resolve) => {
       // По ссылке друга — уже в его компании: «Поехали к друзьям» или ездить одному.
