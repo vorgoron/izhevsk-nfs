@@ -161,11 +161,14 @@ const RIM_UP_PRICE = [0, 4000, 9000, 15000, 22000, 30000, 40000];
 // Вид для всех машин (any — и у процедурных), слоты после дисков: подвеска — кузов выше/ниже над колёсами (RIDE, м),
 // тонировка — цвет стёкол, хром (бамперы, решётка, молдинги) — в чёрный или в цвет кузова (restyle).
 const STYLE_SLOTS = [
-  { key: 'ride', name: 'Подвеска', any: true, variants: [['stock', 'штатная'], ['low', 'ниже на 3 см', 4000], ['slam', 'ниже на 6 см', 8000], ['lift', 'выше на 4 см', 5000]] },
+  { key: 'ride', name: 'Подвеска', any: true, variants: [['stock', 'штатная'], ['low', 'ниже на 3 см', 4000], ['slam', 'ниже на 6 см', 8000], ['stance', 'ниже на 10 см', 12000], ['lift', 'выше на 4 см', 5000]] },
   { key: 'tint', name: 'Тонировка', any: true, variants: [['none', 'нет'], ['light', 'лёгкая', 3000], ['dark', 'тёмная', 6000], ['blue', 'синяя', 7000]] },
   { key: 'chrome', name: 'Хром', any: true, variants: [['stock', 'штатный'], ['black', 'чёрный', 3000], ['paint', 'в цвет кузова', 4000]] },
 ];
-const RIDE = { stock: 0, low: -0.03, slam: -0.06, lift: 0.04 };
+const RIDE = { stock: 0, low: -0.03, slam: -0.06, stance: -0.1, lift: 0.04 };
+// Ниже штатной посадки шина уже и чуть внутрь [доля ширины, сдвиг к оси, м]: верх колеса уходит под крыло, а не
+// прорезает его (у готовых моделей над шиной 0–2 см, крыло снаружи шины на ~2 см). Кузов не меняется.
+const TUCK = { low: [0.9, 0.005], slam: [0.82, 0.01], stance: [0.72, 0.02] };
 const TINT = { light: '#141b21', dark: '#06080a', blue: '#0b1a33' };
 for (const spec of Object.values(MODELS)) {
   const base = spec.wheels.rim ?? 13;
@@ -599,6 +602,11 @@ export function buildPlayerModel(key, color, options) {
     pivot.position.set(w.x, w.y, w.z);
     const wheel = new THREE.Group();
     wheel.add(new THREE.Mesh(wheelGeo[w.x < 0 ? 1 : 0], wheelMat));
+    const tuck = TUCK[style.ride];
+    if (tuck) {
+      wheel.scale.x = tuck[0];
+      pivot.position.x -= Math.sign(w.x) * tuck[1];
+    }
     pivot.add(wheel);
     g.add(pivot);
     g.userData.wheels.push({ pivot, w: wheel, front: w.front });
@@ -608,7 +616,7 @@ export function buildPlayerModel(key, color, options) {
   g.userData.width = spec.width;
   g.userData.plateHost = meshes[1];
   g.userData.plateSpots = plateSpots(spec, parts.detail);
-  g.userData.mounts = gearMounts(spec, g, meshes.slice(0, 2), parts.length);
+  g.userData.mounts = gearMounts(spec, g, meshes.slice(0, 2), parts.length, RIDE[style.ride] ?? 0);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   // Ночью — ореолы фар и фонарей (свет на дорогу у своей машины — прожектор в main.js).
   const glow = new THREE.Mesh(carGlows(parts.lights), glowMaterial());
@@ -623,7 +631,8 @@ export function buildPlayerModel(key, color, options) {
 // Точки крепления навесного — лучом снаружи по кузову (краска и детали), чтобы сидело на поверхности: сопла
 // «Кузнечика» на порогах между колёсами и под днищем, сопло нитро справа сзади, глушитель слева сзади.
 // Струи, пламя нитро и выхлоп (effects.js) бьют из этих же точек.
-function gearMounts(spec, g, meshes, len) {
+// dy — посадка (RIDE): высоты, заданные числом (пороги, труба), — вместе с кузовом; низ кузова лучом и так по опущенному.
+function gearMounts(spec, g, meshes, len, dy = 0) {
   g.updateMatrixWorld(true);
   const ray = new THREE.Raycaster();
   // С обеих сторон граней: у готовых моделей низ бампера — одна грань, изнутри.
@@ -638,7 +647,7 @@ function gearMounts(spec, g, meshes, len) {
   const side = [];
   for (const s of [1, -1]) {
     for (const [z, isFront] of [[front - r - 0.28, true], [rear + r + 0.28, false]]) {
-      side.push({ side: s, front: isFront, x: hit([s * 3, 0.45, z], [-s, 0, 0])?.x ?? s * w, y: 0.45, z });
+      side.push({ side: s, front: isFront, x: hit([s * 3, 0.45 + dy, z], [-s, 0, 0])?.x ?? s * w, y: 0.45 + dy, z });
     }
   }
   const down = [0.3, -0.3].map((k) => { const z = mid + k * (front - rear); return { x: 0, y: hit([0, -1, z], [0, 1, 0])?.y ?? 0.3, z }; });
@@ -646,17 +655,19 @@ function gearMounts(spec, g, meshes, len) {
   // краем бампера (у низкого бампера «Оды» — ниже 0.33 м, иначе пряталась в нём).
   const back = (x, y) => {
     let z = Infinity;
-    for (let h = 0.2; h <= 0.6; h += 0.05) z = Math.min(z, hit([x, h, -10], [0, 0, 1])?.z ?? Infinity);
+    for (let h = 0.2; h <= 0.6; h += 0.05) z = Math.min(z, hit([x, h + dy, -10], [0, 0, 1])?.z ?? Infinity);
     z = Number.isFinite(z) ? z : -len / 2;
     const bottom = hit([x, -1, z + 0.06], [0, 1, 0])?.y;
-    return { x, y: bottom ? Math.max(0.17, Math.min(y, bottom - 0.045)) : y, z };
+    return { x, y: bottom ? Math.max(0.17 + dy, Math.min(y, bottom - 0.045)) : y, z: z + PIPE_IN };
   };
-  return { side, down, exhaust: back(-0.45, 0.33), nitro: back(0.45, 0.33) };
+  return { side, down, exhaust: back(-0.45, 0.33 + dy), nitro: back(0.45, 0.33 + dy) };
 }
 
 const gearMats = {};
 const gearMat = (color) => (gearMats[color] ??= new THREE.MeshLambertMaterial({ color }));
 const CHROME = '#c9ccd0', DARK = '#1c1d20', NOZZLE = '#3a3d42', HOT = '#ff8a2a';
+const PIPE_IN = 0.06; // срез глушителя и нитро — под бампером, а не за ним (висели в воздухе), м
+const PIPE_LEN = 0.4; // труба вперёд от среза — уходит под днище
 const HOP_OUT = 0.04; // насколько сопло «Кузнечика» выходит из кузова, м (у «М» — в 1.35 раза больше)
 
 // Видимый тюнинг (уровни — как в tuned(), shop.js): двигатель — насадка глушителя (III — двойная), шины — тонкий
@@ -675,10 +686,10 @@ export function setGear(model, { engine = 0, tires = 0, nitro = 0, hopper = 0 } 
     parent.add(m);
     ud.gear.push(m);
   };
-  // Труба вдоль машины: от z + 0.2 до z − out (z — задний край бампера).
+  // Труба вдоль машины: от z + PIPE_LEN до z − out (z — срез, на PIPE_IN впереди заднего края бампера).
   const pipe = ({ x, y, z }, r, color, out) => {
-    const l = 0.2 + out;
-    add(ud.body, new THREE.CylinderGeometry(r, r, l, 14).rotateX(Math.PI / 2).translate(x, y, z + 0.2 - l / 2), color);
+    const l = PIPE_LEN + out;
+    add(ud.body, new THREE.CylinderGeometry(r, r, l, 14).rotateX(Math.PI / 2).translate(x, y, z + PIPE_LEN - l / 2), color);
     add(ud.body, new THREE.CircleGeometry(r * 0.7, 14).rotateY(Math.PI).translate(x, y, z - out - 0.001), DARK);
   };
   const { side, down, exhaust, nitro: nz } = ud.mounts;
