@@ -533,31 +533,49 @@ export function vehicleParts(spec, { wheelsInDetail = false, options } = {}) {
 // Купленные диски (слоты rim, rsize): шина, обод и лицо диска по стилю. Колесо снаружи того же радиуса, что штатное
 // (крупнее — вылезало из тесных арок готовых моделей), обод — по диаметру, резина — что осталось (низкий профиль).
 // На дюйм шире на 4 % — внутрь машины (left — левый борт), внешняя боковина на месте, иначе торчит из-за крыла.
-// Спицы шире шины — видны с обеих сторон, зеркалить не надо. userData.rim — радиус обода (ободок шин, setGear).
+// Штампованный — сплошной, лицо шире шины (видно с обеих сторон); остальные — сквозные, лицом наружу (left). userData.rim — радиус обода (ободок шин, setGear).
 const RIM_COLORS = { steel: ['#7d8288', '#8f949a'], star: ['#c4c8cc', '#c4c8cc'], spoke5: ['#c4c8cc', '#d4d8dc'], turbo: ['#b9bec4', '#d0d4d8'], bbs: ['#c9cdd2', '#c9a227'] };
 function rimWheel(spec, seg, style, size, left) {
   const { r: R } = spec.wheels, up = size - (spec.wheels.rim ?? 13);
   const w = 0.22 * (1 + 0.04 * up), rr = Math.min(R - 0.035, size * 0.0127 * (R / 0.29));
   const disc = (rad, width, n = seg * 2) => new THREE.CylinderGeometry(rad, rad, width, n).rotateZ(Math.PI / 2);
-  // Плоская деталь на лице диска: ширина вдоль оси колеса — чуть больше шины.
-  const spoke = (len, thick, at, angle, tilt = 0) => new THREE.BoxGeometry(w + 0.012, len, thick).rotateX(tilt).translate(0, at, 0).rotateX(angle);
   const [barrel, face] = RIM_COLORS[style], DARK = '#2a2c30';
   const parts = [[disc(R, w), '#151618'], [disc(rr, w + 0.004), barrel]];
   if (style === 'steel') {
     parts.push([disc(rr * 0.94, w + 0.006), face], [disc(rr * 0.32, w + 0.016, 16), '#c4c8cc']);
     for (let i = 0; i < 6; i++) parts.push([disc(rr * 0.11, w + 0.01, 8).translate(0, Math.cos(i * Math.PI / 3) * rr * 0.62, Math.sin(i * Math.PI / 3) * rr * 0.62), DARK]);
-  } else if (style === 'turbo') {
-    parts.push([disc(rr * 0.94, w + 0.006), face], [disc(rr * 0.3, w + 0.016, 16), '#e4e7ea']);
-    for (let i = 0; i < 14; i++) parts.push([spoke(rr * 0.5, 0.025, rr * 0.62, (i * 2 * Math.PI) / 14, 0.55), '#7d838a']);
   } else {
-    // Спицы на тёмной подложке: «звезда» — 5 широких, «5 спиц» — 5 пар тонких, сетка — 10 спиц крест-накрест.
-    parts.push([disc(rr * 0.9, w + 0.006), DARK], [disc(rr * 0.24, w + 0.016, 16), face]);
-    const n = style === 'bbs' ? 10 : 5;
+    // Сквозные: шина и обод — кольца, спицы — у внешнего края, за ними тормозной диск и ступица, между ними
+    // видно арку. «Звезда» — 5 широких, «5 спиц» — 5 пар тонких, сетка — 10 спиц крест-накрест, «турбина» — 12
+    // косых лопаток, развёрнутых, как у вентилятора, между ступицей и внешним кольцом.
+    const o = left ? -1 : 1, n2 = seg * 2;
+    const ring = (rin, rout, x, dir) => new THREE.RingGeometry(rin, rout, n2).rotateY(dir * Math.PI / 2).translate(x, 0, 0);
+    const tube = (rad, width) => new THREE.CylinderGeometry(rad, rad, width, n2, 1, true).rotateZ(Math.PI / 2);
+    const SPOKE = 0.045; // толщина спиц вдоль оси
+    const spokeAt = (len, thick, at, angle, tilt = 0) => new THREE.BoxGeometry(SPOKE, len, thick).rotateX(tilt)
+      .translate(o * (w / 2 - SPOKE / 2 + 0.004), at, 0).rotateX(angle);
+    parts.length = 0;
+    parts.push([tube(R, w), '#151618'], [ring(rr, R, w / 2, 1), '#151618'], [ring(rr, R, -w / 2, -1), '#151618'],
+      [mirrorX(tube(rr * 0.96, w)), barrel], [ring(rr * 0.96, rr, -o * w / 2, -o), barrel],
+      [ring(rr * 0.9, rr, o * (w / 2 + 0.002), o), face],
+      [disc(rr * 0.72, 0.022).translate(o * (w / 2 - 0.09), 0, 0), '#5d6066'],
+      [disc(rr * 0.3, 0.07, 16).translate(o * (w / 2 - 0.05), 0, 0), '#3a3c40'],
+      [disc(rr * 0.24, 0.05, 16).translate(o * (w / 2 - 0.02), 0, 0), face]);
+    if (style === 'turbo') {
+      parts.push([ring(rr * 0.78, rr * 0.9, o * (w / 2 + 0.002), o), face],
+        [mirrorX(tube(rr * 0.78, SPOKE)).translate(o * (w / 2 - SPOKE / 2), 0, 0), barrel],
+        [disc(rr * 0.34, 0.05, 16).translate(o * (w / 2 - 0.02), 0, 0), '#e4e7ea']);
+      for (let i = 0; i < 12; i++) {
+        parts.push([new THREE.BoxGeometry(SPOKE, rr * 0.5, 0.05).rotateY(0.65).rotateX(0.5)
+          .translate(o * (w / 2 - SPOKE / 2 + 0.002), rr * 0.55, 0).rotateX((i * 2 * Math.PI) / 12), '#9aa0a6']);
+      }
+    }
+    const n = style === 'turbo' ? 0 : style === 'bbs' ? 10 : 5;
     for (let i = 0; i < n; i++) {
       const a = (i * 2 * Math.PI) / n;
-      if (style === 'star') parts.push([spoke(rr * 0.82, 0.075, rr * 0.48, a), face]);
-      else if (style === 'spoke5') for (const d of [-0.11, 0.11]) parts.push([spoke(rr * 0.84, 0.03, rr * 0.48, a + d), face]);
-      else for (const t of [-0.45, 0.45]) parts.push([spoke(rr * 0.85, 0.022, rr * 0.5, a, t), face]);
+      if (style === 'star') parts.push([spokeAt(rr * 0.8, 0.075, rr * 0.52, a), face]);
+      else if (style === 'spoke5') for (const d of [-0.11, 0.11]) parts.push([spokeAt(rr * 0.8, 0.03, rr * 0.52, a + d), face]);
+      else for (const t of [-0.45, 0.45]) parts.push([spokeAt(rr * 0.82, 0.022, rr * 0.53, a, t), face]);
     }
   }
   const g = merge(parts).translate((left ? 1 : -1) * (w - 0.22) / 2, 0, 0);
