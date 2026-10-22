@@ -601,7 +601,7 @@ async function main() {
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
       money: formatMoney(wallet.balance), hopper: car.hopper > 0, taxi: taxi?.active ? 'отменить заказ' : 'найти пассажира',
-      nitro: !car.nitroLevel ? 'не установлено — в автосалон' : car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
+      nitro: !car.nitroLevel ? 'нет баллона' : car.nitro >= 0.999 ? 'полный' : wallet.balance >= 1 ? formatMoney(Math.min((1 - car.nitro) * PRICES.nitro, wallet.balance)) : 'нет денег' }),
     setName: (v) => net.setName(v),
     account: { state: () => account ?? { status: 'out' }, start: () => account.start(), send: (e) => account.send(e), signOut: () => account.signOut() },
     adRequest: (v) => sendAdRequest(v).then(() => track('ad_request')),

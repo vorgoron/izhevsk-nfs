@@ -417,7 +417,8 @@
     #menu p[data-ad=text]:empty { display: none; }
     #menu button:disabled { opacity: .6; cursor: default; }
     #menu .hint { margin: 2px 2px 6px; font-size: 13px; opacity: .65; }
-    #menu button i { font-style: normal; font-size: 20px; line-height: 1; opacity: .6; }
+    #menu button i { margin-left: auto; font-style: normal; font-size: 20px; line-height: 1; opacity: .6; }
+    #menu button b ~ i, #menu button kbd ~ i { margin-left: 0; }
     #menu .volumes { display: flex; flex-direction: column; gap: 4px; padding: 6px 12px 8px; border-radius: 9px; background: rgba(255,255,255,.06); }
     #menu .volumes.off { opacity: .45; }
     #menu .volumes label { display: grid; grid-template-columns: 105px 1fr 42px; align-items: center; gap: 8px; font-size: 14px; }
@@ -441,7 +442,8 @@
     #radio-pick.open { display: block; }
     #radio-pick .wheel div { font-size: 16px; }
     body.in-garage #radio-pick, body.in-menu #radio-pick { display: none; }
-    #menu .keys { margin-top: 10px; font-size: 12.5px; line-height: 1.8; opacity: .7; }
+    #menu hr { width: 100%; margin: 6px 0; border: 0; border-top: 1px solid rgba(255,255,255,.15); }
+    #menu .keys { margin: 0 2px 6px; font-size: 12.5px; line-height: 1.8; opacity: .7; }
     #menu .tricks { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.06);
       font-size: 14px; line-height: 1.45; }
     #menu .tricks b { color: #ffd23f; }
