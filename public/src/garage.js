@@ -11,7 +11,7 @@ import { UPGRADES, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './sh
 import { PAINTS, paintOf, paintKey } from './paints.js';
 
 const STORE = 'vehicle';
-const MAX = { kmh: 220, accel: 1.21, grip: 1.17 }; // шкалы характеристик — с запасом на улучшения Весты
+const MAX = { kmh: 230, accel: 1.8, grip: 1.35 }; // шкалы характеристик — с запасом на улучшения Весты
 
 export function loadChoice() {
   try {
@@ -184,9 +184,11 @@ export class Garage {
       c.classList.toggle('own', mine);
     }
     // Характеристики: штатные — жёлтым, прибавка от улучшений — зелёным, от улучшений в корзине — голубым.
-    const t = this.wallet ? tuned(this.wallet, model) : spec.stats, c = this.wallet ? tuned(this.#view(), model) : t;
-    const pct = (x, max) => `${Math.round(x / max * 100)}%`;
-    const bar = (label, k, max) => `<div class="stat"><span>${label}</span><i style="--v:${pct(spec.stats[k], max)};--u:${pct(t[k], max)};--c:${pct(c[k], max)}"></i></div>`;
+    // Справа — цифра с корзиной: км/ч и секунды до 100.
+    const base = tuned(null, model), t = this.wallet ? tuned(this.wallet, model) : base, c = this.wallet ? tuned(this.#view(), model) : t;
+    const pct = (x, max) => `${Math.min(100, Math.round(x / max * 100))}%`;
+    const num = { kmh: `${Math.round(c.kmh)} км/ч`, accel: `${c.t100.toFixed(1).replace('.', ',')} с` };
+    const bar = (label, k, max) => `<div class="stat"><span>${label}</span><i style="--v:${pct(base[k], max)};--u:${pct(t[k], max)};--c:${pct(c[k], max)}"></i><b>${num[k] ?? ''}</b></div>`;
     this.el.querySelector('.info').innerHTML = `<b>${spec.name}</b> <small>${spec.years}</small>
       <em class="${own ? 'own' : ''}">${!carPrice(model) ? 'стартовая' : own ? 'своя' : `${this.cart.has(carKey(model)) ? 'в корзине · ' : ''}${formatMoney(carPrice(model))}`}</em>
       <p>${spec.about}</p>${spec.credit ? `<p class="credit">${spec.credit}</p>` : ''}

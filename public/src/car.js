@@ -11,7 +11,6 @@ const NITRO_BURN = [0, 0.35, 0.23], NITRO_FILL = [0, 1, 1.3], HOP_VY = [0, 1, 1.
 // Нитро само не восполняется — баллон заправляют за деньги на АЗС или в меню (fuel.js, money.js).
 // Вне дороги (трава, лес, пустырь): доля от максимальной скорости, разгона, сцепления; торможение грунтом.
 const OFF_SPEED = 0.45, OFF_ACCEL = 0.5, OFF_GRIP = 0.6, OFF_DRAG = 0.08;
-const ACCEL = 13;
 const BRAKE = 28;
 const REVERSE_MAX = 12;
 const GRIP = 9;           // как быстро гасится боковое скольжение
@@ -90,6 +89,27 @@ const RAMP_MIN = 8, RAMP_VY = 0.9, RAMP_VY_MIN = 6, RAMP_VY_MAX = 24, RAMP_LIP =
 const RAMP_BOOST = 12, RAMP_TOP = 1.5, RAMP_FX = 1.2;
 const TANK_M = 9000;      // м на полном баке при обычном газе; нитро — втрое больше расхода
 
+// Тяга под паспорт: разгон a·(1 − v/top) минус сопротивление воздуха AIR·v² (как в update) — подбираем a и top так,
+// чтобы машина упиралась ровно в kmh и набирала 100 км/ч за t100 с. top выше kmh: на максималке тягу съедает воздух.
+const AIR = 0.0004, V100 = 100 / 3.6;
+const thrustCache = new Map();
+function thrust(v, t100) {
+  const key = `${v}:${t100}`;
+  if (thrustCache.has(key)) return thrustCache.get(key);
+  const topFor = (a) => v / (1 - AIR * v * v / a);
+  const time = (a) => {
+    const top = topFor(a), dt = 0.01;
+    let u = 0, t = 0;
+    while (u < V100 && t < 120) { u += (a * (1 - u / top) - AIR * u * u) * dt; t += dt; }
+    return t;
+  };
+  let lo = AIR * v * v * 1.0001, hi = 60;
+  for (let i = 0; i < 40; i++) { const a = (lo + hi) / 2; if (time(a) > t100) lo = a; else hi = a; }
+  const res = [topFor(hi), hi];
+  thrustCache.set(key, res);
+  return res;
+}
+
 export class Car {
   constructor(world, model, stats) {
     this.world = world;
@@ -130,11 +150,11 @@ export class Car {
     this.nitroBoost = 1; // во сколько раз быстрее наполняется нитро (отстающему в общей гонке — main.js)
   }
 
-  // Смена машины: модель и характеристики (км/ч, разгон и сцепление относительно базы; nitro, hopper — уровни систем).
+  // Смена машины: модель и характеристики (максималка, км/ч, и разгон до 100 км/ч, с, — как в паспорте; сцепление
+  // относительно базы; nitro, hopper — уровни систем).
   setModel(model, stats) {
     this.model = model;
-    this.maxSpeed = stats.kmh / 3.6;
-    this.accel = ACCEL * stats.accel;
+    [this.maxSpeed, this.accel] = thrust(stats.kmh / 3.6, stats.t100);
     this.grip = GRIP * stats.grip;
     this.eco = stats.eco ?? 1;
     this.nitroLevel = stats.nitro ?? 1;
@@ -237,7 +257,7 @@ export class Car {
     } else {
       vf -= Math.sign(vf) * Math.min(Math.abs(vf), 2.5 * dt); // накат
     }
-    vf -= vf * Math.abs(vf) * 0.0004 * dt; // сопротивление воздуха
+    vf -= vf * Math.abs(vf) * AIR * dt; // сопротивление воздуха
     vf -= vf * OFF_DRAG * off * dt;        // грунт тормозит
     if (vf > top + 1 && !air) vf -= Math.min(vf - top, 14 * dt); // съехал с дороги на скорости (или после ускорителя) — сбрасываем до предела
     if (input.brake && !air) vf -= Math.sign(vf) * Math.min(Math.abs(vf), HANDBRAKE * dt);

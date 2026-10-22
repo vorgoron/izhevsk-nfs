@@ -1,5 +1,7 @@
 // Машины ижевского автопрома: процедурные модели по профилю сбоку (вытянутому на ширину)
-// и характеристики для физики (eco — расход бензина относительно «Оды»). Размеры — по паспортным, силуэты упрощены.
+// и характеристики для физики: заводские kmh — максималка, t100 — разгон до 100 км/ч, с (паспорт, ru.wikipedia,
+// Веста — каталоги 2015 г.); grip — сцепление относительно базы, eco — расход бензина относительно «Оды».
+// Размеры — по паспортным, силуэты упрощены.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -20,7 +22,7 @@ const ODAVAN = {
   bumper: '#2b2d31', bumperH: 0.24, grille: '#17181b', grilleBars: '#b9bdc2', trim: '#1a1b1d',
   lights: 'rect', lamp: { w: 0.44, h: 0.19 },
   colors: ['#e9e9e6', '#7c1622', '#2c5aa0', '#2f6b3a', '#8c9196', '#1e1f22', '#c9a227', '#1f5e6b'],
-  stats: { kmh: 140, accel: 0.72, grip: 0.9, eco: 1.2 },
+  stats: { kmh: 135, t100: 19, grip: 0.9, eco: 1.2 },
 };
 
 // Профили: [z, y] — z вперёд (перед машины при +len/2), y вверх, от земли.
@@ -43,7 +45,7 @@ export const MODELS = {
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
     bumper: '#c8ccd0', bumperH: 0.12, grille: '#c8ccd0', trim: '#c8ccd0', lights: 'rect',
     colors: ['#9fc2d6', '#e8e2c8', '#6b1420', '#3b6e4f', '#f0f0ec', '#c9a227', '#2b3a66', '#5a5f66'],
-    stats: { kmh: 155, accel: 0.8, grip: 0.95, eco: 1.15 },
+    stats: { kmh: 145, t100: 19, grip: 0.95, eco: 1.15 }, // УЗАМ-412, 75 л. с.
   },
   kabluk: {
     price: 15000,
@@ -62,7 +64,7 @@ export const MODELS = {
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
     bumper: '#c8ccd0', bumperH: 0.12, grille: '#c8ccd0', trim: '#c8ccd0', lights: 'rect',
     colors: ['#3b6e4f', '#e9e9e6', '#2c5aa0', '#c9a227', '#7a2f2f', '#5a6e8c', '#8c9196', '#d8641e'],
-    stats: { kmh: 135, accel: 0.7, grip: 0.9, eco: 1.25 },
+    stats: { kmh: 125, t100: 21, grip: 0.9, eco: 1.25 }, // УЗАМ-412ДЭ, 67 л. с.; 19 с в паспорте — у 75-сильного
   },
   pickup: {
     price: 18000,
@@ -79,7 +81,7 @@ export const MODELS = {
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
     bumper: '#c8ccd0', bumperH: 0.12, grille: '#c8ccd0', trim: '#c8ccd0', lights: 'rect',
     colors: ['#b8322a', '#e9e9e6', '#3b6e4f', '#2c5aa0', '#c9a227', '#5a6e8c', '#8c9196', '#d8641e'],
-    stats: { kmh: 135, accel: 0.72, grip: 0.9, eco: 1.22 },
+    stats: { kmh: 125, t100: 21, grip: 0.9, eco: 1.22 }, // как у «Каблучка»
   },
   kombi: {
     price: 40000,
@@ -96,7 +98,7 @@ export const MODELS = {
     wheels: { r: 0.3, front: 1.2, rear: -1.2, track: 0.64 },
     bumper: '#c8ccd0', bumperH: 0.12, grille: '#c8ccd0', trim: '#c8ccd0', lights: 'rect',
     colors: ['#c64a1e', '#e8e2c8', '#2e8b8b', '#f2c230', '#6b1420', '#4a6b2f', '#e9e9e6', '#3d4a5c'],
-    stats: { kmh: 150, accel: 0.8, grip: 0.95, eco: 1.15 },
+    stats: { kmh: 142, t100: 19, grip: 0.95, eco: 1.15 }, // УЗАМ-412, 75 л. с.
   },
   oda: {
     price: 65000,
@@ -125,7 +127,7 @@ export const MODELS = {
     bumper: '#2b2d31', bumperH: 0.24, grille: '#17181b', grilleBars: '#b9bdc2', trim: '#1a1b1d',
     lights: 'rect', lamp: { w: 0.44, h: 0.19 }, tail: { w: 0.36, h: 0.17, y: 0.76 },
     colors: ['#7c1622', '#e9e9e6', '#1f5e6b', '#2c5aa0', '#8c9196', '#2f6b3a', '#d8641e', '#1e1f22'],
-    stats: { kmh: 165, accel: 0.86, grip: 1.0, eco: 1.0 },
+    stats: { kmh: 155, t100: 15, grip: 1.0, eco: 1.0 }, // ВАЗ-2106, 1,6 л
   },
   vesta: {
     price: 140000,
@@ -147,7 +149,7 @@ export const MODELS = {
     wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76, alloy: true, rim: 15 },
     bumper: 'paint', bumperH: 0.26, grille: '#1b1c1f', trim: '#1a1b1d', lights: 'vesta',
     colors: ['#e9e9e6', '#c63a2a', '#1e1f22', '#8c9196', '#2c5aa0', '#e07a1f', '#5a3a6b', '#3b5f4a'],
-    stats: { kmh: 190, accel: 1.0, grip: 1.06, eco: 0.85 },
+    stats: { kmh: 178, t100: 11.8, grip: 1.06, eco: 0.85 }, // ВАЗ-21129, 1,6 л, 106 л. с., механика
   },
 };
 export const DEFAULT_MODEL = 'm412';
