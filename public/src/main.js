@@ -804,6 +804,16 @@ async function main() {
     e.preventDefault();
     zoomBy(1 + Math.sign(e.deltaY) * Math.min(0.15, Math.abs(e.deltaY) * 0.0015));
   }, { passive: false });
+  // Ссылка со щита с UTM-метками — переходы видны в статистике сайта рекламодателя. Telegram меток не читает.
+  const adLink = (url, key, poster) => {
+    const u = new URL(url);
+    if (u.hostname === 't.me') return url;
+    u.searchParams.set('utm_source', 'izh-car');
+    u.searchParams.set('utm_medium', 'billboard');
+    u.searchParams.set('utm_campaign', key);
+    u.searchParams.set('utm_content', `poster${poster + 1}`);
+    return u.href;
+  };
   // Нажатие без перетаскивания — по рекламному щиту? Ссылка рекламодателя или действие игры (build.js, ADVERTISERS).
   let tapAt = null;
   cv.addEventListener('pointerdown', (e) => { tapAt = { x: e.clientX, y: e.clientY, t: performance.now() }; });
@@ -820,9 +830,16 @@ async function main() {
     const hit = ray.intersectObjects([...chunks.mats.ads.meshes], false)[0];
     const ad = hit?.object.userData.adv;
     if (!ad) return;
-    track('ad_click', { ad: ad.key });
-    if (ad.url) window.open(ad.url, '_blank', 'noopener');
-    else actions[ad.act]?.();
+    // ad_click — нажатие (какой плакат, с какого расстояния, куда ведёт); ad_open — переход по ссылке,
+    // opened: false — браузер не открыл вкладку (блокировщик всплывающих окон).
+    const poster = chunks.mats.ads.sheets.find((sh) => sh.ad === ad)?.poster ?? 0;
+    track('ad_click', { ad: ad.key, poster, dist: Math.round(hit.distance), target: ad.url ? 'link' : ad.act });
+    if (ad.url) {
+      // Без 'noopener': с ним window.open всегда возвращает null и не узнать, открылась ли вкладка.
+      const win = window.open(adLink(ad.url, ad.key, poster), '_blank');
+      if (win) win.opener = null;
+      track('ad_open', { ad: ad.key, poster, url: ad.url, opened: !!win });
+    } else actions[ad.act]?.();
   });
   const endDrag = (e) => {
     if (fingers.delete(e.pointerId) && fingers.size < 2) pinch = 0;

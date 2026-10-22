@@ -2055,7 +2055,7 @@ export function billboardMaterials(renderer) {
       });
       tex.needsUpdate = true;
     };
-    return { ad, rows: rows.length, tex, draw };
+    return { ad, rows: rows.length, tex, draw, poster: 0 };
   });
   for (const sh of sheets) sh.draw(null);
   const logo = new Image();
@@ -2083,7 +2083,11 @@ export function billboardMaterials(renderer) {
       const t = (now - t0) / 1000, period = AD_SHOW + AD_ROLL, n = Math.floor(t / period);
       const r = Math.max(0, (t - n * period - AD_SHOW) / AD_ROLL);
       const e = r * r * (3 - 2 * r);
-      for (const { ad, rows, tex } of sheets) tex.offset.y = -((n % ad.posters.length) + e) / rows;
+      for (const sh of sheets) {
+        const k = n % sh.ad.posters.length;
+        sh.tex.offset.y = -(k + e) / sh.rows;
+        sh.poster = (k + (e > 0.5)) % sh.ad.posters.length; // плакат на лицевой стороне — для аналитики нажатий
+      }
     },
   };
 }
