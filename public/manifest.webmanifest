@@ -1,6 +1,8 @@
 {
   "name": "Izh Car — уличные гонки по Ижевску",
   "short_name": "Izh Car",
+  "description": "Бесплатная браузерная гонка по настоящему Ижевску на машинах ИЖ, Москвиче и Lada Vesta.",
+  "categories": ["games"],
   "lang": "ru",
   "start_url": ".",
   "scope": ".",

@@ -1,0 +1,4 @@
+User-agent: *
+Disallow: /net-test.html
+
+Sitemap: https://izh-car.web.app/sitemap.xml

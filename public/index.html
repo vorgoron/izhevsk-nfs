@@ -6,7 +6,41 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#15181b">
-  <title>Izh Car — уличные гонки по Ижевску</title>
+  <title>Izh Car — уличные гонки по Ижевску, играть онлайн</title>
+  <meta name="description" content="Бесплатные гонки по настоящему Ижевску в браузере: ИЖ «Комби», «Каблучок», Москвич-412 и Lada Vesta, тюнинг, трамваи, камеры ГАИ и заезды с друзьями онлайн.">
+  <link rel="canonical" href="https://izh-car.web.app/">
+  <!-- Превью ссылки в Telegram, VK и соцсетях: og.jpg — кадр игры у Михайловского собора, 1200 × 630 -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Izh Car">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:url" content="https://izh-car.web.app/">
+  <meta property="og:title" content="Izh Car — уличные гонки по Ижевску">
+  <meta property="og:description" content="Гонки по настоящему Ижевску прямо в браузере: ИЖ «Комби», «Каблучок», Москвич-412 и Vesta, тюнинг, трамваи, камеры ГАИ и заезды с друзьями. Бесплатно.">
+  <meta property="og:image" content="https://izh-car.web.app/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Izh Car: улица Карла Маркса у Свято-Михайловского собора, трамвай и Lada Vesta">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "VideoGame",
+    "name": "Izh Car",
+    "alternateName": "Izh Car — уличные гонки по Ижевску",
+    "description": "Бесплатные гонки по настоящему Ижевску в браузере: ИЖ «Комби», «Каблучок», Москвич-412 и Lada Vesta, тюнинг, трамваи, камеры ГАИ и заезды с друзьями онлайн.",
+    "url": "https://izh-car.web.app/",
+    "image": "https://izh-car.web.app/og.jpg",
+    "inLanguage": "ru",
+    "genre": ["Гонки", "Аркада", "Открытый мир"],
+    "gamePlatform": ["Web browser", "PC", "Mobile"],
+    "applicationCategory": "Game",
+    "operatingSystem": "Any",
+    "playMode": ["SinglePlayer", "MultiPlayer"],
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" },
+    "sameAs": ["https://t.me/izh_car"]
+  }
+  </script>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="icon" href="icon-512.png" type="image/png" sizes="512x512">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -496,6 +530,23 @@
   </script>
 </head>
 <body class="boot"> <!-- boot снимает main.js после «Поехали»: до тех пор телефон можно держать вертикально -->
+  <!-- Для поисковиков и браузеров без JavaScript: игра — один canvas, другого текста на странице нет -->
+  <noscript>
+    <main style="max-width:640px;margin:40px auto;padding:0 16px;line-height:1.5">
+      <h1>Izh Car — уличные гонки по Ижевску</h1>
+      <p>Бесплатная аркадная гонка по настоящему Ижевску прямо в браузере, на компьютере и телефоне. Город
+        16 × 17 км собран из OpenStreetMap и карты высот: улицы и дворы, Карла Маркса и Пушкинская,
+        трамвайные пути, мосты через пруд, 40 тысяч домов.</p>
+      <p>Знакомые места: Свято-Михайловский и Александро-Невский соборы, оружейный завод и его башня,
+        Музей Калашникова, Арсенал, Дом правительства, Центральная мечеть, цирк, Летний сад и колесо обозрения,
+        вокзал, ЖК «Республика».</p>
+      <p>Машины ижевского автозавода: ИЖ-2125 «Комби», ИЖ-2715 «Каблучок» и пикап, ИЖ-2126 «Ода»,
+        Москвич-412 — и Lada Vesta. Гараж с тюнингом: диски, занижение, обвесы, тонировка, нитро.
+        Трафик, трамваи, камеры скорости ГАИ, смена дня и ночи, радио, гонки на время и заезды с друзьями
+        онлайн.</p>
+      <p>Для игры включите JavaScript. Новости игры — <a href="https://t.me/izh_car">t.me/izh_car</a>.</p>
+    </main>
+  </noscript>
   <div id="loading"><div class="box"><h1><img src="logo.svg" alt="Izh Car"><small>уличные гонки по Ижевску</small></h1><div id="loading-bar"><div id="loading-fill"></div></div><div id="loading-text">Загрузка…</div>
     <div id="start" hidden>
       <label>Имя гонщика<input maxlength="10" autocomplete="nickname" enterkeyhint="go" spellcheck="false"><small>Его видят другие игроки и на номере вашей машины. Поменять — в меню.</small></label>
