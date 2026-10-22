@@ -67,6 +67,11 @@ const M = {
   stair: lambert('#a89f95'),
   iron: lambert('#1e2325'),
   lantern: nightLit('#f1e2b0', '#ffd27a'),
+  crane: lambert('#f0b400'),
+  orange: lambert('#e8742a'),
+  fin: lambert('#efe6d2'),
+  mirror: new THREE.MeshPhongMaterial({ color: '#2b4a6a', specular: '#d8e8ff', shininess: 90 }),
+  beacon: nightLit('#ff3b30', '#ff2a1a'),
 };
 
 // Цвета обычных коробок, которые только перекрашиваются: [стены, крыша].
@@ -2699,6 +2704,377 @@ function grandStairs(world, lay) {
   return place(g, lay.ax, 0, lay.az, Math.atan2(lay.uz, lay.ux));
 }
 
+// ---------------------------------------------------------------- ЖК «Республика»
+// Карла Маркса, 259 (готовые башни) и 233 («Республика 2», стройка); по фото и рендерам застройщика.
+// Окна — canvas-текстуры на развёртке стен: сотни окон геометрией дали бы десятки тысяч треугольников.
+
+const FLOOR = 3.1, GROUND = 3.6; // типовой этаж и первый (магазины)
+
+function seeded(a) {
+  return () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function canvas2d(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return [c, c.getContext('2d')];
+}
+// data — карта блеска (числа, не цвет); repeat — плитка повторяется по стене.
+function canvasTex(c, { data = false, repeat = false } = {}) {
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = data ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+  t.anisotropy = 8; // three.js сам урежет до возможностей видеокарты
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+const mixColor = (a, b, t) => '#' + new THREE.Color(a).lerp(new THREE.Color(b), Math.max(0, Math.min(1, t))).getHexString();
+
+// Стеклянный фасад: specularMap — где блестит, emissiveMap — окна, горящие ночью (днём не светятся).
+function facadeMaterial(map, specularMap, glow, shininess = 80) {
+  const m = new THREE.MeshPhongMaterial({ map, specularMap, specular: '#ffffff', shininess });
+  if (!glow) return m;
+  m.emissiveMap = glow;
+  m.emissive = new THREE.Color('#ffffff');
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uNight = NIGHT;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uNight;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= uNight;');
+  };
+  return m;
+}
+
+// Обход контура, при котором грани wallGeo смотрят наружу (знак площади — как в contourEdges).
+function outward(pl) {
+  let a = 0;
+  for (let i = 0; i < pl.length; i++) a += pl[i][0] * pl[(i + 1) % pl.length][1] - pl[(i + 1) % pl.length][0] * pl[i][1];
+  return a > 0 ? [...pl].reverse() : pl;
+}
+const perim = (q) => q.reduce((s, p, i) => s + Math.hypot(q[(i + 1) % q.length][0] - p[0], q[(i + 1) % q.length][1] - p[1]), 0);
+
+// Стены по контуру (обход — outward) с развёрткой: u = метры вдоль контура × su, v = метры вверх × sv.
+// smooth — общая нормаль в вершине (круглая башня), иначе у каждой стены своя.
+function wallGeo(q, h, su, sv, smooth = false) {
+  const n = q.length, pos = [], nor = [], uv = [];
+  const en = q.map((p, i) => {
+    const r = q[(i + 1) % n], L = Math.hypot(r[0] - p[0], r[1] - p[1]) || 1;
+    return [-(r[1] - p[1]) / L, (r[0] - p[0]) / L];
+  });
+  const vn = q.map((_, i) => {
+    const a = en[(i - 1 + n) % n], b = en[i], L = Math.hypot(a[0] + b[0], a[1] + b[1]) || 1;
+    return [(a[0] + b[0]) / L, (a[1] + b[1]) / L];
+  });
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n, [x1, z1] = q[i], [x2, z2] = q[j], L = Math.hypot(x2 - x1, z2 - z1);
+    const n1 = smooth ? vn[i] : en[i], n2 = smooth ? vn[j] : en[i];
+    const A = [x1, 0, z1, n1, s * su, 0], B = [x2, 0, z2, n2, (s + L) * su, 0];
+    const C = [x2, h, z2, n2, (s + L) * su, h * sv], D = [x1, h, z1, n1, s * su, h * sv];
+    for (const [x, y, z, nn, u, v] of [A, B, C, A, C, D]) {
+      pos.push(x, y, z);
+      nor.push(nn[0], 0, nn[1]);
+      uv.push(u, v);
+    }
+    s += L;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return geo;
+}
+
+// Скруглённый контур через вершины OSM (у башен «Республики» в OSM восьмиугольник).
+function smoothContour(pl, n = 56) {
+  const curve = new THREE.CatmullRomCurve3(pl.map(([x, z]) => new THREE.Vector3(x, 0, z)), true, 'centripetal');
+  return curve.getSpacedPoints(n).slice(0, n).map((v) => [v.x, v.z]);
+}
+
+// Витрины первого этажа: простенок цвета stone, стекло с фрамугой. Плитка — пролёт 4 м × этаж GROUND.
+const STORE = new Map();
+function storeMat(stone) {
+  if (STORE.has(stone)) return STORE.get(stone);
+  const [c, g] = canvas2d(64, 58);
+  g.fillStyle = stone;
+  g.fillRect(0, 0, 64, 58);
+  const grad = g.createLinearGradient(0, 4, 0, 54);
+  grad.addColorStop(0, '#5b6f80');
+  grad.addColorStop(1, '#27323b');
+  g.fillStyle = grad;
+  g.fillRect(9, 4, 46, 50);
+  g.fillStyle = '#1c2125';
+  g.fillRect(9, 16, 46, 2);
+  g.fillRect(31, 4, 2, 50);
+  const m = new THREE.MeshLambertMaterial({ map: canvasTex(c, { repeat: true }) });
+  STORE.set(stone, m);
+  return m;
+}
+
+// Зеркальное стекло башен «Республики»: P столбцов по кругу (~1,4 м), ряды — этажи снизу вверх. Низ на треть
+// высоты — белая облицовка с квадратными окнами, её верх рваный: группы столбцов разной высоты, одиночные выше
+// («пиксели», как на фото); белые междуэтажные пояса. Тёмную вертикаль лоджий убрали — в игре читалась чёрной полосой.
+function respublikaGlass(F, seed) {
+  const P = 64, pw = 16, fh = 32, W = P * pw, H = F * fh, rnd = seeded(seed);
+  const [c, g] = canvas2d(W, H), [cs, gs] = canvas2d(W, H), [cg, gg] = canvas2d(W, H);
+  gs.fillStyle = gg.fillStyle = '#000';
+  gs.fillRect(0, 0, W, H);
+  gg.fillRect(0, 0, W, H);
+  const white = [];
+  for (let k = 0; k < P;) {
+    const n = 1 + Math.floor(rnd() * 4), top = Math.round(F * (0.34 + rnd() * 0.14)) + (n === 1 ? 2 : 0);
+    for (let j = 0; j < n && k < P; j++) white[k++] = top;
+  }
+  for (let f = 0; f < F; f++) {
+    const y = H - (f + 1) * fh;
+    for (let k = 0; k < P; k++) {
+      const x = k * pw, lit = rnd() < 0.22;
+      if (f < white[k] || (f === white[k] && rnd() < 0.15)) {
+        g.fillStyle = '#eef1f1';
+        g.fillRect(x, y, pw, fh);
+        g.fillStyle = mixColor('#2f5277', '#7d9fc0', rnd() * 0.5);
+        g.fillRect(x + 4, y + 7, pw - 8, fh - 16);
+        gs.fillStyle = '#ccc';
+        gs.fillRect(x + 4, y + 7, pw - 8, fh - 16);
+        if (lit) {
+          gg.fillStyle = '#ffd08a';
+          gg.fillRect(x + 4, y + 7, pw - 8, fh - 16);
+        }
+      } else {
+        // Отражение неба: выше светлее, панели чуть разные.
+        const t = (f / F) * 0.45 + rnd() * 0.3, grad = g.createLinearGradient(0, y, 0, y + fh);
+        grad.addColorStop(0, mixColor('#2a4a6c', '#86a8c8', t + 0.12));
+        grad.addColorStop(1, mixColor('#2a4a6c', '#86a8c8', t - 0.08));
+        g.fillStyle = grad;
+        g.fillRect(x, y, pw, fh);
+        g.fillStyle = '#9fb2c2';
+        g.fillRect(x, y, 1, fh);
+        g.fillStyle = '#e9eef0';
+        g.fillRect(x, y + fh - 3, pw, 3);
+        gs.fillStyle = '#e6e6e6';
+        gs.fillRect(x + 1, y, pw - 1, fh - 3);
+        if (lit) {
+          gg.fillStyle = '#ffcf87';
+          gg.fillRect(x + 1, y + 2, pw - 1, fh - 6);
+        }
+      }
+    }
+  }
+  return facadeMaterial(canvasTex(c), canvasTex(cs, { data: true }), canvasTex(cg));
+}
+
+// ЖК «Республика», башня (Карла Маркса, 259; по фото): скруглённая в плане, в зеркальном синем стекле, низ —
+// белая «пиксельная» облицовка (respublikaGlass). Двухэтажный цоколь из тёмного камня с витринами под белым
+// карнизом, сверху белый пояс, остеклённый верхний этаж с отступом и белый венец. pl — контур в системе fit.
+function respublikaTower(pl, lv, seed) {
+  const g = new THREE.Group(), q = outward(smoothContour(pl)), F = Math.max(6, lv - 3);
+  const y1 = 2 * GROUND, body = F * FLOOR, top = y1 + body;
+  const qb = outward(offsetContour(q, 0.6));
+  g.add(mesh(wallGeo(qb, y1, 1 / 4, 1 / GROUND, true), storeMat('#4f4038')));
+  g.add(prism(q, y1 - 0.45, 0.4, M.white, 0.25)); // карниз над цоколем
+  g.add(mesh(wallGeo(q, body, 1 / perim(q), 1 / body, true), respublikaGlass(F, seed), 0, y1, 0));
+  g.add(prism(q, top, 1.5, M.white, 0.2));
+  const qp = outward(offsetContour(q, 0.9));
+  g.add(mesh(wallGeo(qp, 3.4, 1, 1, true), M.mirror, 0, top + 1.5, 0));
+  g.add(prism(q, top + 4.9, 1.1, M.white, 0.15));
+  g.add(prism(offsetContour(q, 2), top + 5.95, 0.15, M.slab));
+  g.add(box(5, 2.6, 4, M.slab, 0, top + 6, 0)); // машинное помещение лифтов
+  return g;
+}
+
+// Стилобат «Республики» (в OSM — мультиполигон по Карла Маркса, 259, с дырой под башню): два этажа светлого
+// камня с витринами, плоская кровля-терраса, на ней оранжевый корт (на фото). pl — контур в системе fit,
+// towers — центры башен в той же системе: корт — в точке кровли подальше от башен и края.
+function respublikaBase(pl, towers) {
+  const g = new THREE.Group(), q = outward(pl), h = 2 * GROUND;
+  g.add(mesh(wallGeo(q, h, 1 / 4, 1 / GROUND), storeMat('#cfc7b9')));
+  g.add(prism(q, h, 0.5, M.stone, 0.15));
+  const inside = (x, z) => {
+    let r = false;
+    for (let i = 0, j = q.length - 1; i < q.length; j = i++) {
+      const [xi, zi] = q[i], [xj, zj] = q[j];
+      if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) r = !r;
+    }
+    return r;
+  };
+  let best = null;
+  const xs = q.map((p) => p[0]), zs = q.map((p) => p[1]);
+  for (let x = Math.min(...xs); x < Math.max(...xs); x += 2) {
+    for (let z = Math.min(...zs); z < Math.max(...zs); z += 2) {
+      // Корт 12 × 7: все углы на кровле, до башен (радиус ~14) не меньше 22 м.
+      if (![[-6, -3.5], [6, -3.5], [6, 3.5], [-6, 3.5]].every(([dx, dz]) => inside(x + dx, z + dz))) continue;
+      const d = Math.min(...towers.map(([tx, tz]) => Math.hypot(x - tx, z - tz)));
+      if (d > 22 && (!best || d < best.d)) best = { x, z, d };
+    }
+  }
+  if (best) {
+    g.add(box(12, 0.06, 7, M.orange, best.x, h + 0.5, best.z));
+    g.add(box(11, 0.07, 0.12, M.white, best.x, h + 0.5, best.z));
+  }
+  return g;
+}
+
+// Фасад башен «Республики 2»: там, где он смонтирован (fin — этажей по стенам контура q), бирюзовое стекло
+// с редкими оранжевыми и жёлтыми панелями (по рендеру); выше — голый каркас: тёмные этажи, серые торцы плит, колонны.
+function respublika2Facade(q, F, fin, seed) {
+  const P = 64, pw = 16, fh = 32, W = P * pw, H = F * fh, rnd = seeded(seed);
+  const lens = q.map((p, i) => Math.hypot(q[(i + 1) % q.length][0] - p[0], q[(i + 1) % q.length][1] - p[1]));
+  const per = lens.reduce((a, b) => a + b, 0);
+  const face = (k) => {
+    let s = ((k + 0.5) / P) * per, i = 0;
+    while (i < lens.length - 1 && s > lens[i]) s -= lens[i++];
+    return i;
+  };
+  const [c, g] = canvas2d(W, H), [cs, gs] = canvas2d(W, H);
+  gs.fillStyle = '#000';
+  gs.fillRect(0, 0, W, H);
+  for (let k = 0; k < P; k++) {
+    const done = fin[face(k)], x = k * pw;
+    for (let f = 0; f < F; f++) {
+      const y = H - (f + 1) * fh;
+      if (f < done || (f === done && rnd() < 0.45)) {
+        const panel = rnd();
+        g.fillStyle = panel < 0.04 ? '#e88a2c' : panel < 0.07 ? '#f0c44c' : mixColor('#14465c', '#3f8aa8', 0.15 + (f / F) * 0.3 + rnd() * 0.25);
+        g.fillRect(x, y, pw, fh);
+        g.fillStyle = '#0e2a36';
+        g.fillRect(x, y, 1, fh);
+        g.fillRect(x, y + fh - 2, pw, 2);
+        if (panel >= 0.07) {
+          gs.fillStyle = '#e0e0e0';
+          gs.fillRect(x + 1, y, pw - 1, fh - 2);
+        }
+      } else {
+        g.fillStyle = mixColor('#4a4845', '#77736c', rnd() * 0.7);
+        g.fillRect(x, y, pw, fh);
+        g.fillStyle = '#b9b6ad';
+        g.fillRect(x, y + fh - 5, pw, 5);
+        if (k % 4 === 0) g.fillRect(x, y, 3, fh);
+      }
+    }
+  }
+  return facadeMaterial(canvasTex(c), canvasTex(cs, { data: true }), null, 60);
+}
+
+// «Республика 2», башня (Карла Маркса, 233; по рендеру, ещё строится): квадратная, каркас доведён до верха,
+// фасад смонтирован примерно наполовину (fin — этажей по стенам). На готовой части — светлые вертикальные
+// ламели, внизу сходящиеся в острия; сверху голая плита с лифтовой шахтой, на одной стене — мачта подъёмника.
+// pl — контур в системе fit.
+function respublika2Tower(pl, lv, fin, seed) {
+  const g = new THREE.Group(), q = outward(pl), F = Math.max(6, lv - 2), y1 = 2 * GROUND, top = y1 + F * FLOOR;
+  g.add(mesh(wallGeo(q, y1, 1 / 4, 1 / GROUND), storeMat('#3a3633')));
+  g.add(mesh(wallGeo(q, F * FLOOR, 1 / perim(q), 1 / (F * FLOOR)), respublika2Facade(q, F, fin, seed), 0, y1, 0));
+  const taper = 3 * FLOOR, fw = 0.45;
+  const tip = new THREE.Shape([new THREE.Vector2(-fw / 2, 0), new THREE.Vector2(0, -taper), new THREE.Vector2(fw / 2, 0)]);
+  const tipGeo = new THREE.ExtrudeGeometry(tip, { depth: 0.5, bevelEnabled: false });
+  let i = 0;
+  contourEdges(q, (e) => {
+    const h = fin[i++] * FLOOR - taper;
+    if (h < 2) return;
+    const n = Math.floor(e.len / 3.2);
+    for (let k = 0; k < n; k++) {
+      const t = ((k + 0.5) * e.len) / n;
+      g.add(onEdge(box(fw, h, 0.5, M.fin, 0, y1 + taper, 0), e, t, 0.25));
+      g.add(onEdge(mesh(tipGeo, M.fin, 0, y1 + taper, 0), e, t));
+    }
+    if (i === 2) {
+      // Мачта подъёмника и кабина на середине высоты.
+      g.add(onEdge(box(1, top + 4, 1, M.slateDark, 0, 0, 0), e, e.len * 0.3, 1.3));
+      g.add(onEdge(box(2.4, 2.6, 2, M.orange, 0, top * 0.55, 0), e, e.len * 0.3 + 1.8, 1.3));
+    }
+  });
+  g.add(prism(q, top, 0.35, M.concrete));
+  g.add(box(4, 4.5, 4, M.concrete, 0, top, 0));
+  for (const [x, z] of [[-6, -5], [6, -5], [-6, 5], [6, 5]]) g.add(box(0.5, 2.5, 0.5, M.concrete, x, top, z)); // колонны следующего яруса
+  return g;
+}
+
+// Кирпичный корпус «Республики 2» (по рендеру): тёмно-красный кирпич, сетка окон, витрины внизу.
+let BRICK = null;
+function respublikaBrick(pl, lv) {
+  if (!BRICK) {
+    const [c, g] = canvas2d(64, 66);
+    g.fillStyle = '#7d3424';
+    g.fillRect(0, 0, 64, 66);
+    g.fillStyle = '#6a2a1c';
+    for (let y = 0; y < 66; y += 4) g.fillRect(0, y, 64, 1);
+    g.fillStyle = '#4d1d12';
+    g.fillRect(13, 8, 38, 46);
+    g.fillStyle = '#2b3138';
+    g.fillRect(16, 11, 32, 40);
+    g.fillStyle = '#4d1d12';
+    g.fillRect(31, 11, 2, 40);
+    BRICK = new THREE.MeshLambertMaterial({ map: canvasTex(c, { repeat: true }) });
+  }
+  const g = new THREE.Group(), q = outward(pl), H = GROUND + (Math.max(2, lv) - 1) * FLOOR;
+  g.add(mesh(wallGeo(q, GROUND, 1 / 4, 1 / GROUND), storeMat('#3a3633')));
+  g.add(mesh(wallGeo(q, H - GROUND, 1 / 3, 1 / FLOOR), BRICK, 0, GROUND, 0));
+  g.add(prism(q, H, 0.7, M.darkBrick, 0.12));
+  return g;
+}
+
+// Башенный кран (на стройке «Республики 2»): решётчатая мачта, поворотная часть — стрела с тележкой и грузом
+// (стеклопакеты на крюке), противовесная консоль с бетонными блоками, оголовок с растяжками. Стрела медленно
+// ходит туда-сюда вокруг направления a0 (угол от +x к +z, как у toStreet).
+function towerCrane(H, jib, a0) {
+  const g = new THREE.Group(), Y = M.crane, mast = new THREE.Group(), a = 1;
+  const beam = (x1, y1, z1, x2, y2, z2, t, mat = Y) => {
+    const p = new THREE.Vector3(x1, y1, z1), r = new THREE.Vector3(x2, y2, z2);
+    const m = mesh(new THREE.BoxGeometry(t, t, p.distanceTo(r)), mat);
+    m.position.copy(p).add(r).multiplyScalar(0.5);
+    m.lookAt(r);
+    return m;
+  };
+  mast.add(box(5, 1, 5, M.concrete, 0, -0.4, 0));
+  const C = [[-a, -a], [a, -a], [a, a], [-a, a]];
+  for (const [x, z] of C) mast.add(box(0.22, H, 0.22, Y, x, 0, z));
+  for (let y = 0.6; y < H - 1; y += 2.5) {
+    for (let k = 0; k < 4; k++) {
+      const [x1, z1] = C[k], [x2, z2] = C[(k + 1) % 4];
+      mast.add(beam(x1, y, z1, x2, y, z2, 0.1));
+      mast.add(beam(x1, y, z1, x2, y + 2.5, z2, 0.08));
+    }
+  }
+  g.add(mergeByMaterial(mast));
+
+  const s = new THREE.Group();
+  s.add(box(2.8, 1.2, 2.8, Y, 0, 0, 0));
+  s.add(box(2, 2.4, 2, M.white, 1.2, -0.6, 2.2)); // кабина
+  s.add(box(0.1, 1.2, 1.8, M.glass, 2.22, 0.3, 2.2));
+  for (let x = 1.4; x < jib - 0.1; x += 2.5) {
+    const x2 = Math.min(jib, x + 2.5), xm = (x + x2) / 2;
+    for (const sz of [-1, 1]) {
+      s.add(beam(x, 1.2, sz * 0.8, x2, 1.2, sz * 0.8, 0.16));
+      s.add(beam(x, 1.2, sz * 0.8, xm, 2.8, 0, 0.08));
+      s.add(beam(xm, 2.8, 0, x2, 1.2, sz * 0.8, 0.08));
+    }
+    s.add(beam(xm, 2.8, 0, Math.min(jib, xm + 2.5), 2.8, 0, 0.14));
+    s.add(beam(x, 1.2, -0.8, x, 1.2, 0.8, 0.08));
+  }
+  for (const sz of [-1, 1]) s.add(beam(-1.4, 1.4, sz, -15, 1.4, sz, 0.22));
+  for (let x = -3; x > -15; x -= 3) s.add(beam(x, 1.4, -1, x, 1.4, 1, 0.12));
+  for (let k = 0; k < 3; k++) s.add(box(1.1, 2.6, 2.6, M.concrete, -13.9 + k * 1.15, -0.2, 0)); // противовес
+  for (const [x, z] of C) s.add(beam(x, 1.2, z, 0, 9, 0, 0.18)); // оголовок
+  s.add(beam(0, 9, 0, jib * 0.7, 2.8, 0, 0.06, M.iron));
+  s.add(beam(0, 9, 0, -14, 1.4, 0, 0.06, M.iron));
+  const xt = jib * 0.55, hook = H * 0.55; // тележка и высота груза над землёй
+  s.add(box(1.6, 0.5, 1.8, Y, xt, 0.6, 0));
+  s.add(box(0.06, H - hook - 1, 0.06, M.iron, xt, hook + 1.6 - H, 0));
+  s.add(box(0.7, 1, 0.5, M.signalRed, xt, hook + 0.6 - H, 0));
+  s.add(box(3.2, 1.6, 1.4, M.blueGlass, xt, hook - 1 - H, 0));
+  s.add(box(3.4, 0.2, 1.6, M.iron, xt, hook - 1.2 - H, 0));
+  s.add(box(0.4, 0.4, 0.4, M.beacon, jib, 1.2, 0));
+  s.add(box(0.4, 0.4, 0.4, M.beacon, 0, 9, 0));
+  const slew = mergeByMaterial(s);
+  slew.position.y = H;
+  slew.userData.update = (t) => { slew.rotation.y = -a0 + 0.7 * Math.sin(t * 0.045); };
+  g.add(slew);
+  return g;
+}
+
 function toStreet(world, lm, re, fx, fz) {
   let best = null;
   for (const s of world.segmentsNear(lm.x, lm.z, 200)) {
@@ -2917,6 +3293,37 @@ export function buildLandmarks(world) {
         obj = place(ferrisWheel(lm.h || 50), lm.x, world.terrain(lm.x, lm.z), lm.z, Math.PI / 2);
         world.addCollider(square(lm.x, lm.z, 4));
         break;
+      case 'respublika':
+      case 'respublika_b': {
+        const f = fit(p, 0);
+        obj = place(respublikaTower(toLocal(p, f), lm.lv || 22, lm.key === 'respublika' ? 7 : 11), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'respublika_base': {
+        const f = fit(p, 0), towers = world.city.landmarks.filter((q) => /^respublika(_b)?$/.test(q.key));
+        obj = place(respublikaBase(toLocal(p, f), towers.map((t) => [t.x - f.cx, t.z - f.cz])), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'respublika2':
+      case 'respublika2_b': {
+        // Фасад смонтирован наполовину — этажей готово по стенам контура, у башен по-разному.
+        const f = fit(p, longestEdgeAngle(p)), main = lm.key === 'respublika2';
+        obj = place(respublika2Tower(toLocal(p, f), lm.lv || 22, main ? [12, 10, 13, 9] : [9, 11, 8, 10], main ? 5 : 9), f.cx, baseY(world, p), f.cz, f.angle);
+        const o = main && world.city.landmarks.find((q) => q.key === 'respublika2_b');
+        if (o) {
+          // Кран — на свободном месте стройки в 42 м к северу от середины между башнями, стрела к ним (на юг).
+          const x = (lm.x + o.x) / 2, z = (lm.z + o.z) / 2 - 42, y = world.terrain(x, z);
+          const H = Math.max(baseY(world, p) + 3 + (lm.lv || 22) * FLOOR + 12, y + 60) - y;
+          keep(place(towerCrane(H, 50, Math.PI / 2), x, y, z));
+          world.addCollider(square(x, z, 2.5));
+        }
+        break;
+      }
+      case 'respublika2_brick': {
+        const f = fit(p, 0);
+        obj = place(respublikaBrick(toLocal(p, f), lm.lv || 10), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
       case 'government': {
         const b = world.city.buildings.find((q) => q.lm === 'government');
         if (b) {
@@ -2930,7 +3337,8 @@ export function buildLandmarks(world) {
     }
     if (p && lm.mode === 'replace' && lm.key !== 'stadium') world.addCollider(p); // у стадиона внутри поле
     if (obj) keep(obj);
-    if (lm.key !== 'plant') markers.push({ name: lm.name, x: lm.x, z: lm.z }); // корпус — под меткой башни
+    // Корпус завода — под меткой башни; у «Республик» метка одна на очередь.
+    if (lm.key !== 'plant' && !/^respublika.*_/.test(lm.key)) markers.push({ name: lm.name, x: lm.x, z: lm.z });
   }
 
   // Парадные лестницы (walks.js, GRAND_STAIRS) — в координатах города, не в системе храма.

@@ -290,6 +290,14 @@ LANDMARKS = {
     "locomotive": ("node", 3957116836, "Паровоз Эр 796-28", "add"),
     "deryabin": ("node", 2398192092, "Памятник А. Ф. Дерябину", "add"),
     "gerd": ("node", 4087269117, "Памятник Кузебаю Герду", "add"),
+    # ЖК «Республика» (Карла Маркса, 259): две башни-цилиндра с зеркальным стеклом на общем стилобате; «Республика 2»
+    # (Карла Маркса, 233) — две квадратные башни и кирпичный корпус, ещё строятся. Метка на карте — по одной на очередь.
+    "respublika": ("way", 622813471, "ЖК «Республика»", "replace"),
+    "respublika_b": ("way", 622813472, "ЖК «Республика»", "replace"),
+    "respublika_base": ("relation", 10947216, "ЖК «Республика»", "replace"),  # стилобат, в дыре — башня _b
+    "respublika2": ("way", 1530413336, "ЖК «Республика 2» (стройка)", "replace"),
+    "respublika2_b": ("way", 1230603502, "ЖК «Республика 2» (стройка)", "replace"),
+    "respublika2_brick": ("way", 1230603501, "ЖК «Республика 2» (стройка)", "replace"),
 }
 LANDMARK_BY_ELEMENT = {(t, i): key for key, (t, i, _, _) in LANDMARKS.items()}
 
@@ -318,7 +326,8 @@ def landmark_entries():
         tags = (node_tags.get(eid) if etype == "node" else ways.get(eid, (0, {}))[1] if etype == "way"
                 else relations.get(eid, (0, {}))[1]) or {}
         out.append({"key": key, "name": name, "mode": mode, "x": round(x, 2), "z": round(z, 2),
-                    **({"p": pts} if pts else {}), **({"h": parse_num(tags["height"])} if "height" in tags else {})})
+                    **({"p": pts} if pts else {}), **({"h": parse_num(tags["height"])} if "height" in tags else {}),
+                    **({"lv": int(parse_num(tags["building:levels"]))} if parse_num(tags.get("building:levels")) else {})})
     return out
 
 
