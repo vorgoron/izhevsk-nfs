@@ -921,6 +921,21 @@ def transport_stops(inside):
     return out
 
 
+def billboards(inside):
+    """Рекламные щиты из OSM (advertising=billboard, в Ижевске только точки без размеров и сторон): [x, z].
+    Стоят в основном у главных улиц; разворот поперёк улицы — в браузере. Пара ближе 12 м — один щит."""
+    out = []
+    for nid, t in node_tags.items():
+        if t.get("advertising") != "billboard":
+            continue
+        x, z = project(*nodes[nid])
+        if not inside([(x, z)]) or any(math.dist((x, z), o) < 12 for o in out):
+            continue
+        out.append([round(x, 1), round(z, 1)])
+    print(f"billboards: {len(out)}")
+    return out
+
+
 # ---------------------------------------------------------------- вывески
 
 # Вывески на фасадах: магазины, банки, аптеки, кафе, конторы из OSM (точки внутри дома или у стены, реже —
@@ -2113,6 +2128,7 @@ def build_city():
         "fuel": fuel,
         "trams": tram_routes(aligned),
         "stops": transport_stops(inside),
+        "billboards": billboards(inside),
         "shops": shop_signs(buildings, roads, road_nodes),
         "fences": fence_list,
         "landmarks": landmark_entries(),

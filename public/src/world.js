@@ -97,7 +97,7 @@ export class World {
     const at = (ci, cj) => {
       const k = ci * 10000 + cj;
       let d = this.chunkData.get(k);
-      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], shops: [], fences: [], pts: [], water: null }));
+      if (!d) this.chunkData.set(k, (d = { ci, cj, areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], billboards: [], shops: [], fences: [], pts: [], water: null }));
       return d;
     };
     const cell = (x, z) => [Math.floor((x - xmin) / this.chunk.sx), Math.floor((z - zmin) / this.chunk.sz)];
@@ -121,6 +121,7 @@ export class World {
     }
     for (const t of c.trees) at(...cell(t[0], t[1])).trees.push(t);
     for (const t of c.stops || []) at(...cell(t[0], t[1])).stops.push(t);
+    for (const t of c.billboards || []) at(...cell(t[0], t[1])).billboards.push(t);
     for (const t of c.shops || []) at(...cell(t[0], t[1])).shops.push(t);
     for (const f of c.fences || []) overlap(f.p, 0, (d) => d.fences.push(f)); // рисует квадрат середины куска
     for (const p of this.points) at(...cell(p.x, p.z)).pts.push(p); // мелочи из OSM (#initPoints) — по своей точке
@@ -146,7 +147,7 @@ export class World {
   chunkInfo(ci, cj) {
     const C = CHUNK_CELLS, { nx, nz, dx, dz, xmin, zmin } = this.mesh;
     const i0 = ci * C, j0 = cj * C, i1 = Math.min(nx, i0 + C), j1 = Math.min(nz, j0 + C);
-    const empty = { areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], shops: [], fences: [], pts: [] };
+    const empty = { areas: [], paths: [], rails: [], waterways: [], lines: [], runs: [], buildings: [], trees: [], stops: [], billboards: [], shops: [], fences: [], pts: [] };
     return { ci, cj, i0, j0, i1, j1, x0: xmin + i0 * dx, z0: zmin + j0 * dz, x1: xmin + i1 * dx, z1: zmin + j1 * dz,
       data: this.chunkData.get(ci * 10000 + cj) || empty };
   }

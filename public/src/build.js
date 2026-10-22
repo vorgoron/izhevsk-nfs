@@ -2093,16 +2093,53 @@ export function billboardMaterials(renderer) {
 }
 
 const BB_STEP = { primary: 420, secondary: 480, tertiary: 560 }; // м вдоль улицы: место под щит
-const BB_KEEP = 0.5;   // доля мест, где щит действительно стоит
+const BB_KEEP = 0.7;   // доля мест, где щит действительно стоит
 const BB_SET = 4.2;    // м от края полотна до стойки
 const BB_END = 30;     // м: у концов улицы не ставим
+const BB_OSM_CLEAR = 120; // м: возле настоящего щита (OSM) щиты по шагу не ставим
+const BB_OSM_ROAD = 25;   // м: щит из OSM — поперёк крупной улицы, если она не дальше, иначе поперёк ближайшей
+const BB_MAJOR = /^(trunk|primary|secondary|tertiary)/;
 
-// Щиты квадрата: редкие, у крупных улиц, поперёк дороги — плакаты видно в обе стороны движения.
-// Места — с шагом от начала всей улицы (как у столбов), часть мест пустует (по хешу).
+// Щиты квадрата, поперёк дороги — плакаты видно в обе стороны движения. Настоящие — из OSM (`billboards`, точки,
+// разворот по ближайшей улице); остальные редкие, у крупных улиц: места с шагом от начала всей улицы
+// (как у столбов), часть мест пустует (по хешу), возле настоящих щитов мест нет.
 export function buildBillboardChunk(world, info, mats) {
   const { data } = info;
   const { free, inBuilding } = spotChecks(world, data);
   const spots = [];
+  // (dx, dz) — вдоль дороги: лица щита смотрят вдоль неё, края — к дороге и от неё.
+  const place = (x, z, dx, dz, hk) => {
+    // Края щита: стойка — на земле, не у дороги; щит не в доме и не под путепроводом.
+    const ex = -dz * (BB.w / 2 + 0.2), ez = dx * (BB.w / 2 + 0.2);
+    const nr = world.nearestRoad(x, z, 4);
+    if ((nr && nr.d < 2) || world.isWater(x, z) || !free(x, z) || world.walks.near(x, z, 0.3)) return;
+    const ok = [[x, z], [x + ex, z + ez], [x - ex, z - ez]]
+      .every(([px, pz]) => !inBuilding(px, pz) && world.ground(px, pz) < world.terrain(px, pz) + 2);
+    if (!ok) return;
+    // Рекламодатель щита — по хешу места, в долях share.
+    let u = ((hk >>> 12) % 1000) / 1000, adv = 0;
+    while (adv < ADVERTISERS.length - 1 && u >= ADVERTISERS[adv].share) u -= ADVERTISERS[adv++].share;
+    spots.push({ x, y: world.terrain(x, z), z, dx, dz, adv });
+  };
+  for (const [ox, oz] of data.billboards) {
+    let near = null, major = null;
+    for (const sg of world.segmentsNear(ox, oz, 50)) {
+      const c = World.closest(sg, ox, oz), d = c.d - sg.w / 2;
+      if (!near || d < near.d) near = { ...c, a: c.d, d, sg };
+      if (BB_MAJOR.test(sg.road.k) && d < BB_OSM_ROAD && (!major || d < major.d)) major = { ...c, a: c.d, d, sg };
+    }
+    const hk = Math.imul(Math.round(ox * 10) ^ Math.round(oz * 10) * 7919, 2654435761) >>> 0;
+    const r = major ?? near;
+    if (!r) { place(ox, oz, 1, 0, hk); continue; }
+    const { sg } = r, L = Math.hypot(sg.bx - sg.ax, sg.bz - sg.az) || 1, dx = (sg.bx - sg.ax) / L, dz = (sg.bz - sg.az) / L;
+    // Точка из OSM ближе BB_SET к краю (часто — на тротуаре или на самом полотне) — отодвигаем от дороги.
+    if (r.d >= BB_SET) { place(ox, oz, dx, dz, hk); continue; }
+    let nx = -dz, nz = dx;
+    if (r.a > 0.3) { nx = (ox - r.px) / r.a; nz = (oz - r.pz) / r.a; } else if (hk & 1024) { nx = -nx; nz = -nz; }
+    const off = sg.w / 2 + BB_SET;
+    place(r.px + nx * off, r.pz + nz * off, dx, dz, hk);
+  }
+  const osm = world.city.billboards || [];
   for (const { road, from, to } of data.runs) {
     const step = BB_STEP[road.k];
     if (!step || road.br || road.tu) continue;
@@ -2120,18 +2157,8 @@ export function buildBillboardChunk(world, info, mats) {
         if ((hk % 1000) / 1000 >= BB_KEEP) continue;
         const side = hk & 1024 ? 1 : -1, off = road.w / 2 + BB_SET, t = s - s0;
         const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
-        // Края щита: стойка — на земле, не у дороги; щит не в доме и не под путепроводом.
-        const ex = -dz * side * (BB.w / 2 + 0.2), ez = dx * side * (BB.w / 2 + 0.2);
-        const nr = world.nearestRoad(x, z, 4);
-        if ((nr && nr.d < 2) || world.isWater(x, z) || !free(x, z) || world.walks.near(x, z, 0.3)) continue;
-        const y = world.terrain(x, z);
-        const ok = [[x, z], [x + ex, z + ez], [x - ex, z - ez]]
-          .every(([px, pz]) => !inBuilding(px, pz) && world.ground(px, pz) < world.terrain(px, pz) + 2);
-        if (!ok) continue;
-        // Рекламодатель щита — по хешу места, в долях share.
-        let u = ((hk >>> 12) % 1000) / 1000, adv = 0;
-        while (adv < ADVERTISERS.length - 1 && u >= ADVERTISERS[adv].share) u -= ADVERTISERS[adv++].share;
-        spots.push({ x, y, z, dx, dz, adv });
+        if (osm.some(([qx, qz]) => (qx - x) ** 2 + (qz - z) ** 2 < BB_OSM_CLEAR ** 2)) continue;
+        place(x, z, dx, dz, hk);
       }
     }
   }
