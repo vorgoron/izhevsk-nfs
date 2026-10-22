@@ -1823,11 +1823,12 @@ export function buildPoleChunk(world, info, mats) {
 // сторона показывает строки 0…P, обратная 1…P+1), смена — сдвигом offset.y, у всех щитов разом, как роллерный
 // щит. Нажатие на плакат — ссылка рекламодателя (url) или действие игры (act, main.js). share — доля щитов.
 export const ADVERTISERS = [
-  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.35 },
-  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.25 },
-  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.25 },
+  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.3 },
+  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.2 },
+  { key: 'tg', name: 'Telegram-канал', url: 'https://t.me/izh_car', posters: [tgNewsAd, tgChannelAd], share: 0.2 },
+  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.18 },
   // «Место свободно» — заявка на рекламу (меню → «Реклама на щитах», adrequest.js).
-  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.15 },
+  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.12 },
 ];
 const AD_W = 1024, AD_H = 512;
 const AD_SHOW = 8, AD_ROLL = 0.9; // с: плакат стоит, затем прокрутка
@@ -1881,6 +1882,63 @@ function izhCarFriendsAd(g, logo) {
     g.textAlign = 'right';
     g.fillText('IZH CAR', AD_W - 50, AD_H - 50, 420);
   }
+}
+
+// Telegram-канал игры @izh_car: голубой «телеграмный» и тёмный с логотипом. Значок — бумажный самолётик в круге.
+const TG_BLUE = '#229ed9';
+
+function tgPlane(g, cx, cy, r, bg, fg) {
+  g.fillStyle = bg;
+  g.beginPath();
+  g.arc(cx, cy, r, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = fg;
+  g.beginPath();
+  g.moveTo(cx - 0.52 * r, cy + 0.02 * r);
+  g.lineTo(cx + 0.5 * r, cy - 0.42 * r);
+  g.lineTo(cx + 0.32 * r, cy + 0.5 * r);
+  g.lineTo(cx + 0.02 * r, cy + 0.26 * r);
+  g.lineTo(cx - 0.14 * r, cy + 0.44 * r);
+  g.lineTo(cx - 0.16 * r, cy + 0.16 * r);
+  g.closePath();
+  g.fill();
+}
+
+function tgNewsAd(g) {
+  g.fillStyle = TG_BLUE;
+  g.fillRect(0, 0, AD_W, AD_H);
+  tgPlane(g, AD_W - 190, 180, 120, '#fff', TG_BLUE);
+  g.textAlign = 'left';
+  g.fillStyle = '#fff';
+  const left = AD_W - 2 * AD_PAD - 260;
+  adText(g, 'НОВОСТИ', 70, 165, 110, 800, left);
+  adText(g, 'ИГРЫ', 70, 275, 110, 800, left);
+  g.fillStyle = '#0b2a3d';
+  adText(g, 't.me/izh_car', 70, 375, 72);
+  g.fillStyle = '#fff';
+  adText(g, 'нажми на щит — подпишись', 70, 450, 46, 700);
+}
+
+function tgChannelAd(g, logo) {
+  g.fillStyle = '#121212';
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = TG_BLUE;
+  g.fillRect(0, AD_H - 90, AD_W, 90);
+  if (logo) g.drawImage(logo, 70, 50, 560, 150);
+  else {
+    g.font = `italic ${adFont(120)}`;
+    g.textAlign = 'left';
+    g.fillStyle = '#ffd23f';
+    g.fillText('IZH CAR', 70, 170, 560);
+  }
+  tgPlane(g, AD_W - 180, 140, 100, TG_BLUE, '#fff');
+  g.textAlign = 'left';
+  g.fillStyle = '#fff';
+  adText(g, 'В TELEGRAM: @izh_car', 70, 300, 76);
+  g.fillStyle = '#9fb3bf';
+  adText(g, 'обновления · скриншоты · гонки', 70, 375, 52, 700);
+  g.fillStyle = '#fff';
+  adText(g, 'нажми на щит, чтобы открыть канал', 70, AD_H - 30, 46, 800);
 }
 
 // Даур — в цветах удмуртского флага: чёрный, белый, красный.
