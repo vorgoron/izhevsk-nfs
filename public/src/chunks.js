@@ -165,18 +165,22 @@ export class ChunkManager {
   }
 
   // Перед стартом: всё в радиусе сразу. Между квадратами отдаём кадр, чтобы полоса загрузки
-  // успевала перерисоваться; onProgress получает долю построенного.
+  // успевала перерисоваться; onProgress получает долю построенного. Возвращает число квадратов
+  // и время самой постройки без отданных кадров (для замера загрузки).
   async preload(px, pz, radius = this.radius, onProgress) {
     const todo = this.#wanted(px, pz, radius).filter(({ i, j }) => !this.loaded.has(this.#key(i, j)));
-    let t = performance.now();
+    let t = performance.now(), ms = 0;
     for (let n = 0; n < todo.length; n++) {
+      const t0 = performance.now();
       this.#build(todo[n].i, todo[n].j);
+      ms += performance.now() - t0;
       onProgress?.((n + 1) / todo.length);
       if (performance.now() - t > 50) {
         await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
         t = performance.now();
       }
     }
+    return { n: todo.length, ms };
   }
 }
 

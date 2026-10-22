@@ -56,10 +56,21 @@ const progress = (p, t) => {
 // Дать браузеру нарисовать кадр: продолжение после rAF + setTimeout идёт уже после отрисовки
 // (сразу в колбэке rAF тяжёлая работа задержала бы и сам кадр с новой подписью).
 const frame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
+// Этапы загрузки, мс: stage(name) закрывает прошлый этап и открывает новый, stage() — только закрывает.
+// Итог — строка `[load]` в консоли, window.loadTimes (CDP) и блок «загрузка» в `?perf`.
+const loadTimes = [{ name: 'до старта модуля', ms: Math.round(performance.now()) }];
+let stageAt = performance.now(), stageName = null;
+function stage(name, note) {
+  const t = performance.now();
+  if (stageName) loadTimes.push({ name: stageName, ms: Math.round(t - stageAt), ...(note && { note }) });
+  stageName = name;
+  stageAt = t;
+}
 
 // city.json (~13 МБ) читаем потоком, чтобы показывать скачанное. Под gzip Content-Length — сжатый
 // размер, а поток отдаёт распакованные байты, поэтому тогда размер неизвестен (total = 0).
 async function fetchJSON(url, onBytes) {
+  stage('скачивание');
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   if (!res.body) return res.json();
@@ -74,7 +85,11 @@ async function fetchJSON(url, onBytes) {
     got += value.length;
     onBytes(got, total);
   }
-  return JSON.parse(await new Blob(parts).text());
+  // got — распакованные байты; сжатый размер под gzip/br отсюда не виден.
+  stage('разбор', `${(got / 1024 / 1024).toFixed(1)} МБ без сжатия`);
+  const data = JSON.parse(await new Blob(parts).text());
+  stage();
+  return data;
 }
 // Отладочные ключи в адресе (белый экран на Android): ?lite — проще графика, ?nohud — без HTML
 // поверх канваса, ?lowpower — слабый GPU, ?noaa / ?aa — сглаживание.
@@ -112,6 +127,7 @@ async function main() {
   });
   progress(0.58, 'Строю рельеф и дороги…');
   await frame();
+  stage('рельеф и дороги');
 
   // На телефоне экономим: без MSAA, плотность пикселей не выше 1.5, тени мельче.
   const renderer = new THREE.WebGLRenderer({
@@ -145,6 +161,7 @@ async function main() {
   world.buildGraph();
   progress(0.66, 'Ставлю мосты и достопримечательности…');
   await frame();
+  stage('мосты и достопримечательности');
   // Город строится квадратами вокруг игрока (chunks.js); на телефоне — ближе и проще.
   const chunks = new ChunkManager(world, scene, renderer, { radius: Q.radius, texSize: Q.tex, treeNear: Q.treeNear, detailFar: Q.detailFar });
   // Подписи для разбивки треугольников в `?perf`: всё, что добавила в сцену make(), — под label.
@@ -251,9 +268,12 @@ async function main() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
   progress(0.7, 'Строю город вокруг…');
   await frame();
-  await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
+  stage('квадраты города');
+  const pre = await chunks.preload(car.pos.x, car.pos.y, 900, (f) => progress(0.7 + 0.25 * f));
+  stage(null, `${pre.n} шт., сама постройка ${Math.round(pre.ms)} мс`);
   progress(0.95, 'Трафик, заправки, светофоры…');
   await frame();
+  stage('трафик, светофоры, HUD и прочее');
   const skyDome = owned('небо', () => new Sky(scene, { low: qName !== 'high' || isTouch }));
   // Ночь: фары своей машины — прожектор без теней (днём выключен, см. DayNight).
   const headlight = new THREE.SpotLight('#ffeccc', 0, 90, 0.62, 0.55, 1.1);
@@ -1391,7 +1411,15 @@ async function main() {
   // Шейдеры компилируем заранее, иначе первый кадр после заставки подвисает.
   progress(0.98, 'Готовлю графику…');
   await frame();
+  stage('шейдеры');
   renderer.compile(scene, camera);
+  stage();
+  const loadTotal = Math.round(performance.now());
+  // Остаток — отданные кадры (frame()) и мелочи между этапами.
+  loadTimes.push({ name: 'между этапами', ms: loadTotal - loadTimes.reduce((sum, s) => sum + s.ms, 0) });
+  loadTimes.push({ name: 'итого до «Поехали»', ms: loadTotal });
+  window.loadTimes = loadTimes;
+  console.log('[load]', loadTimes.map((s) => `${s.name} ${s.ms}${s.note ? ` (${s.note})` : ''}`).join(' · '));
   progress(1);
   await startScreen();
   starting = false;
@@ -1422,7 +1450,7 @@ async function main() {
   const cullPos = new THREE.Vector3();
   const STEP = 1 / 120, MAX_STEPS = 8; // 8 шагов = 67 мс: до 15 fps игра идёт в обычном темпе
   let acc = 0;
-  const perf = flags.has('perf') ? createPerf(renderer, scene, camera, sun) : null;
+  const perf = flags.has('perf') ? createPerf(renderer, scene, camera, sun, loadTimes) : null;
   let nextFrame = 0;
   renderer.setAnimationLoop((now) => {
     // Предел кадров: пропускаем вызовы раньше срока (запас 1 мс на дрожание таймера).

@@ -65,7 +65,8 @@ function breakdown(scene, camera, light) {
 
 const k = (n) => (n >= 1e5 ? `${(n / 1e6).toFixed(2)}М` : `${(n / 1e3).toFixed(0)}т`).padStart(6);
 
-export function createPerf(renderer, scene, camera, light) {
+// loadTimes — этапы загрузки из main.js ({ name, ms, note }): постоянный блок внизу таблички.
+export function createPerf(renderer, scene, camera, light, loadTimes) {
   const el = document.createElement('div');
   el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:50;pointer-events:none;'
     + 'font:12px/1.35 ui-monospace,monospace;color:#fff;background:#000a;padding:6px 8px;'
@@ -132,6 +133,12 @@ export function createPerf(renderer, scene, camera, light) {
         `кадр: вызовов ${calls}  треуг. ${(triangles / 1000).toFixed(0)} тыс.`,
         `геом. ${geometries}  текст. ${textures}  px ${renderer.getPixelRatio()}`,
       ].join('\n');
+      // Загрузка — сразу под верхними строками: на телефоне низ длинной таблички уходит за экран.
+      if (loadTimes) {
+        el.textContent += '\n\nзагрузка, мс\n' + loadTimes
+          .map((s) => `${s.name.padEnd(30)}${String(s.ms).padStart(6)}${s.note ? `  ${s.note}` : ''}`)
+          .join('\n');
+      }
       if (scene) {
         const rows = breakdown(scene, camera, renderer.shadowMap.enabled ? light : null);
         const sum = rows.reduce((s, r) => s + r.tris + r.sTris, 0);
