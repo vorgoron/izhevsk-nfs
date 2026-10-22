@@ -1,5 +1,6 @@
 // Аркадная машинка: своя простая физика в плоскости + высота по поверхности.
 import * as THREE from 'three';
+import { RIDE_HANDLING } from './vehicles.js';
 
 // Скорость, разгон и сцепление — от модели (vehicles.js), здесь базовые величины.
 const NITRO_K = 1.3;      // нитро: верхняя скорость ×1.3
@@ -36,15 +37,19 @@ const DRIFT_K = 3, DRIFT_KEEP = [0.6, 0.5], DRIFT_ACCEL = 0.4;
 // Значение для покрытия: off — 0 асфальт … 1 грунт.
 const bySurface = ([road, dirt], off) => road + (dirt - road) * off;
 const STEER_RATE = 2.3;   // рад/с на средней скорости
+// Руль с клавиатуры — тяжелее, как в NFS: доворачивается медленнее (1/с; отпускается быстро), на скорости угол
+// меньше (STEER_FADE, м/с — скорость, на которой угол вдвое меньше). Сенсорный руль — как был.
+const STEER_IN = [8, 3.5], STEER_OUT = 8, STEER_FADE = [45, 36];
 // Крен кузова в повороте: рад на 1 м/с² бокового ускорения, предел; пружина подвески (жёсткость, демпфер).
 const ROLL_K = 0.005, ROLL_MAX = 0.1, ROLL_STIFF = 70, ROLL_DAMP = 9;
 
 // Шаг крена на подвеске к цели от бокового ускорения (скорость × угловая скорость по курсу).
 // o: { roll, rollV }; yaw — скорость изменения курса, рад/с (рост курса — поворот влево).
-function stepRoll(o, yaw, speed, dt) {
-  const target = Math.max(-ROLL_MAX, Math.min(ROLL_MAX, yaw * speed * ROLL_K));
+// k — мягкость подвески (посадка, RIDE_HANDLING): меньше — меньше крен и жёстче пружина, качается меньше.
+function stepRoll(o, yaw, speed, dt, k = 1) {
+  const target = Math.max(-ROLL_MAX * k, Math.min(ROLL_MAX * k, yaw * speed * ROLL_K * k));
   const sdt = Math.min(dt, 1 / 30);
-  o.rollV += ((target - o.roll) * ROLL_STIFF - o.rollV * ROLL_DAMP) * sdt;
+  o.rollV += ((target - o.roll) * ROLL_STIFF / k - o.rollV * ROLL_DAMP / Math.sqrt(k)) * sdt;
   o.roll += o.rollV * sdt;
 }
 // Трюки (как у Roadster): подскок на струях и полный оборот в воздухе — kickflip вокруг продольной
@@ -151,11 +156,12 @@ export class Car {
   }
 
   // Смена машины: модель и характеристики (максималка, км/ч, и разгон до 100 км/ч, с, — как в паспорте; сцепление
-  // относительно базы; nitro, hopper — уровни систем).
+  // относительно базы; nitro, hopper — уровни систем). Посадка модели (userData.ride) — крен, руль и сцепление.
   setModel(model, stats) {
     this.model = model;
     [this.maxSpeed, this.accel] = thrust(stats.kmh / 3.6, stats.t100);
-    this.grip = GRIP * stats.grip;
+    [this.rollK, this.steerK, this.rideGrip] = RIDE_HANDLING[model.userData?.ride] ?? RIDE_HANDLING.stock;
+    this.grip = GRIP * stats.grip * this.rideGrip;
     this.eco = stats.eco ?? 1;
     this.nitroLevel = stats.nitro ?? 1;
     this.hopper = stats.hopper ?? 1;
@@ -263,11 +269,13 @@ export class Car {
     if (input.brake && !air) vf -= Math.sign(vf) * Math.min(Math.abs(vf), HANDBRAKE * dt);
 
     // Руль: плавно к цели, на скорости — меньше угол.
+    const kb = input.steer == null ? 1 : 0; // 1 — клавиши
     const target = input.steer ?? (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    this.steer += (target - this.steer) * Math.min(1, dt * 8);
-    const speedFactor = Math.min(1, Math.abs(vf) / 6) / (1 + Math.abs(vf) / 45);
+    const rate = Math.abs(target) > Math.abs(this.steer) && target * this.steer >= 0 ? STEER_IN[kb] : STEER_OUT;
+    this.steer += (target - this.steer) * Math.min(1, dt * rate);
+    const speedFactor = Math.min(1, Math.abs(vf) / 6) / (1 + Math.abs(vf) / STEER_FADE[kb]);
     this.airSteer = air ? this.steer : 0;
-    const steerYaw = air ? this.steer * AIR_YAW : this.steer * STEER_RATE * speedFactor * Math.sign(vf || 1);
+    const steerYaw = air ? this.steer * AIR_YAW : this.steer * STEER_RATE * this.steerK * speedFactor * Math.sign(vf || 1);
 
     // Угол заноса: на сколько курс левее направления движения (рад, вправо — меньше нуля).
     const beta = Math.atan2(vr, Math.abs(vf));
@@ -418,7 +426,7 @@ export class Car {
     // Кузов кренится наружу поворота от бокового ускорения (скорость × угловая скорость) и
     // покачивается на подвеске — пружина с демпфером, после поворота чуть перекачивается обратно.
     const sus = { roll: this.bodyRoll, rollV: this.bodyRollV };
-    stepRoll(sus, -yawRate, vf, dt);
+    stepRoll(sus, -yawRate, vf, dt, this.rollK);
     this.bodyRoll = sus.roll; this.bodyRollV = sus.rollV;
     // Кочки на грунте: мелкая тряска кузова, сильнее на скорости.
     if (off > 0.05 && !air) {

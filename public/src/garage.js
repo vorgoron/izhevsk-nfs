@@ -5,7 +5,7 @@
 // а оплачиваются вместе кнопкой «Купить» в корзине. Цвета бесплатные. Улучшения — для своей машины или той, что
 // в корзине. Не купил и уехал — возвращаешься на ту машину, на которой заехал, с купленными деталями; корзина
 // с машинами и улучшениями остаётся до следующего захода (пока открыта игра).
-import { MODELS, DEFAULT_MODEL, pickOptions, shownOptions } from './vehicles.js';
+import { MODELS, DEFAULT_MODEL, pickOptions, shownOptions, RIDE_HANDLING } from './vehicles.js';
 import { formatMoney } from './money.js';
 import { UPGRADES, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './shop.js';
 import { PAINTS, paintOf, paintKey } from './paints.js';
@@ -185,7 +185,11 @@ export class Garage {
     }
     // Характеристики: штатные — жёлтым, прибавка от улучшений — зелёным, от улучшений в корзине — голубым.
     // Справа — цифра с корзиной: км/ч и секунды до 100.
-    const base = tuned(null, model), t = this.wallet ? tuned(this.wallet, model) : base, c = this.wallet ? tuned(this.#view(), model) : t;
+    const base = tuned(null, model), t = this.wallet ? tuned(this.wallet, model) : { ...base }, c = this.wallet ? tuned(this.#view(), model) : { ...t };
+    // Посадка (деталь «Подвеска») меняет сцепление: выбранная — в корзине, купленная — к улучшениям.
+    const ride = pickOptions(spec, this.choice.options).ride, rideGrip = RIDE_HANDLING[ride]?.[2] ?? 1;
+    c.grip *= rideGrip;
+    if (!this.wallet || ride === 'stock' || this.wallet.owns(optionKey(model, 'ride', ride))) t.grip *= rideGrip;
     const pct = (x, max) => `${Math.min(100, Math.round(x / max * 100))}%`;
     const num = { kmh: `${Math.round(c.kmh)} км/ч`, accel: `${c.t100.toFixed(1).replace('.', ',')} с` };
     const bar = (label, k, max) => `<div class="stat"><span>${label}</span><i style="--v:${pct(base[k], max)};--u:${pct(t[k], max)};--c:${pct(c[k], max)}"></i><b>${num[k] ?? ''}</b></div>`;

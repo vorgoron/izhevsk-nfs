@@ -168,6 +168,9 @@ const STYLE_SLOTS = [
   { key: 'chrome', name: 'Хром', any: true, variants: [['stock', 'штатный'], ['black', 'чёрный', 3000], ['paint', 'в цвет кузова', 4000]] },
 ];
 const RIDE = { stock: 0, low: -0.03, slam: -0.06, stance: -0.1, lift: 0.04 };
+// Посадка — это и пружины: ниже — короче и жёстче, меньше крен, руль острее, сцепление в повороте выше; выше — наоборот.
+// [крен ×, руль ×, сцепление ×] — для физики (Car.setModel) и полосы «сцепление» в гараже.
+export const RIDE_HANDLING = { stock: [1, 1, 1], low: [0.8, 1.05, 1.04], slam: [0.62, 1.1, 1.08], stance: [0.48, 1.15, 1.12], lift: [1.3, 0.94, 0.95] };
 // Ниже штатной посадки шина уже и чуть внутрь [доля ширины, сдвиг к оси, м]: верх колеса уходит под крыло, а не
 // прорезает его (у готовых моделей над шиной 0–2 см, крыло снаружи шины на ~2 см). Кузов не меняется.
 const TUCK = { low: [0.9, 0.005], slam: [0.82, 0.01], stance: [0.72, 0.02] };
@@ -602,6 +605,7 @@ export function buildPlayerModel(key, color, options) {
   const parts = vehicleParts(spec, { options }), style = pickOptions(spec, options);
   restyle(parts, style);
   const g = new THREE.Group();
+  g.userData.ride = style.ride; // посадка — для управляемости (Car.setModel)
   const paintMat = paintMaterial(color || spec.colors[0]); // обычный цвет или покрытие (paints.js)
   const meshes = [
     new THREE.Mesh(parts.paint, paintMat),
