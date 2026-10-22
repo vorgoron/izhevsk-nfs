@@ -817,7 +817,9 @@ async function main() {
     return u.href;
   };
   // Приложение по диплинку (tg://…): страница ушла в фон за 1,5 с — открылось (opened в ad_open), нет — приложения,
-  // видимо, нет, подсказываем, что искать. Переход — в той же вкладке: неизвестную схему браузер просто не откроет.
+  // видимо, нет: сообщение с запасной ссылкой (fallback). Сама её открыть игра не может — через 1,5 с это уже не
+  // нажатие игрока, и браузер заблокирует вкладку; нажатие на ссылку — новое. Переход по диплинку — в той же
+  // вкладке: неизвестную схему браузер просто не откроет.
   const openApp = (ad, poster) => {
     let left = false;
     const away = () => { left = true; };
@@ -829,7 +831,10 @@ async function main() {
       window.removeEventListener('blur', away);
       document.removeEventListener('visibilitychange', hidden);
       track('ad_open', { ad: ad.key, poster, url: ad.app, opened: left });
-      if (!left) notice(`Telegram не открылся — найдите канал ${ad.handle}`);
+      if (!left) notice('Telegram не открылся —', {
+        href: ad.fallback, text: ad.fallback.replace('https://', ''),
+        onClick: () => track('ad_open', { ad: ad.key, poster, url: ad.fallback, opened: true }),
+      });
     }, 1500);
   };
   // Нажатие без перетаскивания — по рекламному щиту? Ссылка рекламодателя или действие игры (build.js, ADVERTISERS).
@@ -1258,13 +1263,21 @@ async function main() {
     menu.sync();
   }
   // Сообщение плашкой по центру сверху (там же, где деньги).
-  function notice(text) {
+  // link — { href, text, onClick }: ссылка в конце, сообщение висит дольше, чтобы успеть нажать.
+  function notice(text, link) {
     const div = document.createElement('div');
     div.className = 'info';
     div.textContent = text;
+    if (link) {
+      const a = document.createElement('a');
+      Object.assign(a, { href: link.href, target: '_blank', rel: 'noopener', textContent: link.text });
+      a.addEventListener('click', () => link.onClick?.());
+      div.append(a);
+    }
     $('money-log').prepend(div);
-    setTimeout(() => div.classList.add('out'), 2600);
-    setTimeout(() => div.remove(), 3200);
+    const life = link ? 7000 : 2600;
+    setTimeout(() => div.classList.add('out'), life);
+    setTimeout(() => div.remove(), life + 600);
   }
 
   // ---------------------------------------------------------------- штрафы и награды

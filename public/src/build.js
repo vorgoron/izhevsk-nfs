@@ -1821,12 +1821,12 @@ export function buildPoleChunk(world, info, mats) {
 // Реклама — по рекламодателям (темам): у каждого щита свой, плакаты сменяются только его. У рекламодателя —
 // текстура-лента из его плакатов друг под другом и ещё двух первых (лента крутится по кругу без шва: лицевая
 // сторона показывает строки 0…P, обратная 1…P+1), смена — сдвигом offset.y, у всех щитов разом, как роллерный
-// щит. Нажатие на плакат — ссылка рекламодателя (url), приложение по диплинку (app, без запасной ссылки: t.me
-// в России заблокирован) или действие игры (act, main.js). share — доля щитов.
+// щит. Нажатие на плакат — ссылка рекламодателя (url), приложение по диплинку (app; не открылось — сообщение с
+// запасной ссылкой fallback) или действие игры (act, main.js). share — доля щитов.
 export const ADVERTISERS = [
   { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.3 },
   { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.2 },
-  { key: 'tg', name: 'Telegram-канал', app: 'tg://resolve?domain=izh_car', handle: '@izh_car', posters: [tgNewsAd, tgChannelAd], share: 0.2 },
+  { key: 'tg', name: 'Telegram-канал', app: 'tg://resolve?domain=izh_car', fallback: 'https://t.me/izh_car', posters: [tgNewsAd, tgChannelAd], share: 0.2 },
   { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.18 },
   // «Место свободно» — заявка на рекламу (меню → «Реклама на щитах», adrequest.js).
   { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.12 },
