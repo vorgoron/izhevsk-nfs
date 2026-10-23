@@ -984,11 +984,13 @@ def construction_cranes(inside, roads, road_nodes, buildings, landmarks):
         return not any(x0 - 3 < x < x1 + 3 and z0 - 3 < z < z1 + 3 and point_in(x, z, p) for x0, z0, x1, z1, p in bboxes)
 
     taken = [(l["x"], l["z"]) for l in landmarks if str(l.get("key", "")).startswith("respublika2")]  # там свой кран
+    # Краны, отмеченные в OSM (man_made=crane, рисуются с towers), — рядом своего не ставим.
+    osm = [project(*nodes[n]) for n, t in node_tags.items() if t.get("man_made") == "crane" and n in nodes]
     out = []
     centroid = lambda pts: (sum(x for x, _ in pts) / len(pts), sum(z for _, z in pts) / len(pts))  # noqa: E731
     for pts, a, lv in sorted(houses, key=lambda h: -h[1]):
         cx, cz = centroid(pts)
-        if any(math.hypot(cx - x, cz - z) < CRANE_GAP for x, z in taken):
+        if any(math.hypot(cx - x, cz - z) < CRANE_GAP for x, z in taken) or any(math.hypot(cx - x, cz - z) < 120 for x, z in osm):
             continue
         spot = None
         for vx, vz in pts:
