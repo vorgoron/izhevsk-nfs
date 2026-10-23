@@ -195,6 +195,11 @@ def is_forest(tags):
     return tags.get("landuse") == "forest" or tags.get("natural") == "wood"
 
 
+# Ошибки OSM, которых на месте нет: way → почему. 1462405149 — «natural=water» 26 × 10 м во дворе у Удмуртской
+# (x 1290, z −75), через него идёт проезд; по отзыву воды там нет.
+SKIP_AREAS = {1462405149: "вода во дворе у Удмуртской"}
+
+
 def area_kind(tags):
     if tags.get("natural") == "water" or tags.get("waterway") == "riverbank" or tags.get("landuse") in ("reservoir", "basin"):
         return "water"
@@ -2145,7 +2150,7 @@ def build_city():
             buildings.append(building_entry(pts, tags, wid, lm))
             continue
         kind = area_kind(tags)
-        if kind:
+        if kind and wid not in SKIP_AREAS:
             pts = ring_xy(nds)
             if len(pts) >= 3 and inside(pts):
                 areas.append({"k": kind, "p": pts, **({"f": 1} if is_forest(tags) else {})})
