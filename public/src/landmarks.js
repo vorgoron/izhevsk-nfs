@@ -3345,6 +3345,21 @@ export function buildLandmarks(world) {
     }
   }
 
+  // Башенные краны на стройках из OSM (city.cranes, fetch_city.construction_cranes): каркас строится один на высоту
+  // и стрелу (с шагом 5 м), дальше — копии с общей геометрией; стрела у каждого ходит в свою сторону и в своей фазе.
+  const cranes = new Map();
+  for (const [x, z, h, jib, a] of world.city.cranes || []) {
+    const H = Math.round(h / 5) * 5, J = Math.round(jib / 5) * 5, k = `${H}/${J}`;
+    if (!cranes.has(k)) cranes.set(k, towerCrane(H, J, 0));
+    const c = cranes.get(k).clone(), slew = c.children[1];
+    slew.userData.update = (t) => { slew.rotation.y = -a + 0.7 * Math.sin(t * 0.045 + x); };
+    // Каркас уже слит по материалам — без keep (flatten и рамка на каждый кран — +2 с загрузки).
+    group.add(place(c, x, world.terrain(x, z), z));
+    animated.push(slew.userData.update);
+    far.push({ obj: c, x, z, r: Math.max(H, J) });
+    world.addCollider(square(x, z, 2.5));
+  }
+
   // Парадные лестницы (walks.js, GRAND_STAIRS) — в координатах города, не в системе храма.
   for (const p of world.city.paths) if (p.grand) keep(grandStairs(world, grandLayout(world, p)));
 

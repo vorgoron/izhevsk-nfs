@@ -46,10 +46,13 @@ python3 tools/shop_walls.py
 ```
 
 Автобусы трафика ездят только по своим маршрутам — `buses` в `city.json` (отношения `route=bus` из OSM, цепочки
-узлов дорог; маршрут кончился — на другой через тот же узел). Дописать их в готовый `city.json` из кеша OSM, без пересборки:
+узлов дорог; маршрут кончился — на другой через тот же узел). На стройках — башенные краны (`cranes`: у строящегося
+дома `building=construction` или посреди площадки `landuse=construction`, по одному на стройку, стрела — на дом).
+Дописать то и другое в готовый `city.json` из кеша OSM, без пересборки:
 
 ```sh
-python3 tools/bus_routes.py
+python3 tools/patch_city.py          # buses и cranes
+python3 tools/patch_city.py cranes   # только краны
 ```
 
 Сырые ответы кешируются в `data/raw/`. OSM берётся из основного API тайлами ~0.6 × 0.6 км

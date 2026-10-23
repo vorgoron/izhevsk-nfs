@@ -949,6 +949,75 @@ def bus_routes(node_index):
     return out
 
 
+CRANE_GAP = 90       # м: на одной стройке — один кран
+CRANE_SITE = (1500, 150000)  # м²: площадка стройки (landuse=construction) — меньше это не стройка дома, больше — район
+
+
+def construction_cranes(inside, roads, road_nodes, buildings, landmarks):
+    """Башенные краны на стройках: у строящегося дома (building=construction, от 300 м²) и на площадках
+    landuse=construction. Кран — снаружи у угла дома (6 м от стены), не на дороге и не внутри другого дома, стрела —
+    на дом; на голой площадке — посередине. Высота — над домом на 12 м (этажность из тегов или 9 этажей), не ниже 30 м.
+    Возвращает [x, z, высота, стрела, угол стрелы от +x к +z]."""
+    houses, sites = [], []
+    for wid, (nds, tags) in ways.items():
+        if len(nds) < 4 or nds[0] != nds[-1]:
+            continue
+        if tags.get("building") == "construction" or tags.get("landuse") == "construction":
+            pts = ring_xy(nds)
+            if len(pts) < 3 or not inside(pts):
+                continue
+            a = poly_area(pts)
+            if tags.get("building") == "construction" and a >= 300:
+                lv = parse_num(tags.get("building:levels")) or 9
+                houses.append((pts, a, lv))
+            elif tags.get("landuse") == "construction" and CRANE_SITE[0] <= a <= CRANE_SITE[1]:
+                sites.append((pts, a))
+    road_segs = []
+    for r in roads:
+        for i in range(1, len(r["n"])):
+            (ax, az), (bx, bz) = road_nodes[r["n"][i - 1]], road_nodes[r["n"][i]]
+            road_segs.append((min(ax, bx), min(az, bz), max(ax, bx), max(az, bz), ax, az, bx, bz, r["w"] / 2))
+    bboxes = [(min(x for x, _ in b["p"]), min(z for _, z in b["p"]), max(x for x, _ in b["p"]), max(z for _, z in b["p"]), b["p"])
+              for b in buildings]
+
+    def free(x, z):
+        for x0, z0, x1, z1, ax, az, bx, bz, hw in road_segs:
+            if x0 - hw - 4 < x < x1 + hw + 4 and z0 - hw - 4 < z < z1 + hw + 4:
+                dx, dz = bx - ax, bz - az
+                t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz or 1)))
+                if math.hypot(ax + dx * t - x, az + dz * t - z) < hw + 4:
+                    return False
+        return not any(x0 - 3 < x < x1 + 3 and z0 - 3 < z < z1 + 3 and point_in(x, z, p) for x0, z0, x1, z1, p in bboxes)
+
+    taken = [(l["x"], l["z"]) for l in landmarks if str(l.get("key", "")).startswith("respublika2")]  # там свой кран
+    out = []
+    centroid = lambda pts: (sum(x for x, _ in pts) / len(pts), sum(z for _, z in pts) / len(pts))  # noqa: E731
+    for pts, a, lv in sorted(houses, key=lambda h: -h[1]) + [(p, a, None) for p, a in sorted(sites, key=lambda s: -s[1])]:
+        cx, cz = centroid(pts)
+        if any(math.hypot(cx - x, cz - z) < CRANE_GAP for x, z in taken):
+            continue
+        spot = None
+        if lv is not None:
+            for vx, vz in pts:
+                d = math.hypot(vx - cx, vz - cz) or 1
+                x, z = vx + (vx - cx) / d * 6, vz + (vz - cz) / d * 6
+                if free(x, z):
+                    spot = (x, z)
+                    break
+        elif free(cx, cz):
+            spot = (cx, cz)
+        if not spot:
+            continue
+        x, z = spot
+        h = max(30.0, (lv or 9) * 3 + 12)
+        jib = max(25.0, min(50.0, math.sqrt(a) * 0.9))
+        ang = math.atan2(cz - z, cx - x) if lv is not None else 0.0
+        out.append([round(x, 1), round(z, 1), round(h, 1), round(jib, 1), round(ang, 2)])
+        taken.append((cx, cz))
+    print(f"cranes: {len(out)} (домов на стройке {len(houses)}, площадок {len(sites)})")
+    return out
+
+
 def transport_stops(inside):
     """Автобусные и троллейбусные остановки: [x, z, навес (1 — есть, 0 — нет, 2 — не размечен)].
     Точки highway=bus_stop / platform у тротуара; повторы ближе 15 м — одна. Трамвайные пока не берём."""
@@ -2172,6 +2241,7 @@ def build_city():
         "fuel": fuel,
         "trams": tram_routes(aligned),
         "buses": bus_routes(road_node_index),
+        "cranes": construction_cranes(inside, roads, road_nodes, buildings, landmark_entries()),
         "stops": transport_stops(inside),
         "billboards": billboards(inside),
         "shops": shop_signs(buildings, roads, road_nodes),
