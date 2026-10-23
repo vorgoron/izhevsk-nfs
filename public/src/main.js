@@ -398,6 +398,7 @@ async function main() {
   const trams = owned('трамваи', () => new Trams(world, scene, sound));
   game.trams = trams;
   traffic.trams = trams; // трафик ждёт трамваи, трамваи — трафик на путях
+  traffic.race = race;
   trams.traffic = traffic;
   // Куда можно сесть после трюка: крыша машины трафика, трамвая или дома под точкой, не выше y + 0.5.
   // Машина и трамвай везут стоящего на них со своей скоростью.

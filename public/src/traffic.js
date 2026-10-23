@@ -15,6 +15,12 @@ const SPEED = {
 const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, pickup: 3, vesta: 13 };
 const BUSES = 6;
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
+// В гонке трафика меньше: остаётся каждая RACE_KEEP-я машина (v.thin — лишняя), лишние уходят за кадром.
+// Общая гонка с друзьями — трафик «по расписанию» вдоль её маршрута (#line): машины в обе стороны через LINE_GAP м
+// (±40 %) со скоростью LINE_V, место — только от общего времени гонки и её старта, у всех одно и то же. Ближе
+// LINE_END м к старту и финишу их нет (там стартовая сетка и перескок с конца маршрута в начало).
+const RACE_KEEP = 0.35, LINE_GAP = 160, LINE_V = 10, LINE_END = 60;
+const LINE_MIX = { ...MIX, bus: 2 };
 const GRID = 100; // м: клетка сетки рёбер
 const CORNER = 9; // м: столько до узла и после него поворот идёт по кривой, а не углом
 const TURN = 0.3; // рад: излом маршрута круче — поворот, его кривая берёт прямую и через короткие рёбра
@@ -86,6 +92,8 @@ export class Traffic {
     this.enabled = true;
     this.signals = null; // выставляет Signals
     this.trams = null;   // выставляет main.js: трамваи — препятствие, сквозь них не едем
+    this.race = null;    // выставляет main.js: в гонке трафика меньше, в общей — по расписанию (#line)
+    this.line = null;
     this.honks = []; // гудки за кадр: { x, z, bus, long } — забирает Sound.traffic
     this.#buildGraph();
 
@@ -130,7 +138,7 @@ export class Traffic {
           mood: 0.85 + ((n * 37) % 30) / 100, // кто-то едет бодрее
           edge: null, next: null, s: 0, speed: 0,
           x: 0, z: 0, heading: 0, dx: 0, dz: 1, hit: 0, stuck: 0, ghost: 0, active: false,
-          waitPlayer: 0, honkCool: 0,
+          waitPlayer: 0, honkCool: 0, thin: ((n * 7) % 20) / 20 >= RACE_KEEP, slot: null,
         });
       }
     }
@@ -228,7 +236,8 @@ export class Traffic {
 
   // Расставить трафик вокруг точки (старт, респаун).
   reset(px, pz) {
-    for (const v of this.vehicles) v.active = false;
+    for (const v of this.vehicles) { v.active = false; v.slot = null; v.knock = null; }
+    if (this.line) { for (const c of this.line.cars) { c.v = null; c.dead = false; } return; } // расставит #lineUpdate
     for (const v of this.vehicles) this.#spawn(v, px, pz, 25);
   }
 
@@ -242,6 +251,9 @@ export class Traffic {
   update(dt, car) {
     if (!this.enabled) return;
     const px = car.pos.x, pz = car.pos.y;
+    const race = this.race, racing = race && (race.state === 'running' || race.state === 'countdown');
+    const lineAt = racing && race.shared ? race.startAt : null;
+    if (lineAt !== (this.line?.at ?? null)) this.#setLine(lineAt);
     // Трамваи рядом с трафиком — точки вдоль вагона (вагон длинный, поперёк дороги его центр может быть в стороне),
     // и где они будут через 1 и 2 с: трамвай, подъезжающий к перекрёстку сбоку, пропускаем заранее.
     this.tramPts = [];
@@ -251,8 +263,12 @@ export class Traffic {
         this.tramPts.push([t.x + t.dx * s, t.z + t.dz * s, t.dx, t.dz]);
       }
     }
+    if (this.line) this.#lineUpdate(dt, px, pz);
     for (const v of this.vehicles) {
-      if (!v.active || Math.hypot(v.x - px, v.z - pz) > DESPAWN) this.#spawn(v, px, pz, SPAWN_MIN);
+      if (this.line) { if (v.active && v.knock) this.#tumble(v, dt); continue; }
+      const d = v.active ? Math.hypot(v.x - px, v.z - pz) : Infinity;
+      if (racing && v.thin) { if (d > SPAWN_MIN) v.active = false; }
+      else if (d > DESPAWN) this.#spawn(v, px, pz, SPAWN_MIN);
       if (v.active && v.knock) this.#tumble(v, dt);
       else if (v.active) this.#drive(v, dt, car);
     }
@@ -544,6 +560,7 @@ export class Traffic {
       for (let j = i + 1; j < vs.length; j++) {
         const b = vs[j];
         if (a.knock || b.knock) continue; // этих разводит удар (#collideKnocked)
+        if (a.slot || b.slot) continue; // по расписанию друг на друга не наезжают
         const rx = b.x - a.x, rz = b.z - a.z;
         if (Math.abs(rx) > 14 || Math.abs(rz) > 14) continue;
         if (a.dx * b.dx + a.dz * b.dz < -0.3) continue; // встречные — на своих полосах
@@ -694,7 +711,10 @@ export class Traffic {
     }
     if (Math.hypot(k.vx, k.vz) < 0.3 && Math.abs(k.w) < 0.15) k.rest += dt;
     else k.rest = 0;
-    if (k.rest > 1.2) this.#rejoin(v);
+    if (k.rest > 1.2) {
+      if (v.slot) { v.knock = null; v.speed = 0; v.slot.dead = true; } // сбитая по расписанию — стоит, пока не уедем
+      else this.#rejoin(v);
+    }
   }
 
   // Вернуть вставшую машину на полосу: место на ребре — проекция, а отличие от полосы (сдвиг и курс)
@@ -761,6 +781,81 @@ export class Traffic {
   }
 
   // Трафик дымит только рядом с игроком.
+  // Трафик общей гонки: машины по расписанию вдоль маршрута race (at — её старт, мс по часам сервера; от него и
+  // случайные числа). Рёбра маршрута — улица (высота, звук ударов), можно ли по ним в эту сторону (односторонние) и
+  // сдвиг полосы вправо от оси.
+  #setLine(at) {
+    for (const v of this.vehicles) { v.active = false; v.slot = null; v.knock = null; }
+    this.line = null;
+    if (at == null) return;
+    const race = this.race, w = this.world, { route, cum, path } = race, L = race.length;
+    const segs = [];
+    for (let i = 1; i < route.length; i++) {
+      const a = path[i - 1], b = path[i], road = w.graph.get(a)?.find((e) => e[0] === b)?.[2] ?? null;
+      let fwd = true, back = true;
+      if (road?.ow) { const k = road.n.indexOf(a); fwd = road.n[k + 1] === b; back = !fwd; }
+      const [ax, az] = route[i - 1], [bx, bz] = route[i], len = cum[i] - cum[i - 1] || 1;
+      segs.push({ road, fwd, back, off: road ? Math.max(1.6, road.w / 4) : 2, ax, az, len, dx: (bx - ax) / len, dz: (bz - az) / len });
+    }
+    let seed = (at % 2147483647) | 0;
+    const rnd = () => { // mulberry32
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const kinds = Object.entries(LINE_MIX), sum = kinds.reduce((a, [, n]) => a + n, 0);
+    const pick = () => { let r = rnd() * sum; for (const [k, n] of kinds) if ((r -= n) <= 0) return k; return kinds[0][0]; };
+    const cars = [];
+    for (const dir of [1, -1]) {
+      for (let s = rnd() * LINE_GAP; s < L; s += LINE_GAP * (0.6 + rnd() * 0.8)) {
+        const kind = pick(), colors = this.kinds.find((k) => k.key === kind).colors;
+        cars.push({ s0: s, dir, kind, color: new THREE.Color(colors[(rnd() * colors.length) | 0]), v: null, dead: false });
+      }
+    }
+    this.line = { at, segs, cars, L };
+  }
+
+  // Точка оси маршрута в s м от старта и номер ребра.
+  #linePt(s) {
+    const { segs, L } = this.line;
+    s = Math.max(0, Math.min(L, s));
+    let lo = 0, hi = segs.length - 1;
+    const cum = this.race.cum;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (cum[m] <= s) lo = m; else hi = m - 1; }
+    const e = segs[lo], k = Math.min(e.len, s - cum[lo]);
+    return [e.ax + e.dx * k, e.az + e.dz * k, lo];
+  }
+
+  #lineUpdate(dt, px, pz) {
+    const { cars, segs, L } = this.line, t = (this.race.clock() - this.line.at) / 1000;
+    for (const c of cars) {
+      const v = c.v;
+      if (v) { v.honkCool -= dt; v.hit -= dt; }
+      if (c.dead || v?.knock) { // сбили: стоит, где встала, пока не отъедем
+        if (v && !v.knock && Math.hypot(v.x - px, v.z - pz) > SPAWN_MIN) { v.active = false; v.slot = null; c.v = null; }
+        continue;
+      }
+      const s = (((c.s0 + c.dir * LINE_V * t) % L) + L) % L;
+      const [cx, cz, i] = this.#linePt(s), e = segs[i];
+      // Направление — по точкам в 5 м до и после (на изломе оси не скачет), сдвиг полосы — средний по трём точкам.
+      const [ax, az] = this.#linePt(s - 5), [bx, bz] = this.#linePt(s + 5);
+      const l = Math.hypot(bx - ax, bz - az) || 1, tx = (bx - ax) / l * c.dir, tz = (bz - az) / l * c.dir;
+      const off = (segs[this.#linePt(s - 6)[2]].off + e.off + segs[this.#linePt(s + 6)[2]].off) / 3;
+      const x = cx - tz * off, z = cz + tx * off;
+      const show = s > LINE_END && s < L - LINE_END && (c.dir > 0 ? e.fwd : e.back) && Math.hypot(x - px, z - pz) < DESPAWN;
+      if (!show) { if (v) { v.active = false; v.slot = null; c.v = null; } continue; }
+      if (!v) {
+        const free = this.vehicles.find((o) => !o.active && !o.slot && o.kind === c.kind);
+        if (!free) continue; // все такие заняты — эту не видно
+        Object.assign(free, { slot: c, active: true, knock: null, blend: null, hit: 0, acc: 0, roll: 0, rollV: 0, pitch: 0, pitchV: 0 });
+        free.color.copy(c.color);
+        c.v = free;
+      }
+      Object.assign(c.v, { x, z, dx: tx, dz: tz, heading: Math.atan2(tx, tz), speed: LINE_V, edge: e });
+    }
+  }
+
   #sync(dt, px, pz) {
     const p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), e = new THREE.Euler(0, 0, 0, 'YXZ');
     const w = this.world;

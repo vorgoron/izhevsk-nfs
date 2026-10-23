@@ -117,6 +117,7 @@ export class Race {
     this.shared = false;
     this.startAt = null;
 
+    this.path = path; // узлы графа (трафик общей гонки берёт по ним улицы)
     this.route = path.map((id) => w.nodes[id]);
     this.checkpoints = [];
     this.cum = [0]; // пройдено по маршруту до узла i, м
