@@ -724,7 +724,7 @@ function troitsky({ L, W }) {
   g.add(dome(s * 0.3 + 0.1, M.teal, cx + s / 2, 9, 0, 0.5));
   // Центральный барабан и большой бирюзовый купол с золотой главкой.
   const dr = s * 0.27;
-  g.add(cyl(dr, 7, G, cx, 17, 0, 20));
+  g.add(cyl(dr, 7.6, G, cx, 16.4, 0, 20)); // низ — в кровле: у края барабана скат ~16.8 м
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2, wnd = archWindow(0.9, 2.4, 0, 0, 0);
     wnd.position.set(cx + Math.cos(a) * (dr + 0.02), 19, Math.sin(a) * (dr + 0.02));
@@ -738,7 +738,7 @@ function troitsky({ L, W }) {
   // Малые главы по углам — золотые на зелёных барабанах.
   for (const [dx, dz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
     const x = cx + dx * s * 0.36, z = dz * s * 0.36;
-    g.add(cyl(dr * 0.32, 3.4, G, x, 17.4, z, 12));
+    g.add(cyl(dr * 0.32, 5.2, G, x, 15.6, z, 12)); // от карниза: скат под главой ~16.1–16.5 м, с 17.4 висели
     g.add(cyl(dr * 0.32 + 0.2, 0.4, Wt, x, 20.6, z, 12));
     g.add(onion(dr * 0.36, dr * 0.8, x, 21, z));
   }
