@@ -3427,7 +3427,8 @@ export function buildLandmarks(world) {
       default:
         break; // только перекраска (в buildBuildings)
     }
-    if (p && lm.mode === 'replace' && lm.key !== 'stadium') world.addCollider(p); // у стадиона внутри поле
+    // У стадиона внутри поле; переход УдГУ — над дорогой, стены у него только под башней и порталом (в case).
+    if (p && lm.mode === 'replace' && lm.key !== 'stadium' && lm.key !== 'udsu_bridge') world.addCollider(p);
     if (obj) keep(obj);
     // Корпус завода — под меткой башни; у «Республик» метка одна на очередь.
     // r — радиус контура: метка в HUD меряет расстояние до края, а не до центра.
