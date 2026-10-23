@@ -2517,13 +2517,14 @@ function udmPanel(g, W, H) {
   const base = Math.round(H * 0.125), cy = (H - base) / 2;
   g.fillStyle = BLACK;
   g.fillRect(0, 0, W, H);
-  const star = (x, y, r, col) => { // 16 вершин: лучи на 0°, 45°… и впадины между ними
+  // Удмуртская звезда (как на гербе): крест, у каждого рукава на конце треугольный вырез — по два луча вверх, вниз и в
+  // стороны. Рукав и вырез — по трети радиуса.
+  const K = 1 / 3, SHAPE = [[0, -1 + K], [K, -1], [K, -K], [1, -K], [1 - K, 0], [1, K], [K, K], [K, 1], [0, 1 - K], [-K, 1],
+    [-K, K], [-1, K], [-1 + K, 0], [-1, -K], [-K, -K], [-K, -1]];
+  const star = (x, y, r, col) => {
     g.fillStyle = col;
     g.beginPath();
-    for (let i = 0; i < 16; i++) {
-      const a = (i * Math.PI) / 8 - Math.PI / 2, rr = i % 2 ? r * 0.62 : r;
-      g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
-    }
+    for (const [u, v] of SHAPE) g.lineTo(x + u * r, y + v * r);
     g.closePath();
     g.fill();
   };
