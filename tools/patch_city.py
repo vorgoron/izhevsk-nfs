@@ -8,6 +8,7 @@ cranes — краны на стройках, towers — высокое по то
 """
 import glob
 import json
+import math
 import os
 import sys
 
@@ -69,7 +70,31 @@ def ruins(city):
     return city["buildings"]
 
 
-PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes, "towers": towers, "buildings": ruins}
+def fences(city):
+    """Переопределения заборов (fetch_city.FENCE_OVERRIDE): вид и высота у кусков, лежащих на этом пути OSM."""
+    n = 0
+    for wid, (kind, h) in fetch_city.FENCE_OVERRIDE.items():
+        if wid not in fetch_city.ways:
+            continue
+        way = [fetch_city.project(*fetch_city.nodes[i]) for i in fetch_city.ways[wid][0] if i in fetch_city.nodes]
+        segs = list(zip(way, way[1:]))
+
+        def on(x, z):
+            for (ax, az), (bx, bz) in segs:
+                dx, dz = bx - ax, bz - az
+                t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz or 1)))
+                if math.hypot(ax + dx * t - x, az + dz * t - z) < 0.3:
+                    return True
+            return False
+        for f in city["fences"]:
+            if all(on(x, z) for x, z in f["p"]):
+                f["k"], f["h"] = kind, h
+                n += 1
+    print(f"fences: переопределено {n} кусков")
+    return city["fences"]
+
+
+PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes, "towers": towers, "buildings": ruins, "fences": fences}
 
 
 def main():

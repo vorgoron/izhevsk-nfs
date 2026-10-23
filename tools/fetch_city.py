@@ -1282,6 +1282,11 @@ def fence_kind(tags, ctx):
     return {"industrial": "panel", "village": None}.get(ctx, "bars")
 
 
+# Заборы, которые в OSM размечены не так, как выглядят: way → (вид, высота). 231428834 — стена водосброса заводской
+# плотины у проезда Дерябина: на деле профлист ~3,2 м, расписанный удмуртскими звёздами и «IZHEVSK» (по фото, отзыв).
+FENCE_OVERRIDE = {231428834: ("udm", 3.2)}
+
+
 def fences(inside, roads, road_nodes, areas, buildings, footbridges):
     """Заборы, стены, изгороди: [{"k": вид, "h": высота, "p": точки}], уже с проёмами — ворота и
     калитки (точки barrier=gate… на линии), тропинки через забор, дороги поперёк и сам забор на полотне.
@@ -1422,6 +1427,7 @@ def fences(inside, roads, road_nodes, areas, buildings, footbridges):
             kind = "wood" if wid % 3 else "prof"
         h = parse_num(tags.get("height"))
         h = round(min(max(h, 0.5), 4.0), 1) if h else FENCE_H[kind]
+        kind, h = FENCE_OVERRIDE.get(wid, (kind, h))
 
         def at(s):
             i = min(max(1, next((k for k in range(1, len(acc)) if acc[k] >= s), len(acc) - 1)), len(acc) - 1)

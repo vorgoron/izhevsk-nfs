@@ -2380,12 +2380,15 @@ const FENCE = {
   hedge: { t: 0.9, len: 2, vm: 1, tint: ['#ffffff', '#dce8d2'] },
   jersey: { t: 0.6, len: 2, vm: null, tint: ['#ffffff'] },
   stucco: { t: 0.6, len: 3, vm: null, tint: ['#ffffff', '#f4f2ec'] }, // белая оштукатуренная стена с филёнками (у завода)
+  // Профлист на плотине у проезда Дерябина (FENCE_OVERRIDE в fetch_city.py): чёрный, удмуртские звёзды, «IZHEVSK».
+  // road — стоит вровень с соседней дорогой (на плотине рельеф у водосброса ниже полотна), стенка до земли.
+  udm: { t: 0.08, len: 25.6, vm: null, tint: ['#ffffff'], road: true },
 };
 const FENCE_PIECE = 5;  // м: забор дробится, чтобы идти по рельефу (меш рельефа — треугольники 15 м)
 const FENCE_SINK = 0.3; // м: низ уходит в землю — на склоне не висит
 
 function fenceTexture(kind, renderer) {
-  const W = 256, H = kind === 'brick' || kind === 'hedge' ? 128 : 256;
+  const W = kind === 'udm' ? 2048 : 256, H = kind === 'brick' || kind === 'hedge' ? 128 : 256;
   const c = document.createElement('canvas');
   c.width = W;
   c.height = H;
@@ -2487,6 +2490,8 @@ function fenceTexture(kind, renderer) {
       g.fillStyle = `rgb(${40 + v * 50 | 0},${70 + v * 60 | 0},${30 + v * 30 | 0})`;
       g.fillRect(rnd() * W, rnd() * H, 2 + rnd() * 3, 2 + rnd() * 3);
     }
+  } else if (kind === 'udm') { // роспись плотины (по фото): по чёрному гофру — восьмиконечные звёзды, полосы, надпись
+    udmPanel(g, W, H);
   } else { // jersey: бетонные блоки со швом, красно-белая полоса поверху
     g.fillStyle = '#b8b4ac';
     g.fillRect(0, 0, W, H);
@@ -2502,6 +2507,66 @@ function fenceTexture(kind, renderer) {
   if (FENCE[kind].vm) tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return tex;
+}
+
+// Забор плотины: снизу бетонный цоколь (0,4 м из 3,2), выше чёрный профлист; на нём большие восьмиконечные звёзды
+// кольцами (красный — белый — чёрный — красный — белый — красный), между ними белые полосы с малой белой звездой и
+// надпись IZHEVSK. Поверх — светлые полосы гофра.
+function udmPanel(g, W, H) {
+  const RED = '#d22b2b', WHITE = '#efefea', BLACK = '#141416';
+  const base = Math.round(H * 0.125), cy = (H - base) / 2;
+  g.fillStyle = BLACK;
+  g.fillRect(0, 0, W, H);
+  const star = (x, y, r, col) => { // 16 вершин: лучи на 0°, 45°… и впадины между ними
+    g.fillStyle = col;
+    g.beginPath();
+    for (let i = 0; i < 16; i++) {
+      const a = (i * Math.PI) / 8 - Math.PI / 2, rr = i % 2 ? r * 0.62 : r;
+      g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    g.closePath();
+    g.fill();
+  };
+  const big = (x, r) => [[1, RED], [0.86, WHITE], [0.74, BLACK], [0.62, RED], [0.5, WHITE], [0.4, RED]].forEach(([k, c]) => star(x, cy, r * k, c));
+  const band = (x0, x1) => { // белые полосы и малая звезда посередине
+    g.fillStyle = WHITE;
+    const xm = (x0 + x1) / 2;
+    for (const dy of [-34, -12, 12, 34]) {
+      const w = Math.abs(dy) > 20 ? 0.75 : 1;
+      g.fillRect(x0, cy + dy - 4, (xm - x0) * w - 26, 8);
+      g.fillRect(xm + 26 + (x1 - xm) * (1 - w), cy + dy - 4, (x1 - xm) * w - 26, 8);
+    }
+    star(xm, cy, 24, WHITE);
+  };
+  big(150, 108);
+  band(270, 560);
+  big(680, 90);
+  band(790, 1020);
+  big(1130, 78);
+  g.fillStyle = WHITE;
+  g.font = `900 ${Math.round(H * 0.42)}px Impact, "Arial Black", sans-serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.save();
+  g.translate(1440, cy);
+  g.scale(0.8, 1);
+  g.fillText('IZHEVSK', 0, 4);
+  g.restore();
+  for (const x of [1700, 1830, 1950]) big(x, 56);
+  // Гофр: светлая и тёмная полоски через 10 px.
+  for (let x = 0; x < W; x += 10) {
+    g.fillStyle = 'rgba(255,255,255,0.07)';
+    g.fillRect(x, 0, 3, H - base);
+    g.fillStyle = 'rgba(0,0,0,0.18)';
+    g.fillRect(x + 6, 0, 2, H - base);
+  }
+  // Цоколь: бетон с потёками и швами.
+  g.fillStyle = '#8e8c86';
+  g.fillRect(0, H - base, W, base);
+  g.fillStyle = '#6f6d68';
+  for (let x = 0; x < W; x += 96) g.fillRect(x, H - base, 3, base);
+  g.fillStyle = 'rgba(40,40,40,0.25)';
+  g.fillRect(0, H - base, W, 3);
 }
 
 function mulberry(a) {
@@ -2565,7 +2630,9 @@ export function buildFenceChunk(world, info, mats) {
         if (mx < x0 || mx >= x1 || mz < z0 || mz >= z1) continue;
         if (inBuilding(mx, mz) || world.isWater(mx, mz)) continue;
         const pax = ax + ux * ta, paz = az + uz * ta, pbx = ax + ux * tb, pbz = az + uz * tb;
-        const ya = world.terrain(pax, paz), yb = world.terrain(pbx, pbz);
+        // Вровень с дорогой: самая высокая поверхность в 3 м по обе стороны (на сам забор не попадаем).
+        const lvl = (x, z) => Math.max(world.terrain(x, z), ...[3, -3].map((d) => world.ground(x + nx * d, z + nz * d)));
+        const ya = F.road ? lvl(pax, paz) : world.terrain(pax, paz), yb = F.road ? lvl(pbx, pbz) : world.terrain(pbx, pbz);
         const ua = (s + ta) / F.len, ub = (s + tb) / F.len;
         const uvs = [[ua, vBot], [ub, vBot], [ub, vTop], [ua, vTop]];
         // Лёгкий забор сносится кусками: вершины куска v0…v1 (для breakables.js).
@@ -2579,11 +2646,16 @@ export function buildFenceChunk(world, info, mats) {
         }
         const side = (sg) => {
           const ox = nx * t * sg, oz = nz * t * sg;
-          const A = [pax + ox, ya - FENCE_SINK, paz + oz], B = [pbx + ox, yb - FENCE_SINK, pbz + oz];
+          const sa = F.road ? ya - world.terrain(pax, paz) + FENCE_SINK : FENCE_SINK, sb = F.road ? yb - world.terrain(pbx, pbz) + FENCE_SINK : FENCE_SINK;
+          const A = [pax + ox, ya - sa, paz + oz], B = [pbx + ox, yb - sb, pbz + oz];
           const C = [pbx + ox, yb + h, pbz + oz], D = [pax + ox, ya + h, paz + oz];
+          // Стенка до земли — низ текстуры (цоколь) тянется вниз: v ниже нуля прижимается к краю.
+          const uv = F.road ? [[ua, -sa / h], [ub, -sb / h], uvs[2], uvs[3]] : uvs;
           // Снаружи против часовой: со стороны +n идём A→B, со стороны −n — B→A.
-          if (sg > 0) quad(A, B, C, D, [nx, 0, nz], uvs);
-          else quad(B, A, D, C, [-nx, 0, -nz], [uvs[1], uvs[0], uvs[3], uvs[2]]);
+          if (sg > 0) quad(A, B, C, D, [nx, 0, nz], uv);
+          // С обратной стороны роспись с надписью — не зеркалом: u навстречу (повтор по S).
+          else if (F.road) quad(B, A, D, C, [-nx, 0, -nz], [[-ub, uv[1][1]], [-ua, uv[0][1]], [-ua, vTop], [-ub, vTop]]);
+          else quad(B, A, D, C, [-nx, 0, -nz], [uv[1], uv[0], uv[3], uv[2]]);
         };
         side(1);
         side(-1);
