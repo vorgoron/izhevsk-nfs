@@ -1,5 +1,6 @@
 // Построение мешей города из World.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MARKED_CLASSES, SIDEWALK, SOFT_FENCES, TRAM_BED, TRAM_DROP, TRAM_GRASS, TRAM_TUCK, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
@@ -194,9 +195,33 @@ export function roadMaterials(renderer) {
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
     pillarGeo: new THREE.BoxGeometry(1.3, 1, 1.3).translate(0, 0.5, 0),
     // Барьерное ограждение мостов: оцинкованная W-балка и стойки-швеллеры.
-    guard: new THREE.MeshLambertMaterial({ color: '#c4c9cd', side: THREE.DoubleSide }),
-    guardPostGeo: new THREE.BoxGeometry(0.1, 0.78, 0.14).translate(0, 0.39, 0),
+    // Балка — полосами по 2 м: белая (облупившаяся, в рыжих пятнах) и тёмно-серая (по фото мостов); стойки тёмные.
+    guard: new THREE.MeshLambertMaterial({ map: guardTexture(renderer), side: THREE.DoubleSide }),
+    guardPost: new THREE.MeshLambertMaterial({ color: '#34373a' }),
+    // Стойка и консоль-проставка к балке (локальная −x — к дороге): балка в 12 см перед осью стойки.
+    guardPostGeo: mergeGeometries([new THREE.BoxGeometry(0.1, 0.78, 0.14).translate(0, 0.39, 0),
+      new THREE.BoxGeometry(0.09, 0.26, 0.1).translate(-0.085, 0.6, 0)]),
   };
+}
+
+// Полоса балки на повтор: левая половина — белая с рыжими пятнами ржавчины, правая — тёмно-серая.
+function guardTexture(renderer) {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 32;
+  const g = c.getContext('2d'), rnd = mulberry(77);
+  g.fillStyle = '#d9d6cc';
+  g.fillRect(0, 0, 64, 32);
+  for (let k = 0; k < 90; k++) {
+    g.fillStyle = `rgba(${140 + rnd() * 40 | 0},${90 + rnd() * 30 | 0},${50 + rnd() * 20 | 0},${0.25 + rnd() * 0.4})`;
+    g.fillRect(rnd() * 64, rnd() * 32, 1 + rnd() * 4, 1 + rnd() * 3);
+  }
+  g.fillStyle = '#45484b';
+  g.fillRect(64, 0, 64, 32);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
 }
 
 const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
@@ -324,7 +349,7 @@ function twinEdges(world, road) {
 export function buildRoadChunk(world, runs, mats) {
   const buckets = {};
   const bp = [], pillars = [], abutments = [], emb = []; // плиты и парапеты (треугольники), опоры, устои
-  const gr = [], posts = []; // барьерное ограждение мостов: треугольники балки, стойки [x, y, z, угол]
+  const gr = [], guv = [], posts = []; // барьерное ограждение мостов: треугольники балки и их uv, стойки [x, y, z, угол]
 
   for (const { road, from, to } of runs) {
     const mk = roadMarking(road);
@@ -495,14 +520,16 @@ export function buildRoadChunk(world, runs, mats) {
           const og = 1 - GUARD_IN / half, la = Math.hypot(pl.nx, pl.nz) || 1, lb = Math.hypot(nx, nz) || 1;
           const ga = [px + sgn * pl.nx * og, pz + sgn * pl.nz * og], gb = [x + sgn * nx * og, z + sgn * nz * og];
           const ua = [sgn * pl.nx / la, sgn * pl.nz / la], ub = [sgn * nx / lb, sgn * nz / lb];
+          const seg = Math.hypot(x - px, z - pz), u0 = (v - seg) / (2 * GUARD_STEP), u1 = v / (2 * GUARD_STEP); // полоса — GUARD_STEP м
           for (let k = 1; k < GUARD.length; k++) {
             const P = (g, u, y, [o, h]) => [g[0] + u[0] * o, y + h, g[1] + u[1] * o];
             quad(gr, P(ga, ua, y0, GUARD[k - 1]), P(gb, ub, y1, GUARD[k - 1]), P(gb, ub, y1, GUARD[k]), P(ga, ua, y0, GUARD[k]));
+            const va = (k - 1) / (GUARD.length - 1), vb = k / (GUARD.length - 1);
+            guv.push(u0, va, u1, va, u1, vb, u0, va, u1, vb, u0, vb);
           }
-          const seg = Math.hypot(x - px, z - pz);
           for (let s0 = Math.ceil((v - seg) / GUARD_STEP) * GUARD_STEP; s0 < v; s0 += GUARD_STEP) {
             const t = (s0 - (v - seg)) / (seg || 1), ux = ua[0] + (ub[0] - ua[0]) * t, uz = ua[1] + (ub[1] - ua[1]) * t;
-            posts.push([ga[0] + (gb[0] - ga[0]) * t + ux * 0.12, y0 + (y1 - y0) * t, ga[1] + (gb[1] - ga[1]) * t + uz * 0.12, Math.atan2(dx, dz)]);
+            posts.push([ga[0] + (gb[0] - ga[0]) * t + ux * 0.12, y0 + (y1 - y0) * t, ga[1] + (gb[1] - ga[1]) * t + uz * 0.12, Math.atan2(-uz, ux)]);
           }
         }
         quad(bp, [px + pl.nx * o, y0 - DECK, pz + pl.nz * o], [x + nx * o, y1 - DECK, z + nz * o],
@@ -561,11 +588,12 @@ export function buildRoadChunk(world, runs, mats) {
   if (gr.length) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(gr, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(guv, 2));
     geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, mats.guard);
     m.castShadow = true;
     group.add(m);
-    const im = new THREE.InstancedMesh(mats.guardPostGeo, mats.guard, posts.length);
+    const im = new THREE.InstancedMesh(mats.guardPostGeo, mats.guardPost, posts.length);
     const mt = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1);
     posts.forEach(([x, y, z, a], i) => im.setMatrixAt(i, mt.compose(new THREE.Vector3(x, y, z), q.setFromAxisAngle(up, a), one)));
     im.computeBoundingSphere();

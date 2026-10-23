@@ -82,6 +82,7 @@ export class World {
     this.#initJunctions();
     this.#initRoadIndex();
     this.#initBuildingIndex();
+    this.#initGuardrails();
     this.#initRailIndex();
     this.#initPoints();
     this.#initChunks();
@@ -1556,6 +1557,21 @@ export class World {
 
   // Замкнутый контур, сквозь который нельзя проехать. skip — индексы рёбер без стены; top — высота верха стен
   // (над ним — проезжаем: машина на крыше), без неё — стена бесконечная.
+  // Барьерное ограждение мостов (рисует buildRoadChunk) — стена в GUARD_IN от края полотна, кроме стороны парного
+  // моста; низ и верх — по настилу, под мостом не мешает. Один раз на город: квадраты дорог перестраиваются.
+  #initGuardrails() {
+    const IN = 0.4;
+    for (const s of this.segments) {
+      if (!s.road.br || s.ya === undefined || s.len < 0.05) continue;
+      const dx = (s.bx - s.ax) / s.len, dz = (s.bz - s.az) / s.len, o = s.w / 2 - IN;
+      for (const sgn of [1, -1]) {
+        if (s.road.twin && sgn === s.road.twinSide) continue;
+        const nx = -dz * o * sgn, nz = dx * o * sgn;
+        this.addCollider([[s.ax + nx, s.az + nz], [s.bx + nx, s.bz + nz]], [1], Math.max(s.ya, s.yb) + 0.9, Math.min(s.ya, s.yb) - 0.3);
+      }
+    }
+  }
+
   // low — низ стены: машина ниже него больше чем на 1,5 м её не замечает (бортик тротуара на мосту над улицей).
   addCollider(p, skip = [], top = Infinity, low = -Infinity) {
     for (let i = 0; i < p.length; i++) {
