@@ -50,7 +50,26 @@ def towers(city):
     return fetch_city.tall_things(lambda pts: any(xmin - m < x < xmax + m and zmin - m < z < zmax + m for x, z in pts))["towers"]
 
 
-PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes, "towers": towers}
+def ruins(city):
+    """Аварийные и ветхие дома по ГИС ЖКХ (data/raw/gis_izhevsk.json, поле st) — флаг ru у домов того же адреса."""
+    gis = {}
+    with open(fetch_city.GIS, encoding="utf-8") as f:
+        for h in json.load(f):
+            if h.get("st"):
+                gis[fetch_city.addr_key(h["s"], h["n"])] = h
+    rings = fetch_city.izhevsk_rings()
+    n = 0
+    for b in city["buildings"]:
+        b.pop("ru", None)
+        if "a" in b and "st" in b and not b.get("lm") and not b.get("pw") and b["s"] not in (3, 4, 5):
+            if fetch_city.addr_key(city["streets"][b["st"]], b["a"]) in gis and any(fetch_city.point_in(*b["p"][0], r) for r in rings):
+                b["ru"] = 1
+                n += 1
+    print(f"ruins: {n} домов (в ГИС {len(gis)} адресов)")
+    return city["buildings"]
+
+
+PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes, "towers": towers, "buildings": ruins}
 
 
 def main():

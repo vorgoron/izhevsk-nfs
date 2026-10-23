@@ -1632,6 +1632,9 @@ def apply_gis(buildings):
                 by_addr.setdefault(id(h), (h, []))[1].append(b)
     lv_set = houses = 0
     for h, bs in by_addr.values():
+        if h.get("st"):  # аварийный или ветхий — в браузере облезлый фасад, тёмные и заколоченные окна
+            for b in bs:
+                b["ru"] = 1
         if h["t"] != "mkd":
             for b in bs:
                 b["_gis"] = "house"

@@ -1066,15 +1066,26 @@ function facadeAtlas(renderer) {
 // дома < 0.5, число этажей). Зерно — чтобы у одинаковых домов горели разные окна.
 // Ниже земли (цоколь на склоне) и выше последнего этажа (парапет) — гладкая стена. Повтор — fract в
 // шейдере, выборка через textureGrad по непрерывным uv: иначе на стыке плиток мип-уровень скачет (шов).
+// aRuin = 1 — аварийный или ветхий дом по ГИС ЖКХ (b.ru): стена серее и темнее, пятна облупившейся штукатурки до
+// кирпича, потёки под окнами; часть окон заколочена или выбита, ночью горят редко.
 function facadeMaterial(renderer) {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true, map: facadeAtlas(renderer) });
   m.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec2 aFac;\nvarying vec2 vFac;')
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvFac = aFac;');
+      .replace('#include <common>', '#include <common>\nattribute vec2 aFac;\nvarying vec2 vFac;\nattribute float aRuin;\nvarying float vRuin;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvFac = aFac;\nvRuin = aRuin;');
     sh.uniforms.uNight = NIGHT;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vFac;\nuniform float uNight;')
+      .replace('#include <common>', `#include <common>
+        varying vec2 vFac;
+        varying float vRuin;
+        uniform float uNight;
+        float rHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float rNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(rHash(i), rHash(i + vec2(1.0, 0.0)), f.x), mix(rHash(i + vec2(0.0, 1.0)), rHash(i + vec2(1.0, 1.0)), f.x), f.y);
+        }`)
       .replace('#include <map_fragment>', `
         float tintMask = 1.0, glassMask = 0.0;
         vec2 fu = vMapUv;
@@ -1090,7 +1101,21 @@ function facadeMaterial(renderer) {
           sampledDiffuseColor.a = 1.0;
         }
         diffuseColor *= sampledDiffuseColor;`)
-      .replace('#include <color_fragment>', 'diffuseColor.rgb *= mix(vec3(1.0), vColor, tintMask);')
+      .replace('#include <color_fragment>', `diffuseColor.rgb *= mix(vec3(1.0), vColor, tintMask);
+        if (vRuin > 0.5) {
+          float wall = 1.0 - glassMask;
+          vec2 q = vMapUv * vec2(0.8, 1.4) + floor(vFac.x) * 1.7;
+          float n = rNoise(q) * 0.65 + rNoise(q * 3.1) * 0.35;
+          float peel = smoothstep(0.62, 0.7, n) * wall; // штукатурка облупилась — кирпич
+          float streak = smoothstep(0.55, 0.9, rNoise(vec2(vMapUv.x * 7.0, 0.5))) * (1.0 - fract(vMapUv.y)) * wall; // потёки
+          vec3 grey = vec3(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)));
+          diffuseColor.rgb = mix(diffuseColor.rgb, grey, 0.5) * (0.78 - 0.22 * streak);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.3, 0.25), peel * 0.85);
+          // Окна: каждое третье заколочено досками, каждое шестое выбито (чёрное).
+          float wh = rHash(floor(vMapUv) + floor(vFac.x) * 3.1);
+          if (wh < 0.33) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.36, 0.27, 0.18) * (0.8 + 0.3 * step(0.5, fract(vMapUv.y * 9.0))), glassMask);
+          else if (wh < 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03), glassMask);
+        }`)
       // Ночью горит часть окон (плитками атласа); первый этаж — чаще, витрины магазинов — все.
       // Тёплые и холодные, разной яркости; горящее окно не освещается, а светится само.
       .replace('#include <emissivemap_fragment>', `
@@ -1102,7 +1127,7 @@ function facadeMaterial(renderer) {
           float h2 = fract(h * 157.31);
           float on = stripe == ${VITRINE}.0 ? 1.0 : step(fu.y < 1.0 ? 0.45 : 0.68, h);
           vec3 lamp = mix(vec3(1.0, 0.72, 0.38), vec3(0.85, 0.9, 1.0), step(0.8, h2)) * (0.55 + 0.6 * fract(h2 * 31.7));
-          float lit = on * glassMask * uNight;
+          float lit = on * glassMask * uNight * (vRuin > 0.5 ? step(0.9, h2) : 1.0); // в аварийном горит редкое окно
           diffuseColor.rgb *= 1.0 - lit;
           totalEmissiveRadiance += lamp * lit;
         }`);
@@ -1304,7 +1329,7 @@ function shopfronts(world, signs, x1, z1, x2, z2, len, nx, nz, gmax, fh, extra, 
 }
 
 export function buildBuildingChunk(world, list, mats) {
-  const wp = [], wn = [], wc = [], wuv = [], wf = [];
+  const wp = [], wn = [], wc = [], wuv = [], wf = [], wr = [];
   const rp = [], rc = [];
   const domes = []; // [x, z, крыша, размер]
   const col = new THREE.Color();
@@ -1405,6 +1430,7 @@ export function buildBuildingChunk(world, list, mats) {
           wc.push(c.r, c.g, c.b);
           wuv.push(uu, vv);
           wf.push(bd + 0.01 + (hash % 997) / 2100, floors && floors + extra);
+          wr.push(b.ru ? 1 : 0);
         }
       };
       // Под вывесками — витрины: низ стены до линии вывески другой полосой, выше — как было.
@@ -1472,6 +1498,7 @@ export function buildBuildingChunk(world, list, mats) {
   walls.setAttribute('color', new THREE.Float32BufferAttribute(wc, 3));
   walls.setAttribute('uv', new THREE.Float32BufferAttribute(wuv, 2));
   walls.setAttribute('aFac', new THREE.Float32BufferAttribute(wf, 2));
+  walls.setAttribute('aRuin', new THREE.Float32BufferAttribute(wr, 1));
   const roofs = new THREE.BufferGeometry();
   roofs.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
   roofs.setAttribute('color', new THREE.Float32BufferAttribute(rc, 3));
