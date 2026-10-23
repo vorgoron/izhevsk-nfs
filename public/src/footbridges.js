@@ -71,6 +71,24 @@ function pointIn(x, z, p) {
   return ins;
 }
 
+// Тротуар моста кончается в OSM вместе с пролётом, а под мостом рельеф прорезан оврагом: конец висел над землёй
+// (проезд Дерябина у плотины — на 2,8 м). Висит выше HANG_END — продолжаем его по прямой вровень с ближайшей дорогой
+// (подъезд моста), с подпорной стенкой до земли (span — false), пока рельеф не поднимется к нему или не кончатся EXTEND м.
+const HANG_END = 0.6, EXTEND = 40;
+function extendHanging(world, pts, centerH, span) {
+  for (const head of [false, true]) {
+    for (let k = 0; k * 2 < EXTEND; k++) {
+      const n = pts.length, [ex, ez] = head ? pts[0] : pts[n - 1], [fx, fz] = head ? pts[1] : pts[n - 2];
+      const h = head ? centerH[0] : centerH[n - 1];
+      if (h - world.terrain(ex, ez) < HANG_END) break;
+      const L = Math.hypot(ex - fx, ez - fz) || 1, x = ex + ((ex - fx) / L) * 2, z = ez + ((ez - fz) / L) * 2;
+      const y = Math.min(h, Math.max(roadSurfaceNear(world, x, z) + 0.25, world.terrain(x, z) + 0.35));
+      if (head) { pts.unshift([x, z]); centerH.unshift(y); span.unshift(false); }
+      else { pts.push([x, z]); centerH.push(y); span.push(false); }
+    }
+  }
+}
+
 // Контур настила: площадь — как есть; дорожка — лента шириной w (вперёд по левому краю, назад по правому).
 function outline(fb) {
   if (fb.a) return { poly: fb.p, sides: fb.p.map(() => true), center: fb.p };
@@ -165,6 +183,7 @@ export function planFootbridges(world) {
             return Math.max(t + (deck - t) * w, roadSurfaceNear(world, x, z) + 0.25); // не ниже подъезда-насыпи
           });
           const span = pts.map((_, j) => j + i0 >= best[0] && j + i0 <= best[1]);
+          extendHanging(world, pts, centerH, span);
           fb = { ...fb, p: pts, clipped: true, centerH, span };
         }
       }
