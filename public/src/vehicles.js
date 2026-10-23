@@ -416,7 +416,7 @@ function meshParts(spec, wheelsInDetail, options) {
   const part = (name) => { const l = sets.map((s) => s[name]).filter(Boolean); return l.length > 1 ? mergeGeometries(l) : l[0].clone(); };
   let detail = part('detail');
   if (wheelsInDetail) {
-    detail = mergeGeometries([detail, ...wheels.map((p) => wheelGeometry(spec, 12, p.x < 0).translate(p.x, p.y, p.z))]);
+    detail = mergeGeometries([detail, ...wheels.map((p) => staticWheel(spec, p.x < 0).translate(p.x, p.y, p.z))]);
   }
   return { paint: part('paint'), detail, lights: part('lights'), wheels, length: m.length };
 }
@@ -530,7 +530,7 @@ export function vehicleParts(spec, { wheelsInDetail = false, options } = {}) {
   // Колёса.
   const wheels = [];
   for (const z of [wf, wr]) for (const x of [-track, track]) wheels.push({ x, y: r, z, r, front: z > 0 });
-  if (wheelsInDetail) for (const w of wheels) for (const [g, c] of wheelParts(spec.wheels, 12)) detail.push([g.translate(w.x, w.y, w.z), c, false]);
+  if (wheelsInDetail) for (const w of wheels) for (const [g, c] of staticWheelParts(spec.wheels)) detail.push([g.translate(w.x, w.y, w.z), c, false]);
   const form = bodyForm(spec, front, rear);
   return { paint: merge(paint, form), detail: merge(detail, form), lights: merge(lights, form), wheels, length: front - rear };
 }
@@ -586,6 +586,17 @@ function rimWheel(spec, seg, style, size, left) {
   const g = merge(parts).translate((left ? 1 : -1) * (w - 0.22) / 2, 0, 0);
   g.userData.rim = rr;
   return g;
+}
+
+// Колесо машин, у которых колёса не крутятся (трафик, очереди на заправках): литой диск — сплошной, одним
+// цветом; неподвижные спицы на ходу выглядят плохо. Штампованные и колпаки — как есть.
+function staticWheel(spec, left = false) {
+  return spec.wheels.alloy ? merge(staticWheelParts(spec.wheels)) : wheelGeometry(spec, 12, left);
+}
+function staticWheelParts({ r, alloy }) {
+  if (!alloy) return wheelParts({ r, alloy }, 12);
+  const disc = (k, w) => new THREE.CylinderGeometry(r * k, r * k, w, 12).rotateZ(Math.PI / 2);
+  return [[disc(1, 0.22), '#151618'], [disc(0.74, 0.226), '#b4b8bd']];
 }
 
 // Колесо вокруг своего центра: шина и штампованный диск с колпаком; alloy — литой диск со спицами.
