@@ -73,29 +73,45 @@ function pointIn(x, z, p) {
 
 // Тротуар моста кончается в OSM вместе с пролётом, а под мостом рельеф прорезан оврагом: конец висел над землёй
 // (проезд Дерябина у плотины — на 2,8 м). Висит выше HANG_END — продолжаем его по прямой вровень с ближайшей дорогой
-// (подъезд моста), с подпорной стенкой до земли (span — false), пока рельеф не поднимется к нему или не кончатся EXTEND м.
+// (подъезд моста), с подпорной стенкой до земли (span — false), пока рельеф не поднимется к нему, не кончатся EXTEND м
+// или прямая не выйдет на проезжую часть (дорога за мостом поворачивает — проезд Дерябина у плотины).
 const HANG_END = 0.6, EXTEND = 40;
+function onCarriageway(world, x, z, y, w) {
+  for (const s of world.segmentsNear(x, z, 15)) {
+    const c = World.closest(s, x, z), ry = s.ya !== undefined ? s.ya + (s.yb - s.ya) * c.t : world.terrain(c.px, c.pz) + s.road.lift;
+    if (Math.abs(ry - (y - 0.25)) < 2 && c.d < s.w / 2 + w / 2 - 1) return true;
+  }
+  return false;
+}
 
-// Тротуар моста в OSM — в метре-трёх от края проезжей части: щель над оврагом, машина в неё падала. Ось тротуара
-// ставится так, чтобы он примыкал к краю ближайшей дороги на своей высоте (±2 м — не к улице под мостом), если
-// щель меньше HUG_MAX м.
+// Тротуар моста в OSM — в метре-трёх от края проезжей части (щель над оврагом, машина в неё падала), а то и заходит
+// на неё (Магистральная, Карла Маркса). Ось тротуара ставится так, чтобы он примыкал к краю ближайшей дороги на своей
+// высоте (±2 м — не к улице под мостом), если щель меньше HUG_MAX м. Дорога — только идущая вдоль тротуара, сдвиг —
+// поперёк неё: по ближайшей точке (торец соседнего отрезка) точки разлетались зигзагом.
 const HUG_MAX = 6;
 function hugRoad(world, pts, centerH, w) {
-  pts.forEach(([x, z], i) => {
+  const out = pts.map(([x, z], i) => {
+    const [ax, az] = pts[Math.max(0, i - 1)], [bx, bz] = pts[Math.min(pts.length - 1, i + 1)];
+    const tl = Math.hypot(bx - ax, bz - az) || 1, tx = (bx - ax) / tl, tz = (bz - az) / tl;
     let best = null;
     for (const s of world.segmentsNear(x, z, 15)) {
-      const c = World.closest(s, x, z), y = s.ya !== undefined ? s.ya + (s.yb - s.ya) * c.t : world.terrain(c.px, c.pz) + s.road.lift;
-      if (Math.abs(y - (centerH[i] - 0.25)) > 2 || c.d < 1e-6) continue;
-      const gap = c.d - s.w / 2 - w / 2;
-      if (gap < -1 || gap > HUG_MAX || (best && c.d - s.w / 2 >= best.e)) continue;
-      best = { e: c.d - s.w / 2, c, need: s.w / 2 + w / 2 + 0.05 };
+      const ex = s.bx - s.ax, ez = s.bz - s.az, L = Math.hypot(ex, ez);
+      if (L < 1e-6 || Math.abs(tx * ex + tz * ez) / L < 0.85) continue;
+      const along = ((x - s.ax) * ex + (z - s.az) * ez) / L;
+      if (along < -1 || along > L + 1) continue;
+      const nx = -ez / L, nz = ex / L, d = (x - s.ax) * nx + (z - s.az) * nz, t = Math.min(1, Math.max(0, along / L));
+      const y = s.ya !== undefined ? s.ya + (s.yb - s.ya) * t : world.terrain(s.ax + ex * t, s.az + ez * t) + s.road.lift;
+      if (Math.abs(y - (centerH[i] - 0.25)) > 2 || Math.abs(d) < 0.5) continue;
+      const e = Math.abs(d) - s.w / 2;
+      if (e - w / 2 > HUG_MAX || (best && e >= best.e)) continue;
+      const k = Math.sign(d) * (s.w / 2 + w / 2 + 0.05);
+      best = { e, p: [s.ax + (ex * along) / L + nx * k, s.az + (ez * along) / L + nz * k] };
     }
-    if (!best) return;
-    const { c, need } = best, k = need / c.d;
-    pts[i] = [c.px + (x - c.px) * k, c.pz + (z - c.pz) * k];
+    return best ? best.p : pts[i];
   });
+  out.forEach((q, i) => { pts[i] = q; });
 }
-function extendHanging(world, pts, centerH, span) {
+function extendHanging(world, pts, centerH, span, w) {
   for (const head of [false, true]) {
     for (let k = 0; k * 2 < EXTEND; k++) {
       const n = pts.length, [ex, ez] = head ? pts[0] : pts[n - 1], [fx, fz] = head ? pts[1] : pts[n - 2];
@@ -103,6 +119,7 @@ function extendHanging(world, pts, centerH, span) {
       if (h - world.terrain(ex, ez) < HANG_END) break;
       const L = Math.hypot(ex - fx, ez - fz) || 1, x = ex + ((ex - fx) / L) * 2, z = ez + ((ez - fz) / L) * 2;
       const y = Math.min(h, Math.max(roadSurfaceNear(world, x, z) + 0.25, world.terrain(x, z) + 0.35));
+      if (onCarriageway(world, x, z, y, w)) break;
       if (head) { pts.unshift([x, z]); centerH.unshift(y); span.unshift(false); }
       else { pts.push([x, z]); centerH.push(y); span.push(false); }
     }
@@ -203,7 +220,7 @@ export function planFootbridges(world) {
             return Math.max(t + (deck - t) * w, roadSurfaceNear(world, x, z) + 0.25); // не ниже подъезда-насыпи
           });
           const span = pts.map((_, j) => j + i0 >= best[0] && j + i0 <= best[1]);
-          extendHanging(world, pts, centerH, span);
+          extendHanging(world, pts, centerH, span, fb.w);
           hugRoad(world, pts, centerH, fb.w);
           fb = { ...fb, p: pts, clipped: true, centerH, span };
         }

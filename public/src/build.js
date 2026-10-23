@@ -238,7 +238,7 @@ const MEDIAN_REACH = 25; // м: дальше парный мост не соед
 // линия, где она встречается с соседней параллельной лентой: середина нахлёста, сглаженная по
 // положению (±TWIN_SMOOTH м), чтобы двойная сплошная шла ровно, даже когда оси в OSM виляют.
 // Считается по всей дороге сразу (а не по куску квадрата), иначе на стыке квадратов ступенька.
-const TWIN_STEP = 2.5, TWIN_SMOOTH = 15;
+const TWIN_STEP = 2.5, TWIN_SMOOTH = 15, TWIN_GAP = 3;
 const twinCache = new WeakMap();
 function twinEdges(world, road) {
   if (twinCache.has(road)) return twinCache.get(road);
@@ -246,26 +246,43 @@ function twinEdges(world, road) {
   const S = [], side = { L: [], R: [] };
   // Точки линии стыка слева и справа от точки (x0, z0) дороги с направлением (dx, dz).
   const sample = (s, x0, z0, dx, dz) => {
-    let l = half, r = half;
-    const seen = new Set();
+    let l = half, r = half, wl = Infinity, wr = Infinity; // wl, wr — расширение до стыка через щель (с мостом)
+    // От каждой соседней дороги — ближайший её отрезок: у остальных ближайшая точка прижата к концу, и боковое
+    // смещение до неё ложное (север плотины: ленту сужало на метр).
+    const near = new Map();
     for (const o of [0, half, -half]) {
       for (const q of world.nearbyRoadSegments(x0 - dz * o, z0 + dx * o)) {
-        if (q.road === road || q.road.br || seen.has(q)) continue;
-        seen.add(q);
-        if (roadMarking(q.road) === 'plain') continue;
+        if (q.road === road || roadMarking(q.road) === 'plain') continue;
         const ex = q.bx - q.ax, ez = q.bz - q.az, el = Math.hypot(ex, ez) || 1;
         if (Math.abs((ex * dx + ez * dz) / el) < 0.9) continue;
-        const c = World.closest(q, x0, z0);
-        const lat = (c.px - x0) * -dz + (c.pz - z0) * dx; // >0 — слева
-        const sum = half + q.w / 2, over = sum - Math.abs(lat);
-        if (over <= 0 || Math.abs(lat) < sum / 2) continue; // почти на оси — съезд или продолжение
-        if (lat > 0) l = Math.min(l, half - over / 2);
-        else r = Math.min(r, half - over / 2);
+        const c = World.closest(q, x0, z0), b = near.get(q.road);
+        if (!b || c.d < b.c.d) near.set(q.road, { q, c });
       }
     }
+    for (const { q, c } of near.values()) {
+      // Сосед на другой высоте (путепровод над улицей, улица под мостом) — не стык; мосты вплотную
+      // друг к другу или к улице (север плотины у Новоажимова) — стык, как у двух улиц.
+      if ((q.road.br || road.br) && Math.abs(world.segY(q, c, x0, z0) - (world.roadY(road, x0, z0) ?? -Infinity)) > 1) continue;
+      const lat = (c.px - x0) * -dz + (c.pz - z0) * dx; // >0 — слева
+      const sum = half + q.w / 2, over = sum - Math.abs(lat);
+      if (Math.abs(lat) < sum / 2) continue; // почти на оси — съезд или продолжение
+      if (over <= 0) {
+        // Щель до TWIN_GAP м рядом с мостом (оси в OSM чуть дальше суммы полуширин) — ленты тянутся до середины,
+        // иначе между встречными на мосту полоса травы. У двух улиц щель — настоящий газон, не трогаем.
+        if ((road.br || q.road.br) && over > -TWIN_GAP) {
+          if (lat > 0) wl = Math.min(wl, half - over / 2);
+          else wr = Math.min(wr, half - over / 2);
+        }
+        continue;
+      }
+      if (lat > 0) l = Math.min(l, half - over / 2);
+      else r = Math.min(r, half - over / 2);
+    }
     S.push(s);
-    side.L.push(l < half ? [x0 - dz * l, z0 + dx * l] : null);
-    side.R.push(r < half ? [x0 + dz * r, z0 - dx * r] : null);
+    if (l === half && wl < Infinity) l = wl;
+    if (r === half && wr < Infinity) r = wr;
+    side.L.push(l !== half ? [x0 - dz * l, z0 + dx * l] : null);
+    side.R.push(r !== half ? [x0 + dz * r, z0 - dx * r] : null);
   };
   // Продолжение улицы за концом дороги (следующая линия OSM той же улицы почти по прямой): точки
   // до TWIN_SMOOTH м от узла наружу [x, z, направление по ходу дороги]. Без них окно сглаживания
@@ -415,7 +432,7 @@ export function buildRoadChunk(world, runs, mats) {
       // Соседняя проезжая часть (twinEdges): внутренний край — ровно на общей линии посередине,
       // разметка (края sl, sr) ужимается до неё.
       let sl = half, sr = half, Lp = null, Rp = null;
-      if (mk !== 'plain' && !road.br && !inside(ss[i])) {
+      if (mk !== 'plain' && !inside(ss[i])) {
         const tw = twinEdges(world, road);
         // Край — где нормаль из точки оси пересекает линию стыка (сглаженная точка линии может
         // стоять на метры впереди или позади), плюс 5 см внахлёст: щель показала бы траву.
@@ -424,7 +441,7 @@ export function buildRoadChunk(world, runs, mats) {
           const nx = -dz * sg, nz = dx * sg, den = nx * q[3] - nz * q[2];
           if (Math.abs(den) < 1e-6) return null;
           const t = ((q[0] - x0) * q[3] - (q[1] - z0) * q[2]) / den + 0.05;
-          return t > 1 && t < half ? t : null;
+          return t > 1 && t < half + TWIN_GAP / 2 + 0.1 ? t : null;
         };
         const tl = cut(tw.at('L', ss[i]), 1), tr = cut(tw.at('R', ss[i]), -1);
         if (tl) { sl = tl; Lp = [x0 - dz * tl, z0 + dx * tl]; }
@@ -514,6 +531,7 @@ export function buildRoadChunk(world, runs, mats) {
         const o = 1 + 0.25 / half; // борт чуть снаружи полотна
         for (const sgn of [1, -1]) {
           if (road.twin && sgn === road.twinSide) continue; // к парному мосту — общий настил, без борта
+          if (world.deckOpen(road, (px + x) / 2, (pz + z) / 2) === sgn) continue; // вплотную соседняя проезжая часть
           const ax = px + sgn * pl.nx * o, az = pz + sgn * pl.nz * o, bx = x + sgn * nx * o, bz = z + sgn * nz * o;
           quad(bp, [ax, y0 - DECK, az], [bx, y1 - DECK, bz], [bx, y1 + PARAPET, bz], [ax, y0 + PARAPET, az]);
           // Ограждение — в GUARD_IN от края полотна внутрь; профиль по наружной нормали борта.
