@@ -47,6 +47,7 @@ const M = {
   beige: lambert('#e3cfa6'),
   redBrick: lambert('#b4492f'),
   churchGreen: lambert('#4fd68c'),
+  bridgeGlass: new THREE.MeshPhongMaterial({ color: '#9db9b6', specular: '#ffffff', shininess: 70 }),
   teal: lambert('#23867f'),
   steelGreen: lambert('#2b8a63'),
   greenGlass: new THREE.MeshPhongMaterial({ color: '#8fcfa4', specular: '#ffffff', shininess: 70 }),
@@ -794,6 +795,45 @@ function troitsky({ L, W }) {
     g.add(d);
   }
   g.add(onion(0.9, 2, tx, sY + sH - 0.4, 0));
+  return g;
+}
+
+// Надземный переход УдГУ над Удмуртской (по фото): застеклённая галерея на зелёном стальном каркасе —
+// внизу белые панели, над ними лента окон, зелёные стойки через 2,6 м. Локальная x — вдоль галереи с запада,
+// галерея шириной gw по оси z = zc, низ настила на D. Опоры: зелёный П-образный портал в xP (столбы выше
+// крыши, ригель поверх) и белая лестничная башня в (xT, zT) с остеклённой полосой и шатром, рядом — лестница
+// в наклонном коробе, уходящая в сторону sT. yP, yT — земля под порталом и башней относительно нуля модели.
+function udsuBridge({ L, zc, gw, D, xP, yP, xT, zT, yT, sT }) {
+  const g = new THREE.Group(), S = M.steelGreen;
+  const x0 = -L / 2, len = L;
+  g.add(box(len, 0.5, gw + 0.3, S, 0, D, zc));
+  for (const side of [-1, 1]) {
+    const z = zc + side * (gw / 2);
+    g.add(box(len, 1, 0.15, M.white, 0, D + 0.5, z));
+    g.add(box(len, 1.45, 0.08, M.bridgeGlass, 0, D + 1.5, z));
+  }
+  for (let x = x0 + 0.6; x < x0 + len; x += 2.6) g.add(box(0.2, 2.5, gw + 0.12, S, x, D + 0.5, zc));
+  g.add(box(len + 0.2, 0.35, gw + 0.35, S, 0, D + 2.95, zc));
+  g.add(box(len, 0.2, gw + 0.1, M.slab, 0, D + 3.2, zc));
+  // Портал: два столба по бокам галереи, ригель над крышей и консоль-«глаголь» сверху.
+  const pz = gw / 2 + 0.7, top = D + 4.6;
+  for (const side of [-1, 1]) g.add(box(0.55, top - yP + 0.5, 0.55, S, xP, yP - 0.5, zc + side * pz));
+  g.add(box(0.6, 0.5, 2 * pz + 0.55, S, xP, top - 0.5, zc));
+  g.add(box(1.8, 0.35, 0.4, S, xP + 0.6, top - 0.15, zc - pz));
+  // Лестничная башня: низ мятный, верх белый, полоса окон, шатёр.
+  const tw = 5, tTop = D + 6.5;
+  g.add(box(tw, D - yT + 0.5, tw, M.mint, xT, yT - 0.5, zT));
+  g.add(box(tw, tTop - D, tw, M.white, xT, D, zT));
+  for (const side of [-1, 1]) g.add(box(1.4, tTop - D - 0.5, 0.1, M.bridgeGlass, xT, D, zT + side * (tw / 2 + 0.02)));
+  g.add(box(tw + 0.4, 0.35, tw + 0.4, M.white, xT, tTop, zT));
+  g.add(mesh(new THREE.ConeGeometry((tw / 2 + 0.3) * Math.SQRT2, 2.4, 4).rotateY(Math.PI / 4), M.steelGreen, xT, tTop + 0.35 + 1.2, zT));
+  g.add(box(1.4, 2.3, 0.1, M.glass, xT, yT, zT + sT * (tw / 2 + 0.02)));
+  // Лестница в коробе: с запада от башни, от борта галереи вниз в сторону sT; нижний конец — на мятной стенке.
+  const run = 7, sx = xT - tw / 2 - 1.6, hi = D + 1.3, lo = yT + 2.6;
+  const stair = mesh(new THREE.BoxGeometry(3, 2.6, Math.hypot(run, hi - lo)), M.tin, sx, (hi + lo) / 2, zc + sT * (gw / 2 + run / 2));
+  stair.rotation.x = sT * Math.atan2(hi - lo, run);
+  g.add(stair);
+  g.add(box(3, lo - 1.3 - yT + 0.5, 0.6, M.mint, sx, yT - 0.5, zc + sT * (gw / 2 + run - 0.6)));
   return g;
 }
 
@@ -3229,6 +3269,31 @@ export function buildLandmarks(world) {
         const [fx, fz] = lm.key === 'general' ? toStreet(world, lm, /Милиционная/, -1, 0) : [-1, 0];
         const f = fit(p, 0);
         obj = place({ general, puppets }[lm.key](toLocal(p, f), fx, fz), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'udsu_bridge': {
+        // Ось — по длинной стороне, с запада на восток. Узкая западная часть контура — галерея, широкая восточная —
+        // лестничная башня. Настил — на 6.3 м над самым высоким рельефом под осью (провода троллейбуса — 5.9 м).
+        let a = longestEdgeAngle(p);
+        if (Math.cos(a) < 0) a += Math.PI;
+        const f = fit(p, a), q = toLocal(p, f), L = f.L;
+        const c = Math.cos(a), sn = Math.sin(a), W = (x, z) => [f.cx + x * c - z * sn, f.cz + x * sn + z * c];
+        const west = q.filter(([x]) => x < 0), east = q.filter(([x]) => x > L / 2 - 17);
+        const wz = west.map(([, z]) => z), ez = east.map(([, z]) => z);
+        const zc = (Math.min(...wz) + Math.max(...wz)) / 2, gw = Math.max(3, Math.max(...wz) - Math.min(...wz));
+        const y0 = Math.max(...Array.from({ length: 13 }, (_, i) => world.terrain(...W(-L / 2 + (i * L) / 12, zc))));
+        // Портал — у западного края проезжей части; башня — по середине широкой части.
+        let xP = -L / 2 + 3;
+        for (let x = -L / 2 + 2; x < L / 2; x += 0.5) {
+          if (world.surfaceAt(...W(x, zc)) === 'road') break;
+          xP = x - 2;
+        }
+        xP = Math.max(-L / 2 + 2, xP);
+        const xT = L / 2 - 11, zT = (Math.min(...ez) + Math.max(...ez)) / 2, sT = Math.sign(zT - zc) || 1;
+        obj = place(udsuBridge({ L, zc, gw, D: 6.3, xP, yP: world.terrain(...W(xP, zc)) - y0, xT, zT, yT: world.terrain(...W(xT, zT)) - y0, sT }),
+          f.cx, y0, f.cz, a);
+        world.addCollider(square(...W(xT, zT), 2.5));
+        for (const side of [-1, 1]) world.addCollider(square(...W(xP, zc + side * (gw / 2 + 0.7)), 0.3));
         break;
       }
       case 'stadium': {
