@@ -1556,11 +1556,12 @@ export class World {
 
   // Замкнутый контур, сквозь который нельзя проехать. skip — индексы рёбер без стены; top — высота верха стен
   // (над ним — проезжаем: машина на крыше), без неё — стена бесконечная.
-  addCollider(p, skip = [], top = Infinity) {
+  // low — низ стены: машина ниже него больше чем на 1,5 м её не замечает (бортик тротуара на мосту над улицей).
+  addCollider(p, skip = [], top = Infinity, low = -Infinity) {
     for (let i = 0; i < p.length; i++) {
       if (skip.includes(i)) continue;
       const a = p[i], c = p[(i + 1) % p.length];
-      this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1], top }, 0);
+      this.#insert(this.bGrid, this.bCell, { ax: a[0], az: a[1], bx: c[0], bz: c[1], top, low }, 0);
     }
   }
 
@@ -1598,6 +1599,7 @@ export class World {
           for (const s of this.bGrid.get(key + di * 100003 + dj) || []) {
             if (seen.has(s) || (s.soft && !soft)) continue;
             if (ground ? s.fence && y > s.top + WALL_CLEAR : y > (s.top ?? Infinity) - 0.5) continue;
+            if (s.low > -Infinity && y < s.low - 1.5) continue; // под мостом
             seen.add(s);
             const c = World.closest(s, pos.x, pos.y);
             if (c.d < r && c.d > 1e-6) {

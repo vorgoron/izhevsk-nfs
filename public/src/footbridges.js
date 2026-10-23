@@ -75,6 +75,26 @@ function pointIn(x, z, p) {
 // (проезд Дерябина у плотины — на 2,8 м). Висит выше HANG_END — продолжаем его по прямой вровень с ближайшей дорогой
 // (подъезд моста), с подпорной стенкой до земли (span — false), пока рельеф не поднимется к нему или не кончатся EXTEND м.
 const HANG_END = 0.6, EXTEND = 40;
+
+// Тротуар моста в OSM — в метре-трёх от края проезжей части: щель над оврагом, машина в неё падала. Ось тротуара
+// ставится так, чтобы он примыкал к краю ближайшей дороги на своей высоте (±2 м — не к улице под мостом), если
+// щель меньше HUG_MAX м.
+const HUG_MAX = 6;
+function hugRoad(world, pts, centerH, w) {
+  pts.forEach(([x, z], i) => {
+    let best = null;
+    for (const s of world.segmentsNear(x, z, 15)) {
+      const c = World.closest(s, x, z), y = s.ya !== undefined ? s.ya + (s.yb - s.ya) * c.t : world.terrain(c.px, c.pz) + s.road.lift;
+      if (Math.abs(y - (centerH[i] - 0.25)) > 2 || c.d < 1e-6) continue;
+      const gap = c.d - s.w / 2 - w / 2;
+      if (gap < -1 || gap > HUG_MAX || (best && c.d - s.w / 2 >= best.e)) continue;
+      best = { e: c.d - s.w / 2, c, need: s.w / 2 + w / 2 + 0.05 };
+    }
+    if (!best) return;
+    const { c, need } = best, k = need / c.d;
+    pts[i] = [c.px + (x - c.px) * k, c.pz + (z - c.pz) * k];
+  });
+}
 function extendHanging(world, pts, centerH, span) {
   for (const head of [false, true]) {
     for (let k = 0; k * 2 < EXTEND; k++) {
@@ -184,6 +204,7 @@ export function planFootbridges(world) {
           });
           const span = pts.map((_, j) => j + i0 >= best[0] && j + i0 <= best[1]);
           extendHanging(world, pts, centerH, span);
+          hugRoad(world, pts, centerH, fb.w);
           fb = { ...fb, p: pts, clipped: true, centerH, span };
         }
       }
@@ -334,6 +355,14 @@ export function buildFootbridges(world, terrainMaterial) {
     for (let i = 0; i < pts.length; i++) area += pts[i][0] * pts[(i + 1) % pts.length][1] - pts[(i + 1) % pts.length][0] * pts[i][1];
     if (area < 0) { pts = [...pts].reverse(); sd = [...sd.slice(0, -1).reverse(), sd[sd.length - 1]]; }
     const ys = pts.map(([x, z]) => topAt(it, x, z));
+    // Тротуар вдоль моста (подогнанный к краю дороги) — не для машин: плита по контуру — стена (бортик, торцы).
+    // Низ и верх — у каждого ребра свои: под пролётом путепровода улица, её машины стена не держит.
+    if (it.fb.clipped) {
+      pts.forEach((a, i) => {
+        const j = (i + 1) % pts.length;
+        world.addCollider([a, pts[j]], [1], Math.max(ys[i], ys[j]) + 1.2, Math.min(ys[i], ys[j]) - 1);
+      });
+    }
 
     // Плита: верх, низ, борта.
     const tris = THREE.ShapeUtils.triangulateShape(pts.map(([x, z]) => new THREE.Vector2(x, z)), []);
