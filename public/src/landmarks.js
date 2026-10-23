@@ -800,40 +800,67 @@ function troitsky({ L, W }) {
 
 // Надземный переход УдГУ над Удмуртской (по фото): застеклённая галерея на зелёном стальном каркасе —
 // внизу белые панели, над ними лента окон, зелёные стойки через 2,6 м. Локальная x — вдоль галереи с запада,
-// галерея шириной gw по оси z = zc, низ настила на D. Опоры: зелёный П-образный портал в xP (столбы выше
-// крыши, ригель поверх) и белая лестничная башня в (xT, zT) с остеклённой полосой и шатром, рядом — лестница
-// в наклонном коробе, уходящая в сторону sT. yP, yT — земля под порталом и башней относительно нуля модели.
+// галерея шириной gw по оси z = zc. Верхняя галерея (низ настила на D) идёт от запада до лестничной башни в
+// (xT, zT), за башней к корпусу — нижняя (низ на 2.6). Опоры: зелёный П-образный портал в xP (столбы выше
+// крыши, ригель поверх) и башня — два белых пилона с мятным низом, между ними полоса окон, плоский верх.
+// Перед башней (в сторону sT) вдоль фасада — лестница в коробе из профлиста: нижняя площадка с окнами на
+// двух пилонах, марш вверх к востоку, верхняя площадка. yP, yT — земля под порталом и башней от нуля модели.
 function udsuBridge({ L, zc, gw, D, xP, yP, xT, zT, yT, sT }) {
   const g = new THREE.Group(), S = M.steelGreen;
-  const x0 = -L / 2, len = L;
-  g.add(box(len, 0.5, gw + 0.3, S, 0, D, zc));
-  for (const side of [-1, 1]) {
-    const z = zc + side * (gw / 2);
-    g.add(box(len, 1, 0.15, M.white, 0, D + 0.5, z));
-    g.add(box(len, 1.45, 0.08, M.bridgeGlass, 0, D + 1.5, z));
-  }
-  for (let x = x0 + 0.6; x < x0 + len; x += 2.6) g.add(box(0.2, 2.5, gw + 0.12, S, x, D + 0.5, zc));
-  g.add(box(len + 0.2, 0.35, gw + 0.35, S, 0, D + 2.95, zc));
-  g.add(box(len, 0.2, gw + 0.1, M.slab, 0, D + 3.2, zc));
+  const tw = 5.2, tTop = D + 5.5, D2 = 2.6;
+  const gallery = (xa, xb, d) => {
+    const len = xb - xa, xm = (xa + xb) / 2;
+    g.add(box(len, 0.5, gw + 0.3, S, xm, d, zc));
+    for (const side of [-1, 1]) {
+      const z = zc + side * (gw / 2);
+      g.add(box(len, 1, 0.15, M.white, xm, d + 0.5, z));
+      g.add(box(len, 1.45, 0.08, M.bridgeGlass, xm, d + 1.5, z));
+    }
+    for (let x = xa + 0.6; x < xb; x += 2.6) g.add(box(0.2, 2.5, gw + 0.12, S, x, d + 0.5, zc));
+    g.add(box(len + 0.2, 0.35, gw + 0.35, S, xm, d + 2.95, zc));
+    g.add(box(len, 0.2, gw + 0.1, M.slab, xm, d + 3.2, zc));
+  };
+  gallery(-L / 2, xT - tw / 2 + 0.2, D);
+  if (L / 2 > xT + tw / 2 + 1) gallery(xT + tw / 2 - 0.2, L / 2, D2);
   // Портал: два столба по бокам галереи, ригель над крышей и консоль-«глаголь» сверху.
   const pz = gw / 2 + 0.7, top = D + 4.6;
   for (const side of [-1, 1]) g.add(box(0.55, top - yP + 0.5, 0.55, S, xP, yP - 0.5, zc + side * pz));
   g.add(box(0.6, 0.5, 2 * pz + 0.55, S, xP, top - 0.5, zc));
   g.add(box(1.8, 0.35, 0.4, S, xP + 0.6, top - 0.15, zc - pz));
-  // Лестничная башня: низ мятный, верх белый, полоса окон, шатёр.
-  const tw = 5, tTop = D + 6.5;
-  g.add(box(tw, D - yT + 0.5, tw, M.mint, xT, yT - 0.5, zT));
-  g.add(box(tw, tTop - D, tw, M.white, xT, D, zT));
-  for (const side of [-1, 1]) g.add(box(1.4, tTop - D - 0.5, 0.1, M.bridgeGlass, xT, D, zT + side * (tw / 2 + 0.02)));
-  g.add(box(tw + 0.4, 0.35, tw + 0.4, M.white, xT, tTop, zT));
-  g.add(mesh(new THREE.ConeGeometry((tw / 2 + 0.3) * Math.SQRT2, 2.4, 4).rotateY(Math.PI / 4), M.steelGreen, xT, tTop + 0.35 + 1.2, zT));
-  g.add(box(1.4, 2.3, 0.1, M.glass, xT, yT, zT + sT * (tw / 2 + 0.02)));
-  // Лестница в коробе: с запада от башни, от борта галереи вниз в сторону sT; нижний конец — на мятной стенке.
-  const run = 7, sx = xT - tw / 2 - 1.6, hi = D + 1.3, lo = yT + 2.6;
-  const stair = mesh(new THREE.BoxGeometry(3, 2.6, Math.hypot(run, hi - lo)), M.tin, sx, (hi + lo) / 2, zc + sT * (gw / 2 + run / 2));
-  stair.rotation.x = sT * Math.atan2(hi - lo, run);
-  g.add(stair);
-  g.add(box(3, lo - 1.3 - yT + 0.5, 0.6, M.mint, sx, yT - 0.5, zc + sT * (gw / 2 + run - 0.6)));
+  // Башня: пилоны по краям, между ними утопленная полоса окон с зелёными переплётами, на пилонах — рыжие плиты.
+  const pw = 2;
+  for (const side of [-1, 1]) {
+    const x = xT + side * (tw / 2 - pw / 2);
+    g.add(box(pw, tTop - yT + 0.5, tw, M.white, x, yT - 0.5, zT));
+    g.add(box(pw + 0.04, yT + 2.8 - (yT - 0.5), tw + 0.04, M.mint, x, yT - 0.5, zT));
+    g.add(box(pw + 0.3, 0.25, tw + 0.3, M.terra, x, tTop, zT));
+  }
+  g.add(box(tw - 2 * pw + 0.1, tTop - yT + 0.3, tw - 0.6, M.bridgeGlass, xT, yT - 0.5, zT));
+  for (let y = yT + 1.2; y < tTop - 0.5; y += 1.6) g.add(box(tw - 2 * pw + 0.12, 0.12, tw - 0.5, S, xT, y, zT));
+  g.add(box(0.1, tTop - yT, tw - 0.5, S, xT, yT, zT));
+  g.add(box(tw - 2 * pw, 0.2, tw, M.slab, xT, tTop - 0.2, zT));
+  // Лестница: профиль «нижняя площадка — марш — верхняя площадка» вдоль x, короб глубиной sd от фасада башни.
+  const sd = 3, xa = xT - tw / 2 - 3.4, xb = xT - tw / 2 + 0.4, xc = xT + tw / 2 - 0.6, xd = xT + tw / 2 + 1.8;
+  const y1 = yT + 3.7, y2 = yT + 5.9, h1 = 3.8, h2 = 2.6;
+  const prof = new THREE.Shape([[xa, y1], [xb, y1], [xc, y2], [xd, y2], [xd, y2 + h2], [xc, y2 + h2], [xb, y1 + h1], [xa, y1 + h1]]
+    .map(([x, y]) => new THREE.Vector2(x, y)));
+  const z0 = sT > 0 ? zT + tw / 2 : zT - tw / 2 - sd, zf = sT > 0 ? z0 + sd : z0; // zf — наружная грань
+  g.add(mesh(new THREE.ExtrudeGeometry(prof, { depth: sd, bevelEnabled: false }), M.tin, 0, 0, z0));
+  // Профлист — светлые рёбра по наружной грани; окна нижней площадки.
+  const rib = (x, y0, h) => g.add(box(0.06, h, 0.06, M.white, x, y0, zf + sT * 0.03));
+  for (let x = xa + 0.3; x < xd - 0.2; x += 0.45) {
+    const yb = x < xb ? y1 : x < xc ? y1 + ((x - xb) / (xc - xb)) * (y2 - y1) : y2;
+    const yt = x < xb ? y1 + h1 : x < xc ? y1 + h1 + ((x - xb) / (xc - xb)) * (y2 + h2 - y1 - h1) : y2 + h2;
+    if (x < xb - 0.2 && x > xa + 0.2) continue; // на площадке — окна
+    rib(x, yb + 0.1, yt - yb - 0.2);
+  }
+  g.add(box(xb - xa - 0.6, 1.9, 0.08, M.bridgeGlass, (xa + xb) / 2, y1 + 0.9, zf + sT * 0.02));
+  for (let x = xa + 0.3; x <= xb - 0.3 + 0.01; x += (xb - xa - 0.6) / 5) g.add(box(0.1, 1.9, 0.12, S, x, y1 + 0.9, zf + sT * 0.03));
+  // Пилоны под нижней площадкой.
+  for (const x of [xa + 0.9, xb - 0.6]) {
+    g.add(box(1.3, y1 - yT + 0.5, 2.4, M.white, x, yT - 0.5, z0 + sd / 2));
+    g.add(box(1.34, 3.3, 2.44, M.mint, x, yT - 0.5, z0 + sd / 2));
+  }
   return g;
 }
 
@@ -3292,7 +3319,7 @@ export function buildLandmarks(world) {
         const xT = L / 2 - 11, zT = (Math.min(...ez) + Math.max(...ez)) / 2, sT = Math.sign(zT - zc) || 1;
         obj = place(udsuBridge({ L, zc, gw, D: 6.3, xP, yP: world.terrain(...W(xP, zc)) - y0, xT, zT, yT: world.terrain(...W(xT, zT)) - y0, sT }),
           f.cx, y0, f.cz, a);
-        world.addCollider(square(...W(xT, zT), 2.5));
+        world.addCollider(square(...W(xT, zT), 2.6));
         for (const side of [-1, 1]) world.addCollider(square(...W(xP, zc + side * (gw / 2 + 0.7)), 0.3));
         break;
       }
