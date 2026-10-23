@@ -5,6 +5,8 @@
 // Подложка (вода, парки, дома, улицы) рисуется один раз в отдельный холст — в фоне после старта (prepare);
 // крупнее её масштаба поверх ложатся плитки, нарисованные вектором под масштаб (#tiles).
 
+import { getLang, street as streetName } from './i18n.js';
+
 const ZOOM_MIN = 0.04, ZOOM_MAX = 2.5; // экранных пикселей на метр
 const TAP = 8;             // px: сдвиг меньше — нажатие, а не перетаскивание
 const HIT = 16;            // px: радиус попадания по значку
@@ -146,7 +148,7 @@ export class CityMap {
     const order = (k) => ['trunk', 'primary', 'secondary', 'tertiary'].indexOf(k);
     for (const r of [...w.roads].sort((a, b) => order(a.k) - order(b.k))) {
       add({ k: 'l', p: r.n.map((id) => w.nodes[id]), w: r.w, min: r.k in ROAD_COLOR ? 1.6 : 0.8, c: ROAD_COLOR[r.k] ?? '#6f6d68',
-        name: r.name && short(r.name), rank: order(r.k) }, r.w);
+        name: r.name, rank: order(r.k) }, r.w);
     }
     return (this.idx = { items, cells, nx, nz, seen: new Uint32Array(items.length), frame: 0 });
   }
@@ -296,7 +298,8 @@ export class CityMap {
         run += Math.hypot(x1 - x0, y1 - y0);
         if (run > best) { best = run; bx = (rx + x1) / 2; by = (ry + y1) / 2; ba = Math.atan2(y1 - ry, x1 - rx); }
       }
-      const w = this.#textW(it.name, NAME_FONT);
+      if (it.lang !== getLang()) { it.lang = getLang(); it.label = short(it.name); } // язык сменили — подпись заново
+      const w = this.#textW(it.label, NAME_FONT);
       if (best < w + 16) continue;
       if (ba > Math.PI / 2) ba -= Math.PI; else if (ba < -Math.PI / 2) ba += Math.PI;
       cand.push({ it, x: bx, y: by, a: ba, w, len: best });
@@ -304,22 +307,22 @@ export class CityMap {
     cand.sort((a, b) => a.it.rank - b.it.rank || b.len - a.len);
     const placed = new Map(); // название → [[x, y]]
     for (const c of cand) {
-      const same = placed.get(c.it.name) ?? [];
+      const same = placed.get(c.it.label) ?? [];
       if (same.some(([x, y]) => Math.hypot(x - c.x, y - c.y) < NAME_GAP)) continue;
       const hw = (Math.abs(Math.cos(c.a)) * c.w + Math.abs(Math.sin(c.a)) * 14) / 2;
       const hh = (Math.abs(Math.sin(c.a)) * c.w + Math.abs(Math.cos(c.a)) * 14) / 2;
       const r = [c.x - hw, c.y - hh, c.x + hw, c.y + hh];
       if (!fits(r)) continue;
       take(r);
-      placed.set(c.it.name, [...same, [c.x, c.y]]);
+      placed.set(c.it.label, [...same, [c.x, c.y]]);
       g.save();
       g.translate(c.x, c.y);
       g.rotate(c.a);
       g.strokeStyle = 'rgba(12,14,16,.85)';
       g.lineWidth = 3;
-      g.strokeText(c.it.name, 0, 0.5);
+      g.strokeText(c.it.label, 0, 0.5);
       g.fillStyle = '#ece6d6';
-      g.fillText(c.it.name, 0, 0.5);
+      g.fillText(c.it.label, 0, 0.5);
       g.restore();
     }
 
@@ -435,10 +438,10 @@ export class CityMap {
     if (house) {
       const street = this.world.city.streets?.[house.st];
       const [x0, z0, x1, z1] = house.bb;
-      return this.go((x0 + x1) / 2, (z0 + z1) / 2, address(street, house.a) ?? this.world.nearestRoad(x, z, 60)?.seg.road.name, street);
+      return this.go((x0 + x1) / 2, (z0 + z1) / 2, address(street, house.a) ?? streetName(this.world.nearestRoad(x, z, 60)?.seg.road.name), street);
     }
     const name = this.world.nearestRoad(x, z, 60)?.seg.road.name;
-    this.go(x, z, name || null);
+    this.go(x, z, streetName(name) || null);
   }
 
   // Дом под точкой (x, z) — из индекса подложки.
@@ -652,9 +655,9 @@ export class CityMap {
   toggle() { this.isOpen ? this.close() : this.open(); }
 }
 
-// «улица Пушкинская» → «ул. Пушкинская»: подпись короче, на улице помещается чаще.
+// «улица Пушкинская» → «ул. Пушкинская»: подпись короче, на улице помещается чаще. По-удмуртски — «Пушкин урам» (i18n.js).
 const SHORT = { улица: 'ул.', проспект: 'пр.', переулок: 'пер.', проезд: 'пр-д', бульвар: 'б-р', площадь: 'пл.', шоссе: 'ш.', набережная: 'наб.', тракт: 'тр.' };
-export const short = (name) => name.replace(/[а-яё]+/gi, (w) => SHORT[w.toLowerCase()] ?? w);
+export const short = (name) => getLang() === 'udm' ? streetName(name) : name.replace(/[а-яё]+/gi, (w) => SHORT[w.toLowerCase()] ?? w);
 
 // «Пушкинская улица», «210» → «Пушкинская ул., 210»; без номера — null.
 export const address = (street, num) => (num ? (street ? `${short(street)}, ${num}` : `дом ${num}`) : null);

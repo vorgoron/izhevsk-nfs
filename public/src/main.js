@@ -31,7 +31,7 @@ import { TrolleyWires } from './wires.js';
 import { sendAdRequest } from './adrequest.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { install } from './install.js';
-import { LANGS, getLang, setLang, toggleLang } from './i18n.js';
+import { LANGS, getLang, setLang, toggleLang, street as streetName } from './i18n.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { createDebug } from './debug.js';
@@ -1345,7 +1345,7 @@ async function main() {
     $('nitro').hidden = !car.nitroLevel; // нитро не куплено
     touch.update(car);
     const r = world.nearestRoad(car.pos.x, car.pos.y, 12);
-    const street = r?.seg.road.name;
+    const street = streetName(r?.seg.road.name); // смена языка меняет строку — подпись обновится сама
     if (street && street !== lastStreet) {
       lastStreet = street;
       $('street').textContent = street;
