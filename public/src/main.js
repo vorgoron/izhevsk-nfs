@@ -26,6 +26,7 @@ import { Queues } from './queues.js';
 import { Trams } from './trams.js';
 import { NitroFX, JetFX, DustFX, ExhaustFX, SkidMarksFX, TireSmokeFX } from './effects.js';
 import { GhostFX } from './ghostfx.js';
+import { CarShadow } from './carshadow.js';
 import { sendAdRequest } from './adrequest.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { install } from './install.js';
@@ -219,6 +220,7 @@ async function main() {
     jetFx.attach(m);
     exhaustFx.attach(m);
     car.update(0, {}); // поставить новую модель на место старой
+    carShadow.fit(m);
   };
   const nitroFx = owned('эффекты', () => new NitroFX(scene));
   const jetFx = owned('эффекты', () => new JetFX(scene));
@@ -230,6 +232,8 @@ async function main() {
   exhaustFx.attach(car.model);
   nitroFx.attach(car.model);
   jetFx.attach(car.model);
+  const carShadow = new CarShadow(scene);
+  carShadow.fit(car.model);
   const race = new Race(world, scene);
   const ramps = owned('трамплины', () => new Ramps(world, scene));
   const boundary = owned('край карты', () => new Boundary(world, scene));
@@ -1606,6 +1610,7 @@ async function main() {
     jetFx.update(dt, car);
     dustFx.update(dt, car);
     skidFx.update(dt, car);
+    carShadow.update(car, world);
     tireSmokeFx.update(dt, car);
     exhaustFx.update(dt, car);
     ghostFx.update(dt, net, car);
