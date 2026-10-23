@@ -914,12 +914,13 @@ def tram_routes(aligned):
 
 # ---------------------------------------------------------------- остановки
 
-def bus_routes(node_index):
-    """Маршруты автобусов (route=bus): цепочки узлов дорог (индексы в roadNodes) в порядке участников отношения —
-    автобусы трафика ездят по ним. Узел не на дороге города (за краем выгрузки) рвёт цепочку на куски."""
+def bus_routes(node_index, kind="bus"):
+    """Маршруты автобусов (route=bus) или троллейбусов (kind="trolleybus"): цепочки узлов дорог (индексы в roadNodes)
+    в порядке участников отношения — автобусы и троллейбусы трафика ездят по ним, над троллейбусными висят провода.
+    Узел не на дороге города (за краем выгрузки) рвёт цепочку на куски."""
     out = []
     for rid, (members, tags) in relations.items():
-        if tags.get("route") != "bus" or tags.get("type") != "route":
+        if tags.get("route") != kind or tags.get("type") != "route":
             continue
         chain = []
         for t, ref, role in members:
@@ -945,7 +946,7 @@ def bus_routes(node_index):
             if len(piece) >= 2:
                 out.append({"ref": tags.get("ref", ""), "n": piece})
             piece = []
-    print(f"bus routes: {len(out)} кусков, {sum(len(r['n']) for r in out)} узлов")
+    print(f"{kind} routes: {len(out)} кусков, {sum(len(r['n']) for r in out)} узлов")
     return out
 
 
@@ -2234,6 +2235,7 @@ def build_city():
         "fuel": fuel,
         "trams": tram_routes(aligned),
         "buses": bus_routes(road_node_index),
+        "trolleys": bus_routes(road_node_index, "trolleybus"),
         "cranes": construction_cranes(inside, roads, road_nodes, buildings, landmark_entries()),
         "stops": transport_stops(inside),
         "billboards": billboards(inside),

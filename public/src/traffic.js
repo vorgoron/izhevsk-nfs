@@ -13,7 +13,7 @@ const SPEED = {
 };
 // Состав потока: ижевские машины (vehicles.js) и автобусы.
 const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, pickup: 3, vesta: 13 };
-const BUSES = 6;
+const BUSES = 6, TROLLS = 4; // троллейбусы — только если в city.json есть их маршруты (trolleys)
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
 // В гонке трафика меньше: остаётся каждая RACE_KEEP-я машина (v.thin — лишняя), лишние уходят за кадром.
 // Общая гонка с друзьями — трафик «по расписанию» вдоль её маршрута (#line): машины в обе стороны через LINE_GAP м
@@ -29,6 +29,7 @@ const ROUTE = 80; // м: маршрут машины известен на ст�
 // к перекрёстку (YIELD_AHEAD м за знаком) по поперечной улице никто не едет ближе YIELD_R м.
 const STOP_WAIT = 1, GIVE_V = 5, YIELD_AHEAD = 7, YIELD_R = 35;
 const BUS_PALETTE = ['#f2c230', '#e8e8e8', '#3d8f4f', '#d9442f'];
+const TROLL_PALETTE = ['#e8e8e8', '#2f7fd0', '#e8e8e8', '#3d8f4f'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
 // Удары: массы в тоннах (игрок — легковушка), упругость (кузова мнутся — отскок слабый), трение
 // скольжения металла о металл. Удар сильнее HARD м/с по нормали сбивает машину с полосы: она едет
@@ -65,7 +66,9 @@ const wheel = (r) => new THREE.CylinderGeometry(r, r, 0.25, 10).rotateZ(Math.PI 
 const hub = (r) => new THREE.CylinderGeometry(r, r, 0.26, 8).rotateZ(Math.PI / 2);
 const BUS_WHEEL = { r: 0.5, x: 1.1, zs: [3.8, -3.4] };
 
-function busGeometry() {
+// Автобус; troll — троллейбус: на крыше рама и две штанги назад-вверх к проводам (TROLL_H над дорогой, wires.js).
+export const TROLL_H = 5.9;
+function busGeometry(troll = false) {
   const { r, x: wx, zs } = BUS_WHEEL, R = r + ARCH_GAP, y0 = 0.45;
   const body = [[-5.75, y0], [5.75, y0], [5.75, 2.85], [-5.75, 2.85]];
   const paint = [[prism(withArches(body, wheelArches(r, zs)), 2.5), '#fff', 0, 0, 0]];
@@ -79,6 +82,15 @@ function busGeometry() {
     // Ниша между колёсами — чтобы сквозь арки не просвечивала улица.
     parts.push([box(2 * (wx - 0.14), r + R - y0 + 0.01, 2 * R), '#111214', 0, (y0 + r + R + 0.01) / 2, z]);
     for (const x of [-wx, wx]) parts.push([wheel(r), '#151618', x, r, z], [hub(r * 0.55), '#9ea3a8', x, r, z]);
+  }
+  if (troll) {
+    parts.push([box(1.6, 0.25, 2.2), '#3a3d42', 0, 3.07, 1.2]); // рама токоприёмника
+    // Штанги: от рамы назад и вверх до проводов (пара в 0,6 м, как провода), длина ~6,3 м.
+    const len = Math.hypot(TROLL_H - 3.2, 6), tilt = Math.atan2(TROLL_H - 3.2, 6);
+    for (const sx of [-0.3, 0.3]) {
+      const rod = new THREE.CylinderGeometry(0.035, 0.035, len, 5).rotateX(Math.PI / 2).rotateX(tilt);
+      parts.push([rod, '#202326', sx, 3.2 + (TROLL_H - 3.2) / 2, 1.2 - 3]);
+    }
   }
   // Кузов — под цвет инстанса, остальное своим цветом.
   return { paint: merged(paint), detail: merged(parts) };
@@ -112,6 +124,12 @@ export class Traffic {
     kinds.push({ key: 'bus', count: BUSES, len: 11.5, colors: BUS_PALETTE, paint: 0, roof: 2.95,
       meshes: [new THREE.InstancedMesh(bus.paint, lit, BUSES), new THREE.InstancedMesh(bus.detail, lit, BUSES),
         new THREE.InstancedMesh(busGlows(), glowMaterial(), BUSES)] });
+    if (this.lineAt.troll) {
+      const tr = busGeometry(true);
+      kinds.push({ key: 'troll', count: TROLLS, len: 11.5, colors: TROLL_PALETTE, paint: 0, roof: 2.95,
+        meshes: [new THREE.InstancedMesh(tr.paint, lit, TROLLS), new THREE.InstancedMesh(tr.detail, lit, TROLLS),
+          new THREE.InstancedMesh(busGlows(), glowMaterial(), TROLLS)] });
+    }
     this.meshes = kinds.flatMap((k) => k.meshes);
     this.kinds = kinds;
     this.drawFar = 300; // м от игрока
@@ -119,12 +137,12 @@ export class Traffic {
     this.vehicles = [];
     let n = 0;
     for (const kind of kinds) {
-      const bus = kind.key === 'bus';
+      const bus = kind.key === 'bus' || kind.key === 'troll';
       for (let idx = 0; idx < kind.count; idx++, n++) {
         const color = new THREE.Color(kind.colors[(idx * 3 + n) % kind.colors.length]);
         kind.meshes[kind.paint].setColorAt(idx, color); // заводит instanceColor до компиляции шейдера
         this.vehicles.push({
-          meshes: kind.meshes, color, bus, kind: kind.key,
+          meshes: kind.meshes, color, bus, kind: kind.key, line: bus ? kind.key : null,
           len: kind.len, roof: kind.roof, y: 0, half: bus ? 1.25 : 0.85,
           // Выхлопная труба слева сзади; ускорение — для густоты дыма.
           acc: 0, smoke: { carry: Math.random() },
@@ -197,27 +215,31 @@ export class Traffic {
         if (!r.ow) add(r.n[i], r.n[i - 1], r, false);
       }
     }
-    // Маршруты автобусов (city.buses — цепочки узлов): busAt — узел → [цепочка, номер узла в ней]; e.bus — по ребру
-    // идёт какой-то маршрут. Старый city.json без маршрутов — автобусы ездят где угодно, как раньше.
-    this.busAt = null;
-    if (!w.city.buses?.length) return;
-    this.busAt = new Map();
-    for (const { n: p } of w.city.buses) {
-      p.forEach((id, i) => (this.busAt.get(id) || this.busAt.set(id, []).get(id)).push([p, i]));
-      for (let i = 1; i < p.length; i++) {
-        const e = this.out.get(p[i - 1])?.find((o) => o.b === p[i]);
-        if (e) e.bus = true;
+    // Маршруты автобусов и троллейбусов (city.buses, city.trolleys — цепочки узлов): lineAt[вид] — узел → [цепочка,
+    // номер узла в ней]; e.bus / e.troll — по ребру идёт какой-то маршрут этого вида. Старый city.json без маршрутов —
+    // автобусы ездят где угодно, как раньше, троллейбусов нет.
+    this.lineAt = {};
+    for (const [kind, list] of [['bus', w.city.buses], ['troll', w.city.trolleys]]) {
+      if (!list?.length) continue;
+      const at = (this.lineAt[kind] = new Map());
+      for (const { n: p } of list) {
+        p.forEach((id, i) => (at.get(id) || at.set(id, []).get(id)).push([p, i]));
+        for (let i = 1; i < p.length; i++) {
+          const e = this.out.get(p[i - 1])?.find((o) => o.b === p[i]);
+          if (e) e[kind] = true;
+        }
       }
     }
   }
 
-  // Автобус: дальше по своему маршруту (v.lp — цепочка, v.li — номер узла e.b в ней); маршрут кончился или
-  // прервался — на другой, проходящий через этот узел, не назад; нет такого — по улице, где ходят автобусы.
+  // Автобус и троллейбус (v.line — вид маршрута): дальше по своему маршруту (v.lp — цепочка, v.li — номер узла e.b в
+  // ней); маршрут кончился или прервался — на другой того же вида через этот узел, не назад; нет такого — по улице,
+  // где ходят такие же.
   #chooseBus(e, v) {
     const outs = this.out.get(e.b) || [];
     const go = (p, i) => outs.find((o) => o.b === p[i + 1]);
     if (v.lp?.[v.li] === e.b) { const o = go(v.lp, v.li); if (o) { v.li++; return o; } }
-    const lines = (this.busAt.get(e.b) || []).filter(([p, i]) => p[i + 1] !== e.a && go(p, i));
+    const lines = (this.lineAt[v.line].get(e.b) || []).filter(([p, i]) => p[i + 1] !== e.a && go(p, i));
     if (lines.length) {
       const [p, i] = lines[(Math.random() * lines.length) | 0];
       v.lp = p;
@@ -225,13 +247,13 @@ export class Traffic {
       return go(p, i);
     }
     v.lp = null;
-    const bus = outs.filter((o) => o.bus && o.b !== e.a);
-    return bus.length ? bus[(Math.random() * bus.length) | 0] : null;
+    const same = outs.filter((o) => o[v.line] && o.b !== e.a);
+    return same.length ? same[(Math.random() * same.length) | 0] : null;
   }
 
   // На перекрёстке — чаще прямо и на улицу покрупнее, разворот только в тупике.
   #choose(e, v) {
-    if (v?.bus && this.busAt) { const o = this.#chooseBus(e, v); if (o) return o; }
+    if (this.lineAt[v?.line]) { const o = this.#chooseBus(e, v); if (o) return o; }
     const outs = this.out.get(e.b) || [];
     let cands = outs.filter((o) => o.b !== e.a);
     if (!cands.length) cands = outs;
@@ -249,7 +271,7 @@ export class Traffic {
       const cell = this.grid.get(Math.floor((px + Math.cos(a) * r) / GRID) * 100003 + Math.floor((pz + Math.sin(a) * r) / GRID));
       if (!cell) continue;
       const e = cell[(Math.random() * cell.length) | 0];
-      if (v.bus && this.busAt && !e.bus) continue; // автобус — только на своих маршрутах
+      if (this.lineAt[v.line] && !e[v.line]) continue; // автобус и троллейбус — только на своих маршрутах
       const s = Math.random() * e.len;
       const lane = v.bus ? 0 : (Math.random() * e.lanes) | 0; // автобус — в правой
       const off = e.laneOff(lane);
@@ -260,8 +282,8 @@ export class Traffic {
       Object.assign(v, { route: [e], ri: 0, end: false, off, sk: 1, s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), acc: 0,
         lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true,
         knock: null, blend: null, roll: 0, rollV: 0, pitch: 0, pitchV: 0 });
-      if (v.bus && this.busAt) {
-        const at = this.busAt.get(e.a)?.find(([p, i]) => p[i + 1] === e.b);
+      if (this.lineAt[v.line]) {
+        const at = this.lineAt[v.line].get(e.a)?.find(([p, i]) => p[i + 1] === e.b);
         v.lp = at?.[0] ?? null;
         v.li = at ? at[1] + 1 : 0;
       }

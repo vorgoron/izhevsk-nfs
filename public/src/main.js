@@ -27,6 +27,7 @@ import { Trams } from './trams.js';
 import { NitroFX, JetFX, DustFX, ExhaustFX, SkidMarksFX, TireSmokeFX } from './effects.js';
 import { GhostFX } from './ghostfx.js';
 import { CarShadow } from './carshadow.js';
+import { TrolleyWires } from './wires.js';
 import { sendAdRequest } from './adrequest.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { install } from './install.js';
@@ -291,6 +292,7 @@ async function main() {
   const fuel = owned('заправки', () => new Fuel(world, scene));
   const queues = owned('очереди', () => new Queues(world, fuel, scene));
   const traffic = owned('трафик', () => new Traffic(world, scene));
+  const wires = owned('троллейбусные провода', () => new TrolleyWires(world, traffic, scene));
   traffic.drawFar = Q.carsFar;
   // Сменить уровень графики на ходу: квадраты текстур рельефа и радиус — для новых квадратов, остальное сразу.
   const setQuality = (name) => {
@@ -1641,6 +1643,7 @@ async function main() {
       cullPos.copy(cp);
       landmarks.group.userData.cull(cp.x, cp.z, camera.far);
       signals.cull(cp.x, cp.z, Math.min(camera.far, Q.carsFar + 100)); // светофоры — до 400 / 320 / 250 м
+      wires.cull(cp.x, cp.z, Math.min(camera.far, Q.carsFar + 100)); // провода троллейбусов — так же
     }
     skyDome.update(dt, camera);
     dayNight.update(dt);

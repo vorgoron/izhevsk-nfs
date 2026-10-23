@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Дописать в готовый public/city.json данные из кеша OSM (data/raw), без пересборки города:
-buses — маршруты автобусов (узлы маршрутов находятся среди roadNodes по координатам), cranes — краны на стройках.
+buses и trolleys — маршруты автобусов и троллейбусов (узлы маршрутов находятся среди roadNodes по координатам),
+cranes — краны на стройках.
 
   python3 tools/patch_city.py            # всё
   python3 tools/patch_city.py cranes     # только краны
@@ -16,14 +17,22 @@ import fetch_city  # noqa: E402
 OUT = os.path.join(os.path.dirname(__file__), "..", "public", "city.json")
 
 
-def buses(city):
+def node_index(city):
     at = {tuple(p): i for i, p in enumerate(city["roadNodes"])}
     index = {}
     for nid, (lat, lon) in fetch_city.nodes.items():
         i = at.get(fetch_city.project(lat, lon))
         if i is not None:
             index[nid] = i
-    return fetch_city.bus_routes(index)
+    return index
+
+
+def buses(city):
+    return fetch_city.bus_routes(node_index(city))
+
+
+def trolleys(city):
+    return fetch_city.bus_routes(node_index(city), "trolleybus")
 
 
 def cranes(city):
@@ -35,7 +44,7 @@ def cranes(city):
     return fetch_city.construction_cranes(inside, city["roads"], city["roadNodes"], city["buildings"], city["landmarks"])
 
 
-PARTS = {"buses": buses, "cranes": cranes}
+PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes}
 
 
 def main():
