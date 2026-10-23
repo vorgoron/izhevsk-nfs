@@ -31,7 +31,7 @@ import { TrolleyWires } from './wires.js';
 import { sendAdRequest } from './adrequest.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { install } from './install.js';
-import { LANGS, getLang, toggleLang } from './i18n.js';
+import { LANGS, getLang, setLang, toggleLang } from './i18n.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { createDebug } from './debug.js';
@@ -1443,10 +1443,10 @@ async function main() {
     showInst();
     install.onChange(showInst);
     // Язык интерфейса: русский / удмуртский (черновик перевода, i18n.js).
-    const langBtn = box.querySelector('.lang');
-    const showLang = () => { langBtn.textContent = getLang() === 'udm' ? 'по-русски' : 'удмурт кылын'; };
-    showLang();
-    langBtn.addEventListener('click', () => { toggleLang(); showLang(); track('lang', { lang: getLang() }); });
+    const langPick = $('lang-pick');
+    langPick.value = getLang();
+    langPick.hidden = false;
+    langPick.addEventListener('change', () => { setLang(langPick.value); track('lang', { lang: getLang() }); });
     inst.addEventListener('click', async () => {
       const r = await install.prompt();
       if (r === 'ios') { hint.hidden = false; inst.hidden = true; }

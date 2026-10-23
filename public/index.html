@@ -96,6 +96,15 @@
     #loading { display: flex; flex-direction: column; align-items: center; }
     #start-foot { padding: 14px 16px calc(4px + env(safe-area-inset-bottom)); text-align: center; animation: logo-in .4s ease-out both; }
     #start-foot[hidden], #start-foot .tg-hint[hidden] { display: none; }
+    /* Язык интерфейса — выпадающий список в правом верхнем углу экрана «Поехали»; названия — каждое на своём языке. */
+    #lang-pick { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); z-index: 1;
+      font: inherit; font-size: 15px; font-weight: 600; color: #fff; background: rgba(255,255,255,.1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23fff' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center / 10px 6px;
+      border: 1px solid rgba(255,255,255,.3); border-radius: 10px; padding: 7px 30px 7px 12px; cursor: pointer; appearance: none; -webkit-appearance: none;
+      animation: logo-in .4s ease-out both; }
+    #lang-pick:hover { background-color: rgba(255,255,255,.18); }
+    #lang-pick:focus-visible { outline: none; border-color: #ffd23f; }
+    #lang-pick option { color: #fff; background: #15181b; }
+    #lang-pick[hidden] { display: none; }
     #start-foot .tg { font: inherit; font-size: 15px; font-weight: 600; color: rgba(255,255,255,.7); background: none; border: 0; padding: 4px; cursor: pointer;
       text-decoration: underline; text-underline-offset: 3px; }
     #start-foot .tg:hover { color: #fff; }
@@ -567,9 +576,9 @@
       <div class="choice"><button class="go"><span>Исследовать город ▶</span><kbd>Enter</kbd></button>
       <button class="friends"><span>👥 Играть с друзьями</span><small>получите ссылку — кто её откроет, окажется в городе рядом с вами</small></button></div>
       <button class="install" hidden>📲 Установить как приложение</button>
-      <button class="install lang">удмурт кылын</button>
       <p class="install-hint" hidden>Нажмите «Поделиться» <b>⬆︎</b> внизу Safari, затем «На экран Домой».</p>
     </div></div>
+    <select id="lang-pick" hidden aria-label="Язык"><option value="ru">Русский</option><option value="udm">Удмурт кыл</option></select>
     <div id="start-foot" hidden><button class="tg"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#fff"/><path fill="#2aabee" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>Новости игры в Telegram — @izh_car</button><p class="tg-hint" hidden></p></div></div>
   <div id="street" class="hud"></div>
   <div id="landmark" class="hud"></div>
