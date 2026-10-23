@@ -20,6 +20,27 @@ function roadBelow(world, x, z, pad = 1) {
   return y;
 }
 
+// Высота дороги, которая проходит под дорожкой-мостом p (пересекает её ось не у самых концов), или -Infinity.
+// Дорога, упёршаяся в конец мостика (брод рядом с мостиком через ручей), — не под ним.
+function roadAcross(world, p) {
+  let y = -Infinity, total = 0;
+  const acc = [0];
+  for (let i = 1; i < p.length; i++) acc.push(total += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]));
+  for (let i = 1; i < p.length; i++) {
+    const [ax, az] = p[i - 1], [bx, bz] = p[i], L = acc[i] - acc[i - 1];
+    for (const s of world.segmentsNear((ax + bx) / 2, (az + bz) / 2, L / 2 + 2)) {
+      const ex = bx - ax, ez = bz - az, fx = s.bx - s.ax, fz = s.bz - s.az, den = ex * fz - ez * fx;
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((s.ax - ax) * fz - (s.az - az) * fx) / den, u = ((s.ax - ax) * ez - (s.az - az) * ex) / den;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      const at = acc[i - 1] + t * L;
+      if (at < 1 || at > total - 1) continue;
+      y = Math.max(y, roadBelow(world, ax + ex * t, az + ez * t));
+    }
+  }
+  return y;
+}
+
 // Высота полотна автомобильного моста под точкой (или null): тротуары вдоль моста идут по нему.
 function bridgeDeckAt(world, x, z, pad) {
   let best = null;
@@ -153,8 +174,9 @@ export function planFootbridges(world) {
     let ground = -Infinity, road = -Infinity;
     for (const [x, z] of smp) {
       ground = Math.max(ground, world.terrain(x, z));
-      road = Math.max(road, roadBelow(world, x, z));
+      if (fb.a) road = Math.max(road, roadBelow(world, x, z));
     }
+    if (!fb.a) road = roadAcross(world, fb.p);
     // Тротуар автомобильного моста (в OSM — отдельный пешеходный мост рядом): идёт по полотну
     // моста, а не висит на 5.5 м над ним.
     const along = !!fb.clipped || (!fb.a && smp.filter(([x, z]) => bridgeDeckAt(world, x, z, fb.w / 2 + 3) !== null).length >= smp.length * 0.6);
@@ -179,7 +201,40 @@ export function planFootbridges(world) {
     if (it.group) it.flat = Math.max(...it.group.items.map((q) => q.flat));
   }
   for (const it of items) if (it.fb.a && (it.fb.level || it.fb.stairs)) setupEnds(world, it);
+  for (const it of items) hangingEnds(world, it, items);
   world.footbridgeItems = items;
+}
+
+// Концы дорожки-моста над дорогой, висящие над землёй (в OSM к ним подходят лестницы, а то и ничего): к каждому —
+// марш до земли (buildFootbridges). Марш — дальше по оси моста; там дорога или рельсы — вбок, вдоль моста. Конец,
+// которым мост примыкает к соседнему мосту своей группы, не трогаем.
+const HANG = 1.2; // м над землёй — уже висит
+function hangingEnds(world, it, items) {
+  it.ends = [];
+  if (it.along || it.fb.a || !(it.group || it.overRoad)) return;
+  const p = it.fb.p, hw = it.fb.w / 2;
+  for (const [e, f] of [[p[0], p[1]], [p[p.length - 1], p[p.length - 2]]]) {
+    const [x, z] = e, gap = it.flat - world.terrain(x, z);
+    if (gap < HANG) continue;
+    const joined = it.group?.items.some((q) => q !== it && q.smp.some(([u, v]) => Math.hypot(u - x, v - z) < 4));
+    if (joined) continue;
+    let ux = x - f[0], uz = z - f[1];
+    const L = Math.hypot(ux, uz) || 1;
+    ux /= L; uz /= L;
+    const len = gap / 0.16 * 0.34 + 1;
+    const clear = (dx, dz, ox, oz) => {
+      for (let d = 1; d < len; d += 1.5) {
+        const sx = ox + dx * d, sz = oz + dz * d;
+        if (roadBelow(world, sx, sz, 0.5) > -Infinity) return false;
+        if (world.railsNear(sx, sz).some((sg) => World.closest(sg, sx, sz).d < 2.5)) return false;
+      }
+      return true;
+    };
+    // Вбок — от края настила у конца, назад вдоль моста не уходя за его конец.
+    const opts = [[ux, uz, x, z], ...[1, -1].map((k) => [-ux, -uz, x - uz * k * (hw + 1.2) + ux * 0.2, z + ux * k * (hw + 1.2) + uz * 0.2])];
+    const pick = opts.find(([dx, dz, ox, oz]) => clear(dx, dz, ox, oz)) ?? opts[0];
+    it.ends.push({ x: pick[2], z: pick[3], dx: pick[0], dz: pick[1], half: Math.min(1.5, hw) });
+  }
 }
 
 // Ось моста (главное направление контура), концы вдоль оси; ось смотрит в сторону level.
@@ -327,6 +382,7 @@ export function buildFootbridges(world, terrainMaterial) {
   for (const it of items) {
     if (it.plateau) group.add(buildPlateau(world, it, terrainMaterial, iron));
     if (it.fb.stairs) group.add(buildStairs(world, it, concrete, iron));
+    for (const e of it.ends ?? []) group.add(stairFlight(world, e.x, e.z, e.dx, e.dz, it.flat, e.half, concrete, iron));
   }
 
   const m = new THREE.Matrix4();
@@ -435,11 +491,14 @@ function buildPlateau(world, it, terrainMaterial, iron) {
 // Прямая лестница вниз с торца моста, против оси (к пруду): ступени-блоки до земли, перила.
 function buildStairs(world, it, concrete, iron) {
   const a = it.axes;
-  const RISE = 0.16, RUN = 0.34, HALF = Math.min(3, a.hw);
-  const x0 = a.cx + a.ux * a.sMin, z0 = a.cz + a.uz * a.sMin;
-  const dx = -a.ux, dz = -a.uz;
+  return stairFlight(world, a.cx + a.ux * a.sMin, a.cz + a.uz * a.sMin, -a.ux, -a.uz, it.flat, Math.min(3, a.hw), concrete, iron);
+}
+
+// Марш от (x0, z0) на высоте top в сторону (dx, dz) до земли: ступени, перила, стенка-коллайдер.
+function stairFlight(world, x0, z0, dx, dz, top, HALF, concrete, iron) {
+  const RISE = 0.16, RUN = 0.34;
   const steps = [];
-  let y = it.flat, d = 0;
+  let y = top, d = 0;
   while (steps.length < 200) {
     y -= RISE;
     const x = x0 + dx * (d + RUN / 2), z = z0 + dz * (d + RUN / 2);
@@ -467,7 +526,7 @@ function buildStairs(world, it, concrete, iron) {
   for (const side of [-1, 1]) {
     const ox = -dz * HALF * side, oz = dx * HALF * side;
     const ax = x0 + ox, az = z0 + oz, bx = x0 + dx * d + ox, bz = z0 + dz * d + oz;
-    const ya = it.flat, yb = last[3];
+    const ya = top, yb = last[3];
     const u = d / 1.2;
     rp.push(ax, ya, az, bx, yb, bz, bx, yb + RAIL_H, bz, ax, ya, az, bx, yb + RAIL_H, bz, ax, ya + RAIL_H, az);
     ruv.push(0, 0, u, 0, u, 1, 0, 0, u, 1, 0, 1);
