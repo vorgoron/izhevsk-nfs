@@ -10,7 +10,10 @@ export const UPGRADES = [
   { key: 'tires', name: 'Шины', levels: [['спортивные', 6000, '+12 % сцепления'], ['полуслики', 14000, '+25 % сцепления']] },
   { key: 'nitro', name: 'Нитро', levels: [['баллон', 10000, 'Shift — закись азота: +30 % скорости, баллон сам наполняется за ~17 с'], ['двойной баллон', 22000, 'горит в полтора раза дольше, наполняется быстрее']] },
   { key: 'hopper', name: '«Кузнечик»', levels: [['Кузнечик', 15000, 'струи на днище: kickflip, backflip, бочка, посадка на крыши'], ['Кузнечик-М', 30000, 'подскок выше в полтора раза — до крыш пятиэтажек']] },
+  // Полный привод — только у «Оды» (only): по траве, грунту и грязи теряет втрое меньше (AWD_OFF в car.js).
+  { key: 'awd', name: 'Привод', only: ['oda'], levels: [['4×4', 25000, 'полный привод: по траве, грунту и грязи почти как по асфальту']] },
 ];
+export const upgradesFor = (model) => UPGRADES.filter((u) => !u.only || u.only.includes(model));
 
 export const carKey = (model) => `car:${model}`;
 export const upKey = (model, up, level) => `${model}:up:${up}:${level}`;
@@ -36,7 +39,7 @@ const ENGINE = [[1, 1], [1.07, 0.8], [1.15, 0.62], [1.25, 0.5]], TIRES = [1, 1.1
 export function tuned(wallet, model) {
   const lv = (k) => wallet ? upLevel(wallet, model, k) : 0;
   const s = MODELS[model].stats, e = lv('engine'), t = lv('tires'), t100 = s.t100 * PACE * ENGINE[e][1];
-  return { ...s, kmh: s.kmh * ENGINE[e][0], t100, accel: 10 / t100, grip: s.grip * TIRES[t], nitro: lv('nitro'), hopper: lv('hopper'), engine: e, tires: t };
+  return { ...s, kmh: s.kmh * ENGINE[e][0], t100, accel: 10 / t100, grip: s.grip * TIRES[t], nitro: lv('nitro'), hopper: lv('hopper'), awd: lv('awd'), engine: e, tires: t };
 }
 
 // Автосалон появился позже денег: у кого кошелёк уже был, тому — машина, на которой ездил, с нитро и «Кузнечиком»,

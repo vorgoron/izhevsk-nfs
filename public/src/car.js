@@ -12,6 +12,8 @@ const NITRO_BURN = [0, 0.35, 0.23], NITRO_FILL = [0, 1, 1.3], HOP_VY = [0, 1, 1.
 // Нитро само не восполняется — баллон заправляют за деньги на АЗС или в меню (fuel.js, money.js).
 // Вне дороги (трава, лес, пустырь): доля от максимальной скорости, разгона, сцепления; торможение грунтом.
 const OFF_SPEED = 0.45, OFF_ACCEL = 0.5, OFF_GRIP = 0.6, OFF_DRAG = 0.08;
+// Полный привод (улучшение «4×4» у «Оды»): потери вне дороги — эта доля от обычных; занос и пыль на грунте — как были.
+const AWD_OFF = 0.35;
 const BRAKE = 28;
 const REVERSE_MAX = 12;
 const GRIP = 9;           // как быстро гасится боковое скольжение
@@ -165,6 +167,7 @@ export class Car {
     this.eco = stats.eco ?? 1;
     this.nitroLevel = stats.nitro ?? 1;
     this.hopper = stats.hopper ?? 1;
+    this.awd = stats.awd ?? 0;
   }
 
   place(x, z, heading) {
@@ -248,8 +251,9 @@ export class Car {
     }
     const lvl = this.nitroLevel;
     this.nitro = Math.min(1, Math.max(0, this.nitro + (nitroOn ? -NITRO_BURN[lvl] : NITRO_REFILL * NITRO_FILL[lvl] * this.nitroBoost) * dt));
-    const top = (nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed) * (1 - (1 - OFF_SPEED) * off);
-    const accel = this.accel * (1 - (1 - OFF_ACCEL) * off);
+    const lose = off * (this.awd ? AWD_OFF : 1); // потери скорости, разгона и сцепления вне дороги
+    const top = (nitroOn ? this.maxSpeed * NITRO_K : this.maxSpeed) * (1 - (1 - OFF_SPEED) * lose);
+    const accel = this.accel * (1 - (1 - OFF_ACCEL) * lose);
 
     const air = this.air;
     if (air) {
@@ -264,7 +268,7 @@ export class Car {
       vf -= Math.sign(vf) * Math.min(Math.abs(vf), 2.5 * dt); // накат
     }
     vf -= vf * Math.abs(vf) * AIR * dt; // сопротивление воздуха
-    vf -= vf * OFF_DRAG * off * dt;        // грунт тормозит
+    vf -= vf * OFF_DRAG * lose * dt;       // грунт тормозит
     if (vf > top + 1 && !air) vf -= Math.min(vf - top, 14 * dt); // съехал с дороги на скорости (или после ускорителя) — сбрасываем до предела
     if (input.brake && !air) vf -= Math.sign(vf) * Math.min(Math.abs(vf), HANDBRAKE * dt);
 
@@ -295,7 +299,7 @@ export class Car {
     // Боковое сцепление — в старых осях кузова: гасит скольжение, этим и гнёт траекторию к курсу.
     this.skid = Math.max(0, this.skid - dt);
     const skidGrip = 1 - SKID_GRIP * this.skid;
-    const grip = this.grip * (1 - (1 - OFF_GRIP) * off);
+    const grip = this.grip * (1 - (1 - OFF_GRIP) * lose);
     if (!air) {
       const vr0 = vr;
       vr *= Math.exp(-(grip + (bySurface(DRIFT_GRIP, off) - grip) * s) * skidGrip * dt);

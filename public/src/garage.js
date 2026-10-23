@@ -7,7 +7,7 @@
 // с машинами и улучшениями остаётся до следующего захода (пока открыта игра).
 import { MODELS, DEFAULT_MODEL, pickOptions, shownOptions, RIDE_HANDLING } from './vehicles.js';
 import { formatMoney } from './money.js';
-import { UPGRADES, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './shop.js';
+import { upgradesFor, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './shop.js';
 import { PAINTS, paintOf, paintKey } from './paints.js';
 
 const STORE = 'vehicle';
@@ -288,7 +288,7 @@ export class Garage {
       head.textContent = 'Улучшения ставятся на свою машину — сначала положите её в корзину';
       box.append(head);
     }
-    for (const up of UPGRADES) {
+    for (const up of upgradesFor(model)) {
       const lv = upLevel(this.wallet, model, up.key), lc = upLevel(this.#view(), model, up.key);
       const row = document.createElement('div');
       row.className = 'opt';
