@@ -14,6 +14,19 @@ export function engineTarget(kmh, throttle) {
   if (kmh < 2) rpm = throttle ? 2600 : IDLE_RPM; // газ на месте — перегазовка
   return { rpm, gear };
 }
+// Голос мотора по модели (vehicles.js): pitch — множитель частоты, mix — громкость пилы, пилы октавой ниже и квадрата,
+// tone — яркость (частота фильтра), q — резонанс, rough — неровность (биение раз в оборот: старый карбюраторный
+// мотор бубнит, у Весты ровно), gain — громкость. Москвич и «Комби» — УЗАМ-412, «Каблучок» и пикап — тот же мотор под
+// нагрузкой, ниже и грубее; «Ода» — мягче; Веста — современный 16-клапанный: выше, чище, тише.
+const VOICES = {
+  m412: { pitch: 1, mix: [0.5, 0.6, 0.25], tone: 1, q: 4, rough: 0.3, gain: 1 },
+  kombi: { pitch: 1.02, mix: [0.5, 0.6, 0.22], tone: 1, q: 4, rough: 0.25, gain: 1 },
+  kabluk: { pitch: 0.9, mix: [0.42, 0.75, 0.32], tone: 0.82, q: 5, rough: 0.4, gain: 1.05 },
+  pickup: { pitch: 0.88, mix: [0.42, 0.78, 0.3], tone: 0.8, q: 5, rough: 0.45, gain: 1.05 },
+  oda: { pitch: 0.96, mix: [0.55, 0.5, 0.14], tone: 1.08, q: 3.5, rough: 0.15, gain: 0.95 },
+  vesta: { pitch: 1.1, mix: [0.62, 0.32, 0.06], tone: 1.3, q: 2.5, rough: 0.04, gain: 0.85 },
+};
+export const voiceOf = (model) => VOICES[model] ?? VOICES.m412;
 const TRAFFIC_VOICES = 4; // столько ближайших машин слышно мотором
 const TRAFFIC_HEAR = 70; // м
 const SOUND_SPEED = 343; // м/с, для Доплера
@@ -29,11 +42,22 @@ export class Sound {
     try { this.muted = localStorage.getItem('muted') === '1'; } catch {}
     this.prev = { state: null, next: 0, count: 0, impact: 0 };
     this.rpm = IDLE_RPM;
+    this.voice = voiceOf(null);
     this.vol = Object.fromEntries(VOLUMES.map((k) => [k, 1]));
     try {
       const saved = JSON.parse(localStorage.getItem('volume') || '{}');
       for (const k of VOLUMES) if (Number.isFinite(saved[k])) this.vol[k] = Math.max(0, Math.min(1, saved[k]));
     } catch {}
+  }
+
+  // Голос своего мотора — по модели машины (VOICES).
+  setVoice(model) {
+    this.voiceModel = model;
+    this.voice = voiceOf(model);
+    if (!this.ctx) return;
+    this.voice.mix.forEach((g, i) => { this.engineOsc[i].gn.gain.value = g; });
+    this.engineFilter.Q.value = this.voice.q;
+    this.engineLfoDepth.gain.value = this.voice.rough * 0.5;
   }
 
   setVolume(key, v) {
@@ -99,16 +123,23 @@ export class Sound {
     const curve = new Float32Array(1024);
     for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(2.5 * x); }
     shaper.curve = curve;
-    shaper.connect(this.engineFilter).connect(this.engineGain).connect(this.carBus);
-    this.engineOsc = [['sawtooth', 1, 0.5], ['sawtooth', 0.5, 0.6], ['square', 1.004, 0.2]].map(([type, mul, g]) => {
+    // Неровность: громкость мотора бьётся синусом раз в оборот (глубина — voice.rough).
+    this.engineAM = ctx.createGain();
+    this.engineLfo = ctx.createOscillator();
+    this.engineLfoDepth = ctx.createGain();
+    this.engineLfoDepth.gain.value = 0;
+    this.engineLfo.connect(this.engineLfoDepth).connect(this.engineAM.gain);
+    this.engineLfo.start();
+    shaper.connect(this.engineAM).connect(this.engineFilter).connect(this.engineGain).connect(this.carBus);
+    this.engineOsc = [['sawtooth', 1], ['sawtooth', 0.5], ['square', 1.004]].map(([type, mul]) => {
       const o = ctx.createOscillator();
       o.type = type;
       const gn = ctx.createGain();
-      gn.gain.value = g;
       o.connect(gn).connect(shaper);
       o.start();
-      return { o, mul };
+      return { o, mul, gn };
     });
+    this.setVoice(this.voiceModel);
 
     this.skid = this.#noiseVoice('bandpass', 1300, 3, this.carBus);
     this.wind = this.#noiseVoice('lowpass', 500, 0.7, this.carBus);
@@ -139,7 +170,7 @@ export class Sound {
       gn.gain.value = gv;
       o.connect(gn).connect(f);
       o.start();
-      return { o, mul };
+      return { o, mul, gn };
     });
     const noise = (type, freq, q) => {
       const src = ctx.createBufferSource();
@@ -458,10 +489,10 @@ export class Sound {
       voice.rpm += (engineTarget(kmh, gas).rpm - voice.rpm) * Math.min(1, dt * 9);
       const closing = -(((g.vx ?? 0) - car.vel.x) * rx + ((g.vz ?? 0) - car.vel.y) * rz) / d;
       const dop = SOUND_SPEED / (SOUND_SPEED - Math.max(-60, Math.min(60, closing)));
-      const freq = (voice.rpm / 60) * 2 * dop;
-      for (const { o, mul } of voice.osc) set(o.frequency, freq * mul, 0.03);
-      set(voice.f.frequency, 300 + voice.rpm * (gas ? 0.35 : 0.18));
-      set(voice.g.gain, loud * (0.1 + gas * 0.06 + (voice.rpm / MAX_RPM) * 0.04));
+      const vc = voiceOf(g.model), freq = (voice.rpm / 60) * 2 * dop * vc.pitch; // голос — по модели его машины
+      voice.osc.forEach(({ o, mul, gn }, i) => { set(o.frequency, freq * mul, 0.03); gn.gain.value = vc.mix[i]; });
+      set(voice.f.frequency, (300 + voice.rpm * (gas ? 0.35 : 0.18)) * vc.tone);
+      set(voice.g.gain, loud * (0.1 + gas * 0.06 + (voice.rpm / MAX_RPM) * 0.04) * vc.gain);
       set(voice.pan.pan, Math.max(-1, Math.min(1, ((rx * r.x + rz * r.y) / d) * 0.8)));
       set(voice.nitro.gain, fx & 2 ? loud * 0.16 : 0, fx & 2 ? 0.05 : 0.15);
       // Шины: скорость поперёк кузова (по отрезку между точками) или ручник на ходу.
@@ -484,10 +515,11 @@ export class Sound {
     const throttle = input.up || input.down ? 1 : 0;
     const target = engineTarget(kmh, throttle).rpm;
     this.rpm += (target - this.rpm) * Math.min(1, dt * 9);
-    const freq = (this.rpm / 60) * 2; // 4 цилиндра: 2 вспышки на оборот
+    const vc = this.voice, freq = (this.rpm / 60) * 2 * vc.pitch; // 4 цилиндра: 2 вспышки на оборот
     for (const { o, mul } of this.engineOsc) set(o.frequency, freq * mul, 0.02);
-    set(this.engineFilter.frequency, 300 + this.rpm * (throttle ? 0.35 : 0.18));
-    set(this.engineGain.gain, 0.09 + throttle * 0.055 + (this.rpm / MAX_RPM) * 0.035);
+    set(this.engineLfo.frequency, freq / 2, 0.02);
+    set(this.engineFilter.frequency, (300 + this.rpm * (throttle ? 0.35 : 0.18)) * vc.tone);
+    set(this.engineGain.gain, (0.09 + throttle * 0.055 + (this.rpm / MAX_RPM) * 0.035) * vc.gain);
 
     // ---- шины: боковое скольжение и торможение юзом
     const slip = Math.abs(car.vel.dot(car.right));

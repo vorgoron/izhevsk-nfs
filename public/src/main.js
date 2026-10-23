@@ -213,6 +213,7 @@ async function main() {
     m.userData.perf = 'машина игрока';
     scene.add(m);
     car.setModel(m, tuned(wallet, key));
+    sound.setVoice(key);
     showGear(garage);
     net.setVehicle(key, color, options);
     net.setGear(tuned(wallet, key)); // другим игрокам — только купленное
@@ -399,6 +400,7 @@ async function main() {
   // ---------------------------------------------------------------- ввод
 
   const sound = new Sound();
+  sound.setVoice(garage.choice.model);
   game.sound = sound;
   const trams = owned('трамваи', () => new Trams(world, scene, sound));
   game.trams = trams;
