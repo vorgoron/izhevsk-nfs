@@ -293,6 +293,7 @@ async function main() {
   const queues = owned('очереди', () => new Queues(world, fuel, scene));
   const traffic = owned('трафик', () => new Traffic(world, scene));
   const wires = owned('троллейбусные провода', () => new TrolleyWires(world, traffic, scene));
+  for (const m of wires.poles) breakables.addTrolleyPoles(m); // опоры сбиваются, как фонарные столбы
   traffic.drawFar = Q.carsFar;
   // Сменить уровень графики на ходу: квадраты текстур рельефа и радиус — для новых квадратов, остальное сразу.
   const setQuality = (name) => {
@@ -406,6 +407,7 @@ async function main() {
   game.sound = sound;
   const trams = owned('трамваи', () => new Trams(world, scene, sound));
   game.trams = trams;
+  game.wires = wires;
   traffic.trams = trams; // трафик ждёт трамваи, трамваи — трафик на путях
   traffic.race = race;
   trams.traffic = traffic;

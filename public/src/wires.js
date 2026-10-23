@@ -1,15 +1,18 @@
 // Контактная сеть троллейбусов: над правой полосой каждого направления маршрута (рёбра трафика с e.troll) — пара
 // проводов на высоте TROLL_H (до них тянутся штанги троллейбуса, traffic.js), у края дороги через POLE_GAP м — опоры
-// с растяжкой к проводам. Ячейки по CELL м: в каждой одни линии и один InstancedMesh опор, дальние прячет cull —
+// с растяжкой к проводам; опора не встаёт на полотно улицы (у перекрёстка — поперечной) и на рельсы, сбивается как
+// фонарный столб (breakables.addTrolleyPoles). Ячейки по CELL м: в каждой одни линии и один InstancedMesh опор, дальние прячет cull —
 // общий меш на город рисовался бы целиком каждый кадр.
 import * as THREE from 'three';
 import { TROLL_H } from './traffic.js';
+import { World } from './world.js';
 
 const CELL = 600, POLE_GAP = 35, POLE_H = 7.6, PAIR = 0.3; // м; PAIR — полрасстояния между проводами
 
 export class TrolleyWires {
   constructor(world, traffic, scene) {
     this.cells = [];
+    this.poles = []; // InstancedMesh опор с userData.spots — для breakables
     const edges = traffic.edges.filter((e) => e.troll);
     if (!edges.length) return;
     const by = new Map(), cellOf = (x, z) => {
@@ -18,6 +21,9 @@ export class TrolleyWires {
       return by.get(k);
     };
     const grid = new Map(); // опоры по клеткам POLE_GAP: { x, z, dx, dz }
+    // Не на проезжей части (своей и поперечной) и не на рельсах.
+    const free = (x, z) => ![...world.nearbyRoadSegments(x, z)].some((sg) => World.closest(sg, x, z).d < sg.w / 2 + 0.6)
+      && !world.railsNear(x, z).some((sg) => World.closest(sg, x, z).d < 2.5);
     const y = (e, x, z) => (world.roadY(e.road, x, z) ?? world.terrain(x, z)) + TROLL_H;
     for (const e of edges) {
       const off = e.laneOff(0), nx = -e.dz, nz = e.dx; // вправо от направления
@@ -48,7 +54,7 @@ export class TrolleyWires {
             }
           }
         }
-        if (near) continue;
+        if (near || !free(px, pz)) continue;
         (grid.get(gk) || grid.set(gk, []).get(gk)).push({ x: px, z: pz, dx: e.dx, dz: e.dz });
         const g = world.roadY(e.road, px - nx * edgeOff, pz - nz * edgeOff) ?? world.terrain(px, pz);
         const cc = cellOf(px, pz);
@@ -71,6 +77,8 @@ export class TrolleyWires {
         c.poles.forEach(([x, y0, z, top], i) => poles.setMatrixAt(i, m.compose(p.set(x, y0, z), q, sc.set(1, top - y0, 1))));
         poles.castShadow = true;
         poles.computeBoundingSphere();
+        poles.userData.spots = c.poles;
+        this.poles.push(poles);
         g.add(poles);
       }
       scene.add(g);

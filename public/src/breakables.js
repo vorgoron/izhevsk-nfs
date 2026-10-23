@@ -102,6 +102,16 @@ export class Breakables {
     }));
   }
 
+  // Опоры контактной сети троллейбусов (wires.js): InstancedMesh единичной высоты, spots — [x, низ, z, верх].
+  addTrolleyPoles(mesh) {
+    this.#add(mesh, mesh.userData.spots.map(([x, y, z, top], i) => ({
+      kind: KINDS.pole, x, y, z, a: 0, h: top - y, top,
+      hide: () => hideInstance(mesh, i),
+      show: (m) => showInstance(mesh, i, m),
+      make: () => { const o = new THREE.Mesh(mesh.geometry, mesh.material); o.scale.y = top - y; return o; },
+    })));
+  }
+
   // Мелочи квадрата (buildPropChunk): InstancedMesh, геометрия от основания, вид — mesh.userData.breakKind.
   addProps(mesh) {
     const kind = KINDS[mesh.userData.breakKind];
