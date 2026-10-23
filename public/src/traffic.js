@@ -197,10 +197,41 @@ export class Traffic {
         if (!r.ow) add(r.n[i], r.n[i - 1], r, false);
       }
     }
+    // Маршруты автобусов (city.buses — цепочки узлов): busAt — узел → [цепочка, номер узла в ней]; e.bus — по ребру
+    // идёт какой-то маршрут. Старый city.json без маршрутов — автобусы ездят где угодно, как раньше.
+    this.busAt = null;
+    if (!w.city.buses?.length) return;
+    this.busAt = new Map();
+    for (const { n: p } of w.city.buses) {
+      p.forEach((id, i) => (this.busAt.get(id) || this.busAt.set(id, []).get(id)).push([p, i]));
+      for (let i = 1; i < p.length; i++) {
+        const e = this.out.get(p[i - 1])?.find((o) => o.b === p[i]);
+        if (e) e.bus = true;
+      }
+    }
+  }
+
+  // Автобус: дальше по своему маршруту (v.lp — цепочка, v.li — номер узла e.b в ней); маршрут кончился или
+  // прервался — на другой, проходящий через этот узел, не назад; нет такого — по улице, где ходят автобусы.
+  #chooseBus(e, v) {
+    const outs = this.out.get(e.b) || [];
+    const go = (p, i) => outs.find((o) => o.b === p[i + 1]);
+    if (v.lp?.[v.li] === e.b) { const o = go(v.lp, v.li); if (o) { v.li++; return o; } }
+    const lines = (this.busAt.get(e.b) || []).filter(([p, i]) => p[i + 1] !== e.a && go(p, i));
+    if (lines.length) {
+      const [p, i] = lines[(Math.random() * lines.length) | 0];
+      v.lp = p;
+      v.li = i + 1;
+      return go(p, i);
+    }
+    v.lp = null;
+    const bus = outs.filter((o) => o.bus && o.b !== e.a);
+    return bus.length ? bus[(Math.random() * bus.length) | 0] : null;
   }
 
   // На перекрёстке — чаще прямо и на улицу покрупнее, разворот только в тупике.
-  #choose(e) {
+  #choose(e, v) {
+    if (v?.bus && this.busAt) { const o = this.#chooseBus(e, v); if (o) return o; }
     const outs = this.out.get(e.b) || [];
     let cands = outs.filter((o) => o.b !== e.a);
     if (!cands.length) cands = outs;
@@ -218,6 +249,7 @@ export class Traffic {
       const cell = this.grid.get(Math.floor((px + Math.cos(a) * r) / GRID) * 100003 + Math.floor((pz + Math.sin(a) * r) / GRID));
       if (!cell) continue;
       const e = cell[(Math.random() * cell.length) | 0];
+      if (v.bus && this.busAt && !e.bus) continue; // автобус — только на своих маршрутах
       const s = Math.random() * e.len;
       const lane = v.bus ? 0 : (Math.random() * e.lanes) | 0; // автобус — в правой
       const off = e.laneOff(lane);
@@ -228,6 +260,11 @@ export class Traffic {
       Object.assign(v, { route: [e], ri: 0, end: false, off, sk: 1, s, x, z, dx: e.dx, dz: e.dz, heading: Math.atan2(e.dx, e.dz), acc: 0,
         lane, laneCool: 0, slowT: 0, speed: e.v * 0.6, hit: 0, stuck: 0, ghost: 0, active: true,
         knock: null, blend: null, roll: 0, rollV: 0, pitch: 0, pitchV: 0 });
+      if (v.bus && this.busAt) {
+        const at = this.busAt.get(e.a)?.find(([p, i]) => p[i + 1] === e.b);
+        v.lp = at?.[0] ?? null;
+        v.li = at ? at[1] + 1 : 0;
+      }
       this.#route(v);
       return;
     }
@@ -447,7 +484,7 @@ export class Traffic {
     let ahead = 0;
     for (let i = v.ri + 1; i < r.length; i++) ahead += r[i].len;
     while (ahead < ROUTE && !v.end) {
-      const n = this.#choose(r[r.length - 1]);
+      const n = this.#choose(r[r.length - 1], v);
       if (!n) { v.end = true; break; }
       r.push(n);
       ahead += n.len;

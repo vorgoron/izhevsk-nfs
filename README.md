@@ -45,6 +45,13 @@ python3 tools/gibdd_cams.py "…/Kompleksy_dlya_sayta_Gosavtoinspekcii_<год>.
 python3 tools/shop_walls.py
 ```
 
+Автобусы трафика ездят только по своим маршрутам — `buses` в `city.json` (отношения `route=bus` из OSM, цепочки
+узлов дорог; маршрут кончился — на другой через тот же узел). Дописать их в готовый `city.json` из кеша OSM, без пересборки:
+
+```sh
+python3 tools/bus_routes.py
+```
+
 Сырые ответы кешируются в `data/raw/`. OSM берётся из основного API тайлами ~0.6 × 0.6 км
 (Overpass часто недоступен; весь город — ~730 запросов, 40–60 минут на чистую загрузку),
 рельеф — тайлы Terrarium (AWS Terrain Tiles, z13), сетка 30 м.

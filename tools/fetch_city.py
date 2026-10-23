@@ -914,6 +914,41 @@ def tram_routes(aligned):
 
 # ---------------------------------------------------------------- остановки
 
+def bus_routes(node_index):
+    """Маршруты автобусов (route=bus): цепочки узлов дорог (индексы в roadNodes) в порядке участников отношения —
+    автобусы трафика ездят по ним. Узел не на дороге города (за краем выгрузки) рвёт цепочку на куски."""
+    out = []
+    for rid, (members, tags) in relations.items():
+        if tags.get("route") != "bus" or tags.get("type") != "route":
+            continue
+        chain = []
+        for t, ref, role in members:
+            if t != "way" or ref not in ways or role not in ("", "forward", "backward"):
+                continue
+            nds = [n for n in ways[ref][0] if n in nodes]
+            if len(nds) < 2:
+                continue
+            if chain:
+                # Развернуть кусок, чтобы он продолжал предыдущий.
+                if nds[-1] == chain[-1] or (nds[0] != chain[-1] and math.dist(project(*nodes[nds[-1]]), project(*nodes[chain[-1]]))
+                                             < math.dist(project(*nodes[nds[0]]), project(*nodes[chain[-1]]))):
+                    nds = nds[::-1]
+                if nds[0] == chain[-1]:
+                    nds = nds[1:]
+            chain += nds
+        piece = []
+        for n in chain + [None]:
+            i = node_index.get(n)
+            if i is not None:
+                piece.append(i)
+                continue
+            if len(piece) >= 2:
+                out.append({"ref": tags.get("ref", ""), "n": piece})
+            piece = []
+    print(f"bus routes: {len(out)} кусков, {sum(len(r['n']) for r in out)} узлов")
+    return out
+
+
 def transport_stops(inside):
     """Автобусные и троллейбусные остановки: [x, z, навес (1 — есть, 0 — нет, 2 — не размечен)].
     Точки highway=bus_stop / platform у тротуара; повторы ближе 15 м — одна. Трамвайные пока не берём."""
@@ -2136,6 +2171,7 @@ def build_city():
         "waterways": waterways,
         "fuel": fuel,
         "trams": tram_routes(aligned),
+        "buses": bus_routes(road_node_index),
         "stops": transport_stops(inside),
         "billboards": billboards(inside),
         "shops": shop_signs(buildings, roads, road_nodes),
