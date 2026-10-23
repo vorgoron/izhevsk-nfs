@@ -193,10 +193,17 @@ export function roadMaterials(renderer) {
     rail: new THREE.MeshPhongMaterial({ vertexColors: true, specular: '#e8edf2', shininess: 80, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
     pillarGeo: new THREE.BoxGeometry(1.3, 1, 1.3).translate(0, 0.5, 0),
+    // Барьерное ограждение мостов: оцинкованная W-балка и стойки-швеллеры.
+    guard: new THREE.MeshLambertMaterial({ color: '#c4c9cd', side: THREE.DoubleSide }),
+    guardPostGeo: new THREE.BoxGeometry(0.1, 0.78, 0.14).translate(0, 0.39, 0),
   };
 }
 
 const DECK = 1.2, PARAPET = 0.9, PILLAR_STEP = 20;
+// Барьерное ограждение (по фото мостов Ижевска): у края проезжей части моста в GUARD_IN м, W-балка — профиль GUARD
+// ([от края наружу, высота], зубцы к дороге), стойки за ней через GUARD_STEP м.
+const GUARD_IN = 0.4, GUARD_STEP = 2;
+const GUARD = [[0, 0.44], [-0.07, 0.52], [0, 0.6], [-0.07, 0.68], [0, 0.76]];
 const TAPER = 0.3; // м сужения полотна на метр длины у трамвайных путей
 const MEDIAN_REACH = 25; // м: дальше парный мост не соединяется общим настилом (как MEDIAN_MAX в world.js)
 
@@ -317,6 +324,7 @@ function twinEdges(world, road) {
 export function buildRoadChunk(world, runs, mats) {
   const buckets = {};
   const bp = [], pillars = [], abutments = [], emb = []; // плиты и парапеты (треугольники), опоры, устои
+  const gr = [], posts = []; // барьерное ограждение мостов: треугольники балки, стойки [x, y, z, угол]
 
   for (const { road, from, to } of runs) {
     const mk = roadMarking(road);
@@ -483,6 +491,19 @@ export function buildRoadChunk(world, runs, mats) {
           if (road.twin && sgn === road.twinSide) continue; // к парному мосту — общий настил, без борта
           const ax = px + sgn * pl.nx * o, az = pz + sgn * pl.nz * o, bx = x + sgn * nx * o, bz = z + sgn * nz * o;
           quad(bp, [ax, y0 - DECK, az], [bx, y1 - DECK, bz], [bx, y1 + PARAPET, bz], [ax, y0 + PARAPET, az]);
+          // Ограждение — в GUARD_IN от края полотна внутрь; профиль по наружной нормали борта.
+          const og = 1 - GUARD_IN / half, la = Math.hypot(pl.nx, pl.nz) || 1, lb = Math.hypot(nx, nz) || 1;
+          const ga = [px + sgn * pl.nx * og, pz + sgn * pl.nz * og], gb = [x + sgn * nx * og, z + sgn * nz * og];
+          const ua = [sgn * pl.nx / la, sgn * pl.nz / la], ub = [sgn * nx / lb, sgn * nz / lb];
+          for (let k = 1; k < GUARD.length; k++) {
+            const P = (g, u, y, [o, h]) => [g[0] + u[0] * o, y + h, g[1] + u[1] * o];
+            quad(gr, P(ga, ua, y0, GUARD[k - 1]), P(gb, ub, y1, GUARD[k - 1]), P(gb, ub, y1, GUARD[k]), P(ga, ua, y0, GUARD[k]));
+          }
+          const seg = Math.hypot(x - px, z - pz);
+          for (let s0 = Math.ceil((v - seg) / GUARD_STEP) * GUARD_STEP; s0 < v; s0 += GUARD_STEP) {
+            const t = (s0 - (v - seg)) / (seg || 1), ux = ua[0] + (ub[0] - ua[0]) * t, uz = ua[1] + (ub[1] - ua[1]) * t;
+            posts.push([ga[0] + (gb[0] - ga[0]) * t + ux * 0.12, y0 + (y1 - y0) * t, ga[1] + (gb[1] - ga[1]) * t + uz * 0.12, Math.atan2(dx, dz)]);
+          }
         }
         quad(bp, [px + pl.nx * o, y0 - DECK, pz + pl.nz * o], [x + nx * o, y1 - DECK, z + nz * o],
           [x - nx * o, y1 - DECK, z - nz * o], [px - pl.nx * o, y0 - DECK, pz - pl.nz * o]);
@@ -536,6 +557,19 @@ export function buildRoadChunk(world, runs, mats) {
     const m = new THREE.Mesh(geo, mats.concrete);
     m.castShadow = m.receiveShadow = true;
     group.add(m);
+  }
+  if (gr.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(gr, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mats.guard);
+    m.castShadow = true;
+    group.add(m);
+    const im = new THREE.InstancedMesh(mats.guardPostGeo, mats.guard, posts.length);
+    const mt = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1);
+    posts.forEach(([x, y, z, a], i) => im.setMatrixAt(i, mt.compose(new THREE.Vector3(x, y, z), q.setFromAxisAngle(up, a), one)));
+    im.computeBoundingSphere();
+    group.add(im);
   }
   if (emb.length) {
     const geo = new THREE.BufferGeometry();
