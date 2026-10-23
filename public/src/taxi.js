@@ -7,7 +7,7 @@ import { address, short, routeLen } from './citymap.js';
 
 const PICK_MIN = 200, PICK_MAX = 900, DROP_MIN = 1000, DROP_MAX = 3000; // м по прямой
 const PICK_R = 14, STOP_V = 2;
-const FARE_BASE = 500, FARE_KM = 900;   // ₽: посадка и за км маршрута
+const FARE_BASE = 1000, FARE_KM = 1800;   // ₽: посадка и за км маршрута
 const FAST_KMH = 45, FAST_BONUS = 0.3;  // средняя быстрее — надбавка
 const HIT = 0.4, HIT_CUT = 0.15, MIN_SHARE = 0.3; // удар сильнее — минус доля платы, но не меньше MIN_SHARE
 

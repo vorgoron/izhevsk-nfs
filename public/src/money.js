@@ -13,10 +13,10 @@ export const PRICES = {
 export const SPEEDING = [[80, 5000], [60, 2000], [40, 1000], [20, 500]];
 export const speedingFine = (over) => SPEEDING.find(([d]) => over > d)?.[1] ?? 0;
 
-// Гонка: от 10 000 ₽ за 1,5 км и больше — пропорционально длине; рекорд — ещё 2 000 ₽.
+// Гонка: 6 000 ₽ за 1,5 км, длиннее — пропорционально длине (~4 000 ₽ в минуту гонки); побил свой рекорд — ещё 2 000 ₽.
 // Общая гонка: за места — доли от награды за победу.
 export function raceReward(length, { place = 1, record = false } = {}) {
-  const base = Math.max(10000, Math.round(length / 1500 * 10000 / 500) * 500);
+  const base = Math.max(6000, Math.round(length / 1500 * 6000 / 500) * 500);
   const share = [1, 0.5, 0.3][place - 1] ?? 0.15;
   return Math.round(base * share / 100) * 100 + (record ? 2000 : 0);
 }

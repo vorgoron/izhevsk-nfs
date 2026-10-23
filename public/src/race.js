@@ -252,13 +252,14 @@ export class Race {
   }
 
   #saveBest() {
-    // Рекорд — на дистанцию, округлённую до 100 м: маршруты случайные.
+    // Рекорд — на дистанцию, округлённую до 100 м: маршруты случайные. Первое время на дистанции — ещё не рекорд
+    // (иначе премию за рекорд давали почти за каждую гонку), а планка для следующих.
     this.bestKey = `best_${Math.round(this.length / 100)}`;
     try {
       const prev = parseFloat(localStorage.getItem(this.bestKey));
-      this.isRecord = !(prev <= this.time);
-      if (this.isRecord) localStorage.setItem(this.bestKey, String(this.time));
-      this.best = this.isRecord ? this.time : prev;
+      this.isRecord = this.time < prev;
+      if (!(prev <= this.time)) localStorage.setItem(this.bestKey, String(this.time));
+      this.best = Math.min(this.time, prev || Infinity);
     } catch {
       this.best = this.time;
       this.isRecord = false;
