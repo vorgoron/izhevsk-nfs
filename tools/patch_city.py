@@ -71,9 +71,9 @@ def ruins(city):
 
 
 def fences(city):
-    """Переопределения заборов (fetch_city.FENCE_OVERRIDE): вид и высота у кусков, лежащих на этом пути OSM."""
+    """Переопределения заборов (fetch_city.FENCE_OVERRIDE): куски, лежащие на этом пути OSM, — заново по нему целиком."""
     n = 0
-    for wid, (kind, h) in fetch_city.FENCE_OVERRIDE.items():
+    for wid in fetch_city.FENCE_OVERRIDE:
         if wid not in fetch_city.ways:
             continue
         way = [fetch_city.project(*fetch_city.nodes[i]) for i in fetch_city.ways[wid][0] if i in fetch_city.nodes]
@@ -86,11 +86,13 @@ def fences(city):
                 if math.hypot(ax + dx * t - x, az + dz * t - z) < 0.3:
                     return True
             return False
-        for f in city["fences"]:
-            if all(on(x, z) for x, z in f["p"]):
-                f["k"], f["h"] = kind, h
-                n += 1
-    print(f"fences: переопределено {n} кусков")
+        old = len(city["fences"])
+        city["fences"] = [f for f in city["fences"] if not all(on(x, z) for x, z in f["p"])]
+        gone = old - len(city["fences"])
+        new = fetch_city.override_fence(wid, way)
+        city["fences"] += new
+        n += 1
+        print(f"fences: way {wid} — {gone} кусков заменены на {len(new)}")
     return city["fences"]
 
 

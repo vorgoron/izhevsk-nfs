@@ -2383,6 +2383,7 @@ const FENCE = {
   // Профлист на плотине у проезда Дерябина (FENCE_OVERRIDE в fetch_city.py): чёрный, удмуртские звёзды, «IZHEVSK».
   // road — стоит вровень с соседней дорогой (на плотине рельеф у водосброса ниже полотна), стенка до земли.
   udm: { t: 0.08, len: 25.6, vm: null, tint: ['#ffffff'], road: true },
+  udmg: { t: 0.08, len: 3.2, vm: null, tint: ['#ffffff'], road: true }, // остальные стороны той же стены — серый профлист
 };
 const FENCE_PIECE = 5;  // м: забор дробится, чтобы идти по рельефу (меш рельефа — треугольники 15 м)
 const FENCE_SINK = 0.3; // м: низ уходит в землю — на склоне не висит
@@ -2490,8 +2491,22 @@ function fenceTexture(kind, renderer) {
       g.fillStyle = `rgb(${40 + v * 50 | 0},${70 + v * 60 | 0},${30 + v * 30 | 0})`;
       g.fillRect(rnd() * W, rnd() * H, 2 + rnd() * 3, 2 + rnd() * 3);
     }
-  } else if (kind === 'udm') { // роспись плотины (по фото): по чёрному гофру — восьмиконечные звёзды, полосы, надпись
+  } else if (kind === 'udm') { // роспись плотины (по фото): по чёрному гофру — удмуртские звёзды, полосы, надпись
     udmPanel(g, W, H);
+  } else if (kind === 'udmg') { // серый профлист на бетонном цоколе (та же высота цоколя, что у росписи)
+    const base = Math.round(H * 0.125);
+    g.fillStyle = '#a3a6a8';
+    g.fillRect(0, 0, W, H - base);
+    for (let x = 0; x < W; x += 16) {
+      g.fillStyle = 'rgba(255,255,255,0.22)';
+      g.fillRect(x, 0, 4, H - base);
+      g.fillStyle = 'rgba(0,0,0,0.16)';
+      g.fillRect(x + 9, 0, 4, H - base);
+    }
+    g.fillStyle = '#8e8c86';
+    g.fillRect(0, H - base, W, base);
+    g.fillStyle = 'rgba(40,40,40,0.25)';
+    g.fillRect(0, H - base, W, 3);
   } else { // jersey: бетонные блоки со швом, красно-белая полоса поверху
     g.fillStyle = '#b8b4ac';
     g.fillRect(0, 0, W, H);

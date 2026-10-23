@@ -1282,9 +1282,22 @@ def fence_kind(tags, ctx):
     return {"industrial": "panel", "village": None}.get(ctx, "bars")
 
 
-# Заборы, которые в OSM размечены не так, как выглядят: way → (вид, высота). 231428834 — стена водосброса заводской
-# плотины у проезда Дерябина: на деле профлист ~3,2 м, расписанный удмуртскими звёздами и «IZHEVSK» (по фото, отзыв).
-FENCE_OVERRIDE = {231428834: ("udm", 3.2)}
+# Заборы, которые в OSM размечены не так, как выглядят: way → высота и виды по участкам [(с вершины, вид)]; сплошные,
+# без проёмов. 231428834 — стена водосброса заводской плотины у проезда Дерябина: профлист ~3,2 м, сторона вдоль
+# проезда (вершины 7–10) расписана удмуртскими звёздами и «IZHEVSK», остальные — серый профлист (по фото, отзыв).
+FENCE_OVERRIDE = {231428834: {"h": 3.2, "kinds": [(0, "udmg"), (7, "udm")]}}
+
+
+def override_fence(wid, pts):
+    """Куски забора по FENCE_OVERRIDE: путь целиком, на каждом участке — свой вид."""
+    o = FENCE_OVERRIDE[wid]
+    starts = o["kinds"] + [(len(pts) - 1, None)]
+    out = []
+    for (i0, kind), (i1, _) in zip(starts, starts[1:]):
+        p = [[round(x, 2), round(z, 2)] for x, z in pts[i0:i1 + 1]]
+        if len(p) >= 2:
+            out.append({"k": kind, "h": o["h"], "p": p})
+    return out
 
 
 def fences(inside, roads, road_nodes, areas, buildings, footbridges):
@@ -1370,6 +1383,10 @@ def fences(inside, roads, road_nodes, areas, buildings, footbridges):
         L = acc[-1]
         if L < 1:
             continue
+        if wid in FENCE_OVERRIDE:
+            out += override_fence(wid, pts)
+            total += L
+            continue
         gaps = []
         for i, n in enumerate(nds):
             t = node_tags.get(n, {})
@@ -1427,7 +1444,6 @@ def fences(inside, roads, road_nodes, areas, buildings, footbridges):
             kind = "wood" if wid % 3 else "prof"
         h = parse_num(tags.get("height"))
         h = round(min(max(h, 0.5), 4.0), 1) if h else FENCE_H[kind]
-        kind, h = FENCE_OVERRIDE.get(wid, (kind, h))
 
         def at(s):
             i = min(max(1, next((k for k in range(1, len(acc)) if acc[k] >= s), len(acc) - 1)), len(acc) - 1)
