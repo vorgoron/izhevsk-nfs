@@ -950,28 +950,22 @@ def bus_routes(node_index):
 
 
 CRANE_GAP = 90       # м: на одной стройке — один кран
-CRANE_SITE = (1500, 150000)  # м²: площадка стройки (landuse=construction) — меньше это не стройка дома, больше — район
 
 
 def construction_cranes(inside, roads, road_nodes, buildings, landmarks):
-    """Башенные краны на стройках: у строящегося дома (building=construction, от 300 м²) и на площадках
-    landuse=construction. Кран — снаружи у угла дома (6 м от стены), не на дороге и не внутри другого дома, стрела —
-    на дом; на голой площадке — посередине. Высота — над домом на 12 м (этажность из тегов или 9 этажей), не ниже 30 м.
+    """Башенные краны на стройках: у строящегося дома (building=construction, от 300 м²). Голые площадки
+    landuse=construction без дома не берём: в OSM они часто остаются после стройки (у Свято-Троицкого собора — уже
+    готовая парковка). Кран — снаружи у угла дома (6 м от стены), не на дороге и не внутри другого дома, стрела — на
+    дом. Высота — над домом на 12 м (этажность из тегов или 9 этажей), не ниже 30 м.
     Возвращает [x, z, высота, стрела, угол стрелы от +x к +z]."""
-    houses, sites = [], []
+    houses = []
     for wid, (nds, tags) in ways.items():
-        if len(nds) < 4 or nds[0] != nds[-1]:
+        if len(nds) < 4 or nds[0] != nds[-1] or tags.get("building") != "construction":
             continue
-        if tags.get("building") == "construction" or tags.get("landuse") == "construction":
-            pts = ring_xy(nds)
-            if len(pts) < 3 or not inside(pts):
-                continue
-            a = poly_area(pts)
-            if tags.get("building") == "construction" and a >= 300:
-                lv = parse_num(tags.get("building:levels")) or 9
-                houses.append((pts, a, lv))
-            elif tags.get("landuse") == "construction" and CRANE_SITE[0] <= a <= CRANE_SITE[1]:
-                sites.append((pts, a))
+        pts = ring_xy(nds)
+        if len(pts) < 3 or not inside(pts) or (a := poly_area(pts)) < 300:
+            continue
+        houses.append((pts, a, parse_num(tags.get("building:levels")) or 9))
     road_segs = []
     for r in roads:
         for i in range(1, len(r["n"])):
@@ -992,29 +986,26 @@ def construction_cranes(inside, roads, road_nodes, buildings, landmarks):
     taken = [(l["x"], l["z"]) for l in landmarks if str(l.get("key", "")).startswith("respublika2")]  # там свой кран
     out = []
     centroid = lambda pts: (sum(x for x, _ in pts) / len(pts), sum(z for _, z in pts) / len(pts))  # noqa: E731
-    for pts, a, lv in sorted(houses, key=lambda h: -h[1]) + [(p, a, None) for p, a in sorted(sites, key=lambda s: -s[1])]:
+    for pts, a, lv in sorted(houses, key=lambda h: -h[1]):
         cx, cz = centroid(pts)
         if any(math.hypot(cx - x, cz - z) < CRANE_GAP for x, z in taken):
             continue
         spot = None
-        if lv is not None:
-            for vx, vz in pts:
-                d = math.hypot(vx - cx, vz - cz) or 1
-                x, z = vx + (vx - cx) / d * 6, vz + (vz - cz) / d * 6
-                if free(x, z):
-                    spot = (x, z)
-                    break
-        elif free(cx, cz):
-            spot = (cx, cz)
+        for vx, vz in pts:
+            d = math.hypot(vx - cx, vz - cz) or 1
+            x, z = vx + (vx - cx) / d * 6, vz + (vz - cz) / d * 6
+            if free(x, z):
+                spot = (x, z)
+                break
         if not spot:
             continue
         x, z = spot
-        h = max(30.0, (lv or 9) * 3 + 12)
+        h = max(30.0, lv * 3 + 12)
         jib = max(25.0, min(50.0, math.sqrt(a) * 0.9))
-        ang = math.atan2(cz - z, cx - x) if lv is not None else 0.0
+        ang = math.atan2(cz - z, cx - x)
         out.append([round(x, 1), round(z, 1), round(h, 1), round(jib, 1), round(ang, 2)])
         taken.append((cx, cz))
-    print(f"cranes: {len(out)} (домов на стройке {len(houses)}, площадок {len(sites)})")
+    print(f"cranes: {len(out)} (домов на стройке {len(houses)})")
     return out
 
 
