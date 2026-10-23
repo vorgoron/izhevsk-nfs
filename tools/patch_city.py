@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Дописать в готовый public/city.json данные из кеша OSM (data/raw), без пересборки города:
 buses и trolleys — маршруты автобусов и троллейбусов (узлы маршрутов находятся среди roadNodes по координатам),
-cranes — краны на стройках.
+cranes — краны на стройках, towers — высокое по точкам (вышки, трубы, опоры ЛЭП).
 
   python3 tools/patch_city.py            # всё
   python3 tools/patch_city.py cranes     # только краны
@@ -44,7 +44,13 @@ def cranes(city):
     return fetch_city.construction_cranes(inside, city["roads"], city["roadNodes"], city["buildings"], city["landmarks"])
 
 
-PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes}
+def towers(city):
+    xmin, zmin, xmax, zmax = city["bounds"]
+    m = 300
+    return fetch_city.tall_things(lambda pts: any(xmin - m < x < xmax + m and zmin - m < z < zmax + m for x, z in pts))["towers"]
+
+
+PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes, "towers": towers}
 
 
 def main():

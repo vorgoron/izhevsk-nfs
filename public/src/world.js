@@ -61,7 +61,7 @@ const BUMP_CELL = 25;
 // Где ставить знаки у точек на дорогах: м до точки по ходу и от края полотна.
 const SIGN_BACK = { z: 1.5, b: 2, g: 0.5, s: 0.5 }, SIGN_SIDE = 0.8;
 // Стены у высокого (towers): полуширина основания по виду, м (у ЛЭП и мачт — по высоте).
-const TOWER_BASE = { ch: 2.6, ms: 1.6, ml: 0.5, wt: 2, tw: 2.2, cr: 1, pt: 0.09, pp: 0.18 };
+const TOWER_BASE = { ch: 2.6, ms: 1.6, mm: 0.6, mr: 0.6, ml: 0.5, wt: 2, tw: 2.2, cr: 1, pt: 0.09, pp: 0.18 };
 
 export class World {
   constructor(city) {
@@ -1405,7 +1405,8 @@ export class World {
         this.addCollider(b.p, b.x, top);
         for (const h of b.holes || []) this.addCollider(h, [], top); // двор/поле внутри — тоже стены
         const xs = b.p.map((q) => q[0]), zs = b.p.map((q) => q[1]);
-        const rb = { p: b.p, holes: b.holes, top, x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
+        const vtop = Math.max(...b.p.map(([x, z]) => this.terrain(x, z))) + b.h; // так крышу рисует build.js
+        const rb = { p: b.p, holes: b.holes, top, vtop, x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
         for (let i = Math.floor(rb.x0 / ROOF_CELL); i <= Math.floor(rb.x1 / ROOF_CELL); i++) {
           for (let j = Math.floor(rb.z0 / ROOF_CELL); j <= Math.floor(rb.z1 / ROOF_CELL); j++) {
             const k = i * 100003 + j;
@@ -1501,6 +1502,10 @@ export class World {
     const towerAt = new Map();
     for (const [x, z, k, a, h] of c.towers || []) {
       const t = { t: 'tower', x, z, k, a, h };
+      // Мачта связи в OSM внутри дома — она на крыше: короткая мачта (mr) от крыши, а не 30 м сквозь дом.
+      const roof = k === 'mm' || k === 'ms' ? this.roofTopAt(x, z) : null;
+      if (roof !== null) Object.assign(t, { k: 'mr', y0: roof, h: 5 + (Math.abs(x * 7.3 + z * 3.1) % 3) });
+      else this.#offRoad(t, (k === 'pt' ? h * 0.11 : TOWER_BASE[k] ?? 1) + 1);
       this.points.push(t);
       towerAt.set(`${x},${z}`, t);
     }
@@ -1519,7 +1524,7 @@ export class World {
     // Стены у высокого: трубы, башни, ноги опор ЛЭП и кранов; бетонные блоки. Верх — по высоте.
     for (const p of this.points) {
       if (p.t !== 'tower' && !(p.t === 'post' && p.k === 'k')) continue;
-      const top = this.terrain(p.x, p.z) + (p.h ?? 0.8);
+      const top = (p.y0 ?? this.terrain(p.x, p.z)) + (p.h ?? 0.8);
       const legs = p.k === 'pt' ? [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => [u * p.h * 0.075, v * p.h * 0.075]) : [[0, 0]];
       const r = p.t === 'post' ? 0.35 : TOWER_BASE[p.k] * (p.k === 'ms' ? p.h / 40 : 1);
       const ca = Math.cos(p.a ?? 0), sa = Math.sin(p.a ?? 0);
@@ -1527,6 +1532,25 @@ export class World {
         const cx = p.x + u * ca + v * sa, cz = p.z - u * sa + v * ca;
         this.addCollider([[cx - r, cz - r], [cx + r, cz - r], [cx + r, cz + r], [cx - r, cz + r]], [], top);
       }
+    }
+  }
+
+  // Точка в OSM на проезжей части (вышки ставят у самого края, а полотно у нас шире) — за край полотна
+  // на r по нормали от ближайшей оси; мосты и тоннели не мешают.
+  #offRoad(p, r) {
+    for (let iter = 0; iter < 3; iter++) {
+      let best = null;
+      for (const s of this.segmentsNear(p.x, p.z, 30)) {
+        if (s.road.br || s.road.tu) continue;
+        const c = World.closest(s, p.x, p.z), need = s.w / 2 + r - c.d;
+        if (need > 0 && (!best || need > best.need)) best = { ...c, need };
+      }
+      if (!best) return;
+      const nx = p.x - best.px, nz = p.z - best.pz;
+      const L = Math.hypot(nx, nz);
+      if (L < 0.01) return; // ровно на оси — сторону не выбрать
+      p.x += (nx / L) * best.need;
+      p.z += (nz / L) * best.need;
     }
   }
 
@@ -1546,6 +1570,16 @@ export class World {
     for (const b of this.roofGrid.get(Math.floor(x / ROOF_CELL) * 100003 + Math.floor(z / ROOF_CELL)) || []) {
       if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1 || b.top > y || (best !== null && b.top <= best)) continue;
       if (pointInRing(x, z, b.p) && !(b.holes || []).some((h) => pointInRing(x, z, h))) best = b.top;
+    }
+    return best;
+  }
+
+  // Видимый верх крыши под точкой (дом рисуется от самой высокой точки рельефа под ним) или null.
+  roofTopAt(x, z) {
+    let best = null;
+    for (const b of this.roofGrid.get(Math.floor(x / ROOF_CELL) * 100003 + Math.floor(z / ROOF_CELL)) || []) {
+      if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1 || (best !== null && b.vtop <= best)) continue;
+      if (pointInRing(x, z, b.p) && !(b.holes || []).some((h) => pointInRing(x, z, h))) best = b.vtop;
     }
     return best;
   }

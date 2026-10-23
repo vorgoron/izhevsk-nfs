@@ -58,12 +58,35 @@ function lattice(y0, y1, w0, w1, step, t, color) {
 // WIRE [x, y] — траверсы вдоль x (поперёк линии). Цвет ламп (#fff6c8) и огней (#ff2a1a) ночью светится.
 const LAMP = '#fff6c8', RED = '#ff2a1a';
 const STEEL = '#8e959b', CONCRETE = '#a9a59c', YELLOW = '#d9a91c';
+const ZINC = '#b9bec2', PANEL = '#e6e7e3';
+// Секторы сотовой связи: по три белые панели-антенны w × h на радиусе r вокруг оси, на высоте y (низ).
+const sectors = (r, y, w, h, a0 = 0) => [0, 1, 2].map((i) =>
+  paint(new THREE.BoxGeometry(w, h, 0.12).translate(0, y + h / 2, r).rotateY(a0 + (i * 2 * Math.PI) / 3), PANEL));
+// Ограждение площадки: стойки и поручень по восьмиугольнику радиуса r на высоте y.
+const railing = (r, y, color) => Array.from({ length: 8 }, (_, i) => {
+  const a = (i * Math.PI) / 4, b = ((i + 1) * Math.PI) / 4;
+  return [beam([r * Math.cos(a), y, r * Math.sin(a)], [r * Math.cos(a), y + 1, r * Math.sin(a)], 0.05, color),
+    beam([r * Math.cos(a), y + 1, r * Math.sin(a)], [r * Math.cos(b), y + 1, r * Math.sin(b)], 0.05, color)];
+}).flat();
 const TOWERS = {
   ch: { H: 50, make: () => [cyl(1.3, 2.4, 44, 0, '#a7a198', 14), cyl(1.25, 1.3, 2, 44, '#b8382c', 14), cyl(1.22, 1.25, 2, 46, '#dcdcd6', 14),
     cyl(1.2, 1.22, 2, 48, '#b8382c', 14), box(0.3, 0.3, 0.3, 1.2, 49.6, 0, RED), box(0.3, 0.3, 0.3, -1.2, 49.6, 0, RED)] },
   ms: { H: 40, make: () => [...lattice(0, 32, 1.6, 0.45, 4, 0.1, STEEL), ...lattice(32, 38, 0.45, 0.3, 3, 0.08, STEEL),
     box(2.2, 0.15, 2.2, 0, 26, 0, STEEL), ...[[1, 0], [-1, 0], [0, 1], [0, -1]].map(([u, v]) => box(0.35, 1.6, 0.35, u * 0.7, 33, v * 0.7, '#e4e4e0')),
     cyl(0.04, 0.06, 2, 38, STEEL, 5), box(0.25, 0.25, 0.25, 0, 40, 0, RED)] },
+  // Вышка сотового оператора (man_made=mast): оцинкованная труба-монополь с лестницей, площадка с ограждением,
+  // над ней антенны секторами и тарелка радиорелейки, внизу шкафы оборудования.
+  mm: { H: 30, make: () => [box(2.6, 0.3, 2.6, 0, 0.15, 0, CONCRETE), cyl(0.3, 0.5, 25, 0.3, ZINC, 12),
+    beam([-0.17, 0.3, 0.56], [-0.17, 25, 0.36], 0.05, STEEL), beam([0.17, 0.3, 0.56], [0.17, 25, 0.36], 0.05, STEEL),
+    box(1, 1.8, 0.7, 1.2, 1.2, 0.2, '#d4d6d2'), box(0.7, 1.3, 0.6, -1.1, 0.95, -0.5, '#c4c8c4'),
+    cyl(1.4, 1.4, 0.15, 25.2, STEEL, 8), ...railing(1.4, 25.35, STEEL), cyl(0.14, 0.14, 4.4, 25.3, ZINC, 8),
+    ...sectors(1.1, 26.2, 0.32, 1.7), ...sectors(0.45, 27.9, 0.26, 1.3, Math.PI / 3),
+    paint(new THREE.CylinderGeometry(0.4, 0.4, 0.2, 12).rotateX(Math.PI / 2).translate(0, 23.6, 0.7), PANEL),
+    box(0.25, 0.25, 0.25, 0, 29.85, 0, RED)] },
+  // Мачта на крыше дома: труба на раме, антенны секторами.
+  mr: { H: 7, make: () => [box(1.6, 0.25, 1.6, 0, 0.12, 0, STEEL), cyl(0.09, 0.11, 6.6, 0.25, ZINC, 8),
+    ...[[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([u, v]) => beam([u * 0.7, 0.25, v * 0.7], [0, 2.4, 0], 0.05, STEEL)),
+    ...sectors(0.4, 4.6, 0.3, 1.6), box(0.6, 1, 0.45, 0.55, 0.75, -0.5, '#d4d6d2'), box(0.2, 0.2, 0.2, 0, 6.95, 0, RED)] },
   ml: { H: 25, make: () => [cyl(0.22, 0.4, 24, 0, '#9aa0a5', 8), box(3, 1.4, 0.3, 0, 24.4, 0.3, '#4b5054'), box(2.6, 1.1, 0.06, 0, 24.4, 0.47, LAMP)] },
   wt: { H: 26, make: () => [cyl(1.5, 1.9, 19, 0, '#9b5b43', 12), cyl(4, 3.2, 1.5, 19, '#8a8a84', 14), cyl(4, 4, 4, 20.5, '#c9c4b8', 14),
     cyl(0.4, 4.3, 1.5, 24.5, '#6b6e70', 14)] },
@@ -241,7 +264,7 @@ export function buildPropChunk(world, info, mats) {
       if (world.isWater(p.x, p.z) || world.roofAt(p.x, p.z) !== null) continue;
       signs[p.s].push([p.x, world.terrain(p.x, p.z), p.z, p.a]);
     } else if (p.t === 'tower') {
-      (towers[p.k] ??= []).push([p.x, world.terrain(p.x, p.z), p.z, p.a, p.h]);
+      (towers[p.k] ??= []).push([p.x, p.y0 ?? world.terrain(p.x, p.z), p.z, p.a, p.h]);
     } else if (p.t === 'gate') {
       // Стойка справа по ходу линии, стрела — через всё полотно влево.
       const off = p.w / 2 + 0.5, x = p.x - p.dz * off, z = p.z + p.dx * off;
