@@ -57,6 +57,7 @@ export class Menu {
       </div>
       <div class="page" data-page="settings" hidden>
       <h2>Настройки</h2>
+      <button data-act="lang">Язык <b data-v="lang"></b></button>
       <h3>Звук</h3>
       <button data-act="sound">Звук <b data-v="sound"></b><kbd>V</kbd></button>
       <button data-page="volume">Громкость <b data-v="volume"></b><i>›</i></button>
@@ -213,6 +214,7 @@ export class Menu {
       account: { in: this.account?.state().email, sent: 'письмо отправлено' }[this.account?.state().status] ?? 'войти по почте',
       nitro: s.nitro,
       debug: s.debug ? 'вкл' : 'выкл',
+      lang: s.lang,
       ads: this.adSent ? 'заявка отправлена' : 'оставить заявку',
       taxi: s.taxi,
     };

@@ -29,6 +29,7 @@ import { GhostFX } from './ghostfx.js';
 import { sendAdRequest } from './adrequest.js';
 import { isTouch, setupTouch, toggleFullscreen } from './touch.js';
 import { install } from './install.js';
+import { LANGS, getLang, toggleLang } from './i18n.js';
 import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { createDebug } from './debug.js';
@@ -501,6 +502,7 @@ async function main() {
     sound: () => radio.setMuted(sound.toggleMute()),
     radio: () => radio.next(),
     traffic: () => traffic.setEnabled(!traffic.enabled),
+    lang: () => toggleLang(),
     // Пустой бак — эвакуатор на ближайшую АЗС (прямо к колонкам), иначе — на ближайшую дорогу.
     respawn: () => {
       resume();
@@ -600,7 +602,7 @@ async function main() {
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
     radio: { names: STATIONS.map((s) => s.name), get: () => radio.station, select: (i) => radio.select(i) },
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, quality: Q.label, qName, night: dayNight.label, debug: debug.on, nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, quality: Q.label, qName, night: dayNight.label, debug: debug.on, lang: LANGS[getLang()], nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
       money: formatMoney(wallet.balance), hopper: car.hopper > 0, taxi: taxi?.active ? 'отменить заказ' : 'найти пассажира',
@@ -1430,6 +1432,11 @@ async function main() {
     const showInst = () => { inst.hidden = !install.available; };
     showInst();
     install.onChange(showInst);
+    // Язык интерфейса: русский / удмуртский (черновик перевода, i18n.js).
+    const langBtn = box.querySelector('.lang');
+    const showLang = () => { langBtn.textContent = getLang() === 'udm' ? 'по-русски' : 'удмурт кылын'; };
+    showLang();
+    langBtn.addEventListener('click', () => { toggleLang(); showLang(); track('lang', { lang: getLang() }); });
     inst.addEventListener('click', async () => {
       const r = await install.prompt();
       if (r === 'ios') { hint.hidden = false; inst.hidden = true; }
