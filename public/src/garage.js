@@ -26,8 +26,18 @@ export function loadChoice() {
 // Стартовая машина со штатными деталями.
 export const defaultChoice = () => ({ model: DEFAULT_MODEL, color: MODELS[DEFAULT_MODEL].colors[0], options: pickOptions(MODELS[DEFAULT_MODEL]), saved: false });
 
-function save(choice) {
+// Вид каждой своей машины (цвет и детали) — чтобы, пересев на другую и вернувшись, не терять тюнинг: купленное
+// остаётся в кошельке, а выбор раньше сбрасывался на штатный.
+const LOOKS = 'garageLooks';
+function loadLooks() {
+  try { return JSON.parse(localStorage.getItem(LOOKS)) || {}; } catch { return {}; }
+}
+
+function save(choice, looks) {
   try { localStorage.setItem(STORE, JSON.stringify({ model: choice.model, color: choice.color, options: choice.options })); } catch {}
+  if (!looks) return;
+  looks[choice.model] = { color: choice.color, options: { ...choice.options } };
+  try { localStorage.setItem(LOOKS, JSON.stringify(looks)); } catch {}
 }
 
 // Ключ купленной детали в кошельке.
@@ -39,6 +49,7 @@ export class Garage {
   // машине (gear(): в гараже — с корзиной). wallet — кошелёк (money.js): покупки и оплата.
   constructor(choice, { onChange, onClose, onUpgrade, onGear, wallet }) {
     this.choice = { ...choice };
+    this.looks = loadLooks();
     this.wallet = wallet;
     this.onChange = onChange;
     this.onClose = onClose;
@@ -70,7 +81,7 @@ export class Garage {
       card.className = 'card';
       card.dataset.key = key;
       card.innerHTML = `<i class="dot" style="background:${m.colors[0]}"></i><b>${m.name}</b><small>${m.years}</small><em class="price"></em>`;
-      card.addEventListener('click', () => this.#pick(key, MODELS[key].colors[0]));
+      card.addEventListener('click', () => this.#pickCar(key));
       strip.append(card);
     }
     for (const b of el.querySelectorAll('[data-tab]')) b.addEventListener('click', () => { this.tab = b.dataset.tab; this.#render(); });
@@ -83,7 +94,7 @@ export class Garage {
       const ci = Math.max(0, colors.indexOf(this.choice.color));
       if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
         const k = this.keys[(i + (e.code === 'ArrowRight' ? 1 : -1) + this.keys.length) % this.keys.length];
-        this.#pick(k, MODELS[k].colors[0]);
+        this.#pickCar(k);
       } else if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
         this.#pick(this.choice.model, colors[(ci + (e.code === 'ArrowDown' ? 1 : -1) + colors.length) % colors.length]);
       } else if (e.code === 'Enter') {
@@ -99,6 +110,13 @@ export class Garage {
   // Свободная часть экрана под машину (для камеры, main.js): ширина панели справа и высота ленты снизу, px.
   frame() {
     return { right: this.el.querySelector('.side').offsetWidth, bottom: this.el.querySelector('.strip').offsetHeight };
+  }
+
+  // Другая машина из ленты: своя — с её цветом и деталями, как оставили (looks), чужая — штатная.
+  #pickCar(model) {
+    const look = this.wallet && ownsCar(this.wallet, model) && this.looks[model];
+    if (look) this.#pick(model, look.color, look.options);
+    else this.#pick(model, MODELS[model].colors[0], {});
   }
 
   // options — только для той же машины; у другой — детали по умолчанию.
@@ -145,12 +163,18 @@ export class Garage {
 
   // Цвет, с которым заехали (если машина та же), иначе первый обычный.
   #paidColor() {
-    return this.paid?.model === this.choice.model ? this.paid.color : MODELS[this.choice.model].colors[0];
+    return this.#paidLook()?.color ?? MODELS[this.choice.model].colors[0];
   }
 
   // Что было на этой детали до захода (если машина та же), иначе штатный вариант.
   #paidOption(slot) {
-    return this.paid?.model === this.choice.model ? this.paid.options[slot.key] : slot.variants[0][0];
+    return this.#paidLook()?.options[slot.key] ?? slot.variants[0][0];
+  }
+
+  // Оплаченный вид выбранной машины: с которым заехали или, у другой своей, — как её оставили.
+  #paidLook() {
+    if (this.paid?.model === this.choice.model) return this.paid;
+    return this.wallet && ownsCar(this.wallet, this.choice.model) ? this.looks[this.choice.model] : null;
   }
 
   // Всё, что в корзине: машины и улучшения (кроме уже купленных — могли приехать из аккаунта) + выбранные детали.
@@ -361,6 +385,7 @@ export class Garage {
     this.isOpen = true;
     this.changed = false;
     this.paid = { model: this.choice.model, color: this.choice.color, options: { ...this.choice.options } }; // с чем заехали — всё оплачено
+    this.looks[this.paid.model] = { color: this.paid.color, options: { ...this.paid.options } };
     this.el.classList.add('open');
     document.body.classList.add('in-garage');
     this.#render();
@@ -373,7 +398,7 @@ export class Garage {
     this.onGear?.(this); // на машине — только купленное
     this.el.classList.remove('open');
     document.body.classList.remove('in-garage');
-    save(this.choice);
+    save(this.choice, this.looks);
     this.onClose(this.changed);
   }
 
@@ -383,7 +408,7 @@ export class Garage {
   set({ model, color, options }) {
     if (!MODELS[model]) return false;
     this.choice = { model, color: color || MODELS[model].colors[0], options: pickOptions(MODELS[model], options || {}) };
-    save(this.choice);
+    save(this.choice, this.looks);
     this.#render();
     return true;
   }
