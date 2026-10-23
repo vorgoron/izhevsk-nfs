@@ -1285,12 +1285,39 @@ def fence_kind(tags, ctx):
 # Заборы, которые в OSM размечены не так, как выглядят: way → высота и виды по участкам [(с вершины, вид)]; сплошные,
 # без проёмов. 231428834 — стена водосброса заводской плотины у проезда Дерябина: профлист ~3,2 м, сторона вдоль
 # проезда (вершины 7–10) расписана удмуртскими звёздами и «IZHEVSK», остальные — серый профлист (по фото, отзыв).
-FENCE_OVERRIDE = {231428834: {"h": 3.2, "kinds": [(0, "udmg"), (7, "udm")]}}
+# hug — вершины ближе HUG м к краю дороги ставятся вплотную к нему: стена стоит на разделителе между двумя мостами
+# проезда, а в OSM — в 1–6 м от края, и машина падала в щель над оврагом водосброса.
+FENCE_OVERRIDE = {231428834: {"h": 3.2, "kinds": [(0, "udmg"), (7, "udm")], "hug": True}}
+HUG, HUG_GAP = 8.0, 0.3
 
 
-def override_fence(wid, pts):
+def override_fence(wid, pts, roads=None, road_nodes=None):
     """Куски забора по FENCE_OVERRIDE: путь целиком, на каждом участке — свой вид."""
     o = FENCE_OVERRIDE[wid]
+    if o.get("hug") and roads:
+        xs, zs = [x for x, _ in pts], [z for _, z in pts]
+        segs = []
+        for r in roads:
+            for i in range(1, len(r["n"])):
+                (ax, az), (bx, bz) = road_nodes[r["n"][i - 1]], road_nodes[r["n"][i]]
+                if min(ax, bx) < max(xs) + 20 and max(ax, bx) > min(xs) - 20 and min(az, bz) < max(zs) + 20 and max(az, bz) > min(zs) - 20:
+                    segs.append((ax, az, bx, bz, r["w"] / 2))
+        moved = []
+        for x, z in pts:
+            best = None
+            for ax, az, bx, bz, hw in segs:
+                dx, dz = bx - ax, bz - az
+                t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz or 1)))
+                px, pz = ax + dx * t, az + dz * t
+                d = math.hypot(x - px, z - pz)
+                if d - hw < HUG and (best is None or d - hw < best[0]):
+                    best = (d - hw, px, pz, d, hw)
+            if best:
+                _, px, pz, d, hw = best
+                k = (hw + HUG_GAP) / (d or 1)
+                x, z = px + (x - px) * k, pz + (z - pz) * k
+            moved.append((x, z))
+        pts = moved
     starts = o["kinds"] + [(len(pts) - 1, None)]
     out = []
     for (i0, kind), (i1, _) in zip(starts, starts[1:]):
@@ -1384,7 +1411,7 @@ def fences(inside, roads, road_nodes, areas, buildings, footbridges):
         if L < 1:
             continue
         if wid in FENCE_OVERRIDE:
-            out += override_fence(wid, pts)
+            out += override_fence(wid, pts, roads, road_nodes)
             total += L
             continue
         gaps = []

@@ -89,7 +89,7 @@ def fences(city):
         old = len(city["fences"])
         city["fences"] = [f for f in city["fences"] if not all(on(x, z) for x, z in f["p"])]
         gone = old - len(city["fences"])
-        new = fetch_city.override_fence(wid, way)
+        new = fetch_city.override_fence(wid, way, city["roads"], city["roadNodes"])
         city["fences"] += new
         n += 1
         print(f"fences: way {wid} — {gone} кусков заменены на {len(new)}")
