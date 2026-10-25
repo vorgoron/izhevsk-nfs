@@ -3,6 +3,8 @@
 // водонапорные башни, краны, опоры ЛЭП с проводами — стоят (стены у них — в World).
 import * as THREE from 'three';
 import { BUMP, BUMP_RAMP } from './world.js';
+
+const BUMP_SQ = 0.6; // м: сторона белого квадрата на лежачем полицейском
 import { NIGHT } from './night.js';
 
 // ---------------------------------------------------------------- геометрия
@@ -255,9 +257,14 @@ export function buildPropChunk(world, info, mats) {
       }
       if (p.t === 'bump') {
         const L = BUMP[p.k][0];
-        // Неровность — жёлто-чёрными клетками поперёк; у приподнятого перехода — пандусы с обеих сторон.
-        for (const [a, b] of p.k === 2 ? [[-L / 2, BUMP_RAMP - L / 2], [L / 2 - BUMP_RAMP, L / 2]] : [[-L / 2, L / 2]]) {
-          for (let l = -half, i = 0; l < half; l += 0.5, i++) decal(world, p, y0, a, b, l, Math.min(half, l + 0.5), i % 2 ? '#1f1f1f' : '#e3bd1c', 4, paint);
+        // Неровность — белые квадраты шахматкой в два ряда по гребню, как в Ижевске (не путать с «зеброй»);
+        // у приподнятого перехода — на пандусах с обеих сторон.
+        for (const c of p.k === 2 ? [BUMP_RAMP / 2 - L / 2, L / 2 - BUMP_RAMP / 2] : [0]) {
+          for (const [row, s0] of [[0, c - BUMP_SQ], [1, c]]) {
+            for (let l = -half, i = row; l + BUMP_SQ <= half; l += BUMP_SQ, i++) {
+              if (i % 2 === 0) decal(world, p, y0, s0, s0 + BUMP_SQ, l, l + BUMP_SQ, '#e9e9e2', 2, paint);
+            }
+          }
         }
       }
     } else if (p.t === 'sign') {

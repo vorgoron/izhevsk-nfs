@@ -146,7 +146,7 @@ python3 tools/patch_city.py cranes   # только краны
   рельефа в `World.addTerrainPatch`), `stairs` — лестница вниз с другого конца. Тоннели короче 60 м — проезды под мостом, дорога видна.
 - `public/src/props.js` — мелочи из OSM (точки готовит `World.#initPoints`, данные — `road_points`, `tall_things`, `playgrounds`
   в `fetch_city.py`): «зебры» на размеченных переходах (`highway=crossing`) и знаки 5.19; лежачие полицейские
-  (`traffic_calming=bump/hump/table`) — жёлто-чёрная разметка горбом, полотно поднимается (`World.bumpAt` в `ground`), на скорости
+  (`traffic_calming=bump/hump/table`) — широкий асфальтовый горб (~3 м) с белыми квадратами шахматкой, полотно поднимается (`World.bumpAt` в `ground`), на скорости
   больше ~32 км/ч машину подбрасывает (`Car.#bump`; на 60 км/ч — на ~0,7 м, на 90 — на ~1,2 м), трафик перед ними сбрасывает скорость (`World.bumpAhead`), знаки 5.20;
   «Уступи дорогу» и STOP (`highway=give_way/stop`, по `direction`, без него — для едущих к ближайшему перекрёстку; трафик у STOP
   встаёт на секунду, у «Уступи» сбавляет ход, дальше пропускает едущих по поперечной улице — `World.yieldAhead`; игроку за STOP
