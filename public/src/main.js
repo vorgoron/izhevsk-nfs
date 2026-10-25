@@ -24,6 +24,7 @@ import { DayNight } from './night.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
 import { Parkings } from './parkings.js';
+import { Police } from './police.js';
 import { Trams } from './trams.js';
 import { NitroFX, JetFX, DustFX, ExhaustFX, SkidMarksFX, TireSmokeFX } from './effects.js';
 import { GhostFX } from './ghostfx.js';
@@ -324,6 +325,7 @@ async function main() {
   breakables.addSignals(signals);
   const cameras = owned('камеры', () => new Cameras(world, signals, scene));
   breakables.addCameras(cameras);
+  const police = owned('ДПС', () => new Police(world, cameras, scene));
   traffic.density = dayNight.traffic;
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
@@ -403,7 +405,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, ramps, pickups, boundary, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, parkings, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
+  window.game = { world, car, race, ramps, pickups, boundary, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, parkings, police, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -1312,8 +1314,8 @@ async function main() {
     const red = signals.checkPlayer(car), shot = cameras.update(dt, car), stop = stopSigns.checkPlayer(car, dt);
     if (race.state === 'countdown' || race.state === 'running') return;
     if (stop) wallet.fine(PRICES.stopSign, 'STOP без остановки');
-    if (red) { wallet.fine(PRICES.redLight, 'проезд на красный'); flash(); }
-    if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); }
+    if (red) { wallet.fine(PRICES.redLight, 'проезд на красный'); flash(); police.report('проезд на красный под камерой'); }
+    if (shot) { wallet.fine(speedingFine(shot.over), `превышение: ${shot.kmh} км/ч при ${shot.cam.lim}`); flash(); police.report(`камера: ${shot.kmh} км/ч при ${shot.cam.lim}`); }
   }
   // Трюк: приземлился — награда; за каждую машину и трамвай, над которыми пролетел, — сверху. Дрифт — drift.js.
   const TRICK_PAY = { kick: 500, back: 700, roll: 600, ramp: 200 }, OVER_PAY = 300;
@@ -1603,6 +1605,11 @@ async function main() {
     fuel.update(dt, car, wallet);
     queues.update(dt, car);
     parkings.update(dt, car);
+    police.update(dt, car, { allowed: race.state !== 'countdown' && race.state !== 'running' && !garage.isOpen });
+    for (const e of police.events.splice(0)) {
+      if (e.kind === 'caught') wallet.fine(e.sum, 'задержание ДПС');
+      else if (e.kind === 'escaped') wallet.earn(e.sum, 'ушли от погони');
+    }
     trams.update(dt, car);
     tricks(dt);
     car.checkStuck(dt, inp);
@@ -1630,6 +1637,7 @@ async function main() {
     perf?.mark('эффекты');
     sound.update(dt, car, inp, race);
     sound.traffic(dt, traffic, car);
+    sound.siren(police.siren);
     sound.players(dt, net, car);
     sound.smash(breakables.smashes.splice(0), car);
     landmarks.group.userData.update(performance.now() / 1000);

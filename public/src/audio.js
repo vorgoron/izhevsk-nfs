@@ -152,6 +152,29 @@ export class Sound {
     this.playerV = Array.from({ length: PLAYER_VOICES }, () => this.#playerVoice());
   }
 
+  // Сирена ДПС (police.js): два тона воем вверх-вниз, громкость level 0..1 — от расстояния до патрульной.
+  siren(level) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    if (!this.sirenV) {
+      if (level <= 0) return;
+      const ctx = this.ctx, o = ctx.createOscillator(), lfo = ctx.createOscillator(), depth = ctx.createGain(), gn = ctx.createGain();
+      const f = ctx.createBiquadFilter();
+      o.type = 'square';
+      o.frequency.value = 900;
+      lfo.type = 'triangle';
+      lfo.frequency.value = 0.55; // вой: ~2 с вверх-вниз
+      depth.gain.value = 350;
+      lfo.connect(depth).connect(o.frequency);
+      f.type = 'lowpass';
+      f.frequency.value = 2200;
+      gn.gain.value = 0;
+      o.connect(f).connect(gn).connect(this.trafficBus);
+      o.start(); lfo.start();
+      this.sirenV = { gn };
+    }
+    this.sirenV.gn.gain.setTargetAtTime(0.09 * level * level, this.ctx.currentTime, 0.15);
+  }
+
   // Чужой игрок: мотор как у своей машины (пилы и квадрат через фильтр), шипение нитро и визг шин — со своей панорамой.
   #playerVoice() {
     const ctx = this.ctx;

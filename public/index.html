@@ -290,6 +290,15 @@
     #drift.done { color: #7dff9a; }
     #drift.lost { color: #ff7a6a; }
     body.touch #drift { font-size: 22px; bottom: 30%; }
+    /* Погоня ДПС (police.js): плашка сверху по центру, полоска — задержание (красная) или отрыв (зелёная). */
+    #chase { left: 50%; top: 118px; transform: translateX(-50%); font-size: 26px; font-weight: 900; font-style: italic; text-align: center;
+      color: #fff; text-shadow: 0 0 8px #2a6bff, 0 0 14px #ff2a2a; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    #chase.show { opacity: 1; }
+    #chase small { display: block; font-size: 14px; font-weight: 600; font-style: normal; text-shadow: 0 1px 3px #000; margin-top: 2px; }
+    #chase i { display: block; width: 220px; height: 8px; margin: 6px auto 0; background: rgba(0,0,0,.45); border-radius: 4px; overflow: hidden; }
+    #chase i b { display: block; height: 100%; background: #ff4a3a; }
+    #chase i.escape b { background: #4cff7a; }
+    body.touch #chase { top: calc(64px + env(safe-area-inset-top)); font-size: 18px; }
     #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5; }
     #flash.on { animation: flash .45s ease-out; }
     @keyframes flash { 0% { opacity: .85; } }
@@ -610,6 +619,7 @@
   <div id="camwarn" class="hud" hidden></div>
   <div id="flash"></div>
   <div id="drift" class="hud"></div>
+  <div id="chase" class="hud"></div>
   <div id="taxi" class="hud" hidden></div>
   <div id="radio-pick"></div>
   <div id="attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">участники OpenStreetMap</a> · рельеф <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a> (Mapzen, SRTM)</div>
