@@ -15,7 +15,8 @@ const SPEED = {
 const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, pickup: 3, vesta: 13 };
 const BUSES = 6, TROLLS = 4; // троллейбусы — только если в city.json есть их маршруты (trolleys)
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
-// В гонке трафика меньше: остаётся каждая RACE_KEEP-я машина (v.thin — лишняя), лишние уходят за кадром.
+// Сколько машин на улицах: доля keep (Traffic.density — от часа в Ижевске, в гонке ещё не больше RACE_KEEP);
+// машина с v.rank ≥ keep лишняя — уходит за кадром и не появляется, пока поток снова не вырастет.
 // Общая гонка с друзьями — трафик «по расписанию» вдоль её маршрута (#line): машины в обе стороны через LINE_GAP м
 // (±40 %) со скоростью LINE_V, место — только от общего времени гонки и её старта, у всех одно и то же. Ближе
 // LINE_END м к старту и финишу их нет (там стартовая сетка и перескок с конца маршрута в начало).
@@ -106,6 +107,7 @@ export class Traffic {
     this.trams = null;   // выставляет main.js: трамваи — препятствие, сквозь них не едем
     this.race = null;    // выставляет main.js: в гонке трафика меньше, в общей — по расписанию (#line)
     this.line = null;
+    this.density = 1;    // выставляет main.js по часу (DayNight.traffic): доля машин на улицах
     this.honks = []; // гудки за кадр: { x, z, bus, long } — забирает Sound.traffic
     this.#buildGraph();
 
@@ -156,7 +158,7 @@ export class Traffic {
           mood: 0.85 + ((n * 37) % 30) / 100, // кто-то едет бодрее
           edge: null, next: null, s: 0, speed: 0,
           x: 0, z: 0, heading: 0, dx: 0, dz: 1, hit: 0, stuck: 0, ghost: 0, active: false,
-          waitPlayer: 0, honkCool: 0, thin: ((n * 7) % 20) / 20 >= RACE_KEEP, slot: null,
+          waitPlayer: 0, honkCool: 0, rank: ((n * 7) % 20) / 20, slot: null,
         });
       }
     }
@@ -297,7 +299,14 @@ export class Traffic {
   reset(px, pz) {
     for (const v of this.vehicles) { v.active = false; v.slot = null; v.knock = null; }
     if (this.line) { for (const c of this.line.cars) { c.v = null; c.dead = false; } return; } // расставит #lineUpdate
-    for (const v of this.vehicles) this.#spawn(v, px, pz, 25);
+    const keep = this.#keep();
+    for (const v of this.vehicles) if (v.rank < keep) this.#spawn(v, px, pz, 25);
+  }
+
+  // Доля машин на улицах сейчас (см. rank).
+  #keep() {
+    const race = this.race, racing = race && (race.state === 'running' || race.state === 'countdown');
+    return Math.min(this.density, racing ? RACE_KEEP : 1);
   }
 
   setEnabled(on) {
@@ -323,10 +332,11 @@ export class Traffic {
       }
     }
     if (this.line) this.#lineUpdate(dt, px, pz);
+    const keep = this.#keep();
     for (const v of this.vehicles) {
       if (this.line) { if (v.active && v.knock) this.#tumble(v, dt); continue; }
       const d = v.active ? Math.hypot(v.x - px, v.z - pz) : Infinity;
-      if (racing && v.thin) { if (d > SPAWN_MIN) v.active = false; }
+      if (v.rank >= keep) { if (d > SPAWN_MIN) v.active = false; }
       else if (d > DESPAWN) this.#spawn(v, px, pz, SPAWN_MIN);
       if (v.active && v.knock) this.#tumble(v, dt);
       else if (v.active) this.#drive(v, dt, car);

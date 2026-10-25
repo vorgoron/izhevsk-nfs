@@ -159,6 +159,17 @@ export function sunAltitude(ms = Date.now()) {
 const SET = -0.833, DUSK = -6;
 const clockNight = () => Math.min(1, Math.max(0, (SET - sunAltitude()) / (SET - DUSK)));
 
+// Час в Ижевске (UTC+4), дробный.
+const izhHour = (ms = Date.now()) => ((ms / 3600000 + 4) % 24 + 24) % 24;
+// Поток машин по часу: [час, доля] — ночью мало, днём много, в час пик (8 и 18) — все; между точками — по прямой.
+const FLOW = [[0, 0.3], [5, 0.2], [6.5, 0.6], [8, 1], [9.5, 0.75], [16, 0.75], [18, 1], [19.5, 0.75], [22, 0.45], [24, 0.3]];
+export function trafficAt(h) {
+  let i = 1;
+  while (FLOW[i][0] < h) i++;
+  const [h0, a] = FLOW[i - 1], [h1, b] = FLOW[i];
+  return a + ((b - a) * (h - h0)) / (h1 - h0);
+}
+
 const MODES = ['auto', 'day', 'night'];
 
 export class DayNight {
@@ -179,6 +190,15 @@ export class DayNight {
   }
 
   get night() { return this.t > 0.5; }
+
+  // Доля трафика (trafficAt): в «авто» — по часу в Ижевске; если день или ночь выбраны вручную, а на часах
+  // другое — как в полдень или в два часа ночи.
+  get traffic() {
+    const h = izhHour();
+    if (this.mode === 'day' && this.clock > 0) return trafficAt(13);
+    if (this.mode === 'night' && this.clock < 1) return trafficAt(2);
+    return trafficAt(h);
+  }
 
   // Для меню: «авто · ночь», «день», «ночь».
   get label() {

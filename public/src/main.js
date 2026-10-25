@@ -320,6 +320,7 @@ async function main() {
   breakables.addSignals(signals);
   const cameras = owned('камеры', () => new Cameras(world, signals, scene));
   breakables.addCameras(cameras);
+  traffic.density = dayNight.traffic;
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
   const garage = new Garage(choice, {
@@ -1609,6 +1610,7 @@ async function main() {
     }
     perf?.mark('игра');
     net.update(dt, car);
+    traffic.density = dayNight.traffic;
     traffic.update(dt, car);
     perf?.mark('трафик');
     breakables.update(dt, car, traffic);
