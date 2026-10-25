@@ -23,6 +23,7 @@ import { Sky, HORIZON } from './sky.js';
 import { DayNight } from './night.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
+import { Parkings } from './parkings.js';
 import { Trams } from './trams.js';
 import { NitroFX, JetFX, DustFX, ExhaustFX, SkidMarksFX, TireSmokeFX } from './effects.js';
 import { GhostFX } from './ghostfx.js';
@@ -291,6 +292,8 @@ async function main() {
   const HEAD_POS = new THREE.Vector3(), HEAD_AIM = new THREE.Vector3();
   const fuel = owned('заправки', () => new Fuel(world, scene));
   const queues = owned('очереди', () => new Queues(world, fuel, scene));
+  const parkings = owned('парковки', () => new Parkings(world, scene));
+  parkings.far = Math.min(200, Q.carsFar);
   const traffic = owned('трафик', () => new Traffic(world, scene));
   const wires = owned('троллейбусные провода', () => new TrolleyWires(world, traffic, scene));
   for (const m of wires.poles) breakables.addTrolleyPoles(m); // опоры сбиваются, как фонарные столбы
@@ -314,6 +317,7 @@ async function main() {
     }
     Object.assign(chunks, { radius: Q.radius, texSize: Q.tex, treeNear: Q.treeNear, detailFar: Q.detailFar });
     traffic.drawFar = Q.carsFar;
+    parkings.far = Math.min(200, Q.carsFar);
     dayNight.setFogScale(Q.fog);
   };
   const signals = owned('светофоры', () => new Signals(world, traffic, scene));
@@ -399,7 +403,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, ramps, pickups, boundary, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
+  window.game = { world, car, race, ramps, pickups, boundary, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, parkings, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -1598,6 +1602,7 @@ async function main() {
     fines(dt);
     fuel.update(dt, car, wallet);
     queues.update(dt, car);
+    parkings.update(dt, car);
     trams.update(dt, car);
     tricks(dt);
     car.checkStuck(dt, inp);

@@ -48,6 +48,15 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
     g.fillStyle = AREA_COLORS[a.k];
     g.fill('evenodd');
   }
+  // Открытые парковки — асфальтом, под белую разметку (parkings.js).
+  for (const lot of world.city.parkings || []) {
+    const b = (lot.bb ??= lot.p.reduce((m, [x, z]) => [Math.min(m[0], x), Math.min(m[1], z), Math.max(m[2], x), Math.max(m[3], z)], [Infinity, Infinity, -Infinity, -Infinity]));
+    if (b[2] < x0 || b[0] > x1 || b[3] < z0 || b[1] > z1) continue;
+    g.beginPath();
+    ring(lot.p);
+    g.fillStyle = '#505154';
+    g.fill();
+  }
   g.lineCap = 'round';
   g.lineJoin = 'round';
   const stroke = (pts, width, color) => {

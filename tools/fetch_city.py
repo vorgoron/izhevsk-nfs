@@ -959,6 +959,108 @@ def bus_routes(node_index, kind="bus"):
 CRANE_GAP = 90       # м: на одной стройке — один кран
 
 
+PARK_W, PARK_D, PARK_AISLE = 2.6, 5.0, 6.0  # м: ширина и глубина места, проезд между рядами
+PARK_MAX = 400                             # мест на одной парковке не больше
+
+
+def parking_lots(inside, roads, road_nodes, buildings):
+    """Открытые парковки (amenity=parking, кроме многоэтажных и подземных): места рядами вдоль длинной стороны
+    наименьшего прямоугольника вокруг контура — ряд, проезд PARK_AISLE, ряд, ряд спиной к нему, проезд… Место берём,
+    если все его углы внутри контура, не на дороге (и не на проезде парковки из OSM) и не в доме.
+    Возвращает [{p: контур, o: [x, z] — угол сетки мест, u: [ux, uz] — ось рядов, r: [[t, сторона, k, n, k, n, …], …]}]:
+    ряд на t м от o поперёк оси (машины смотрят по +v при стороне 1, v — u, повёрнутая на 90° от +x к +z), места —
+    отрезками: с k-го по счёту вдоль оси n подряд; место k — от k·PARK_W до (k + 1)·PARK_W вдоль оси, PARK_D вглубь."""
+    # Дороги и дома — по клеткам CELL м: мест десятки тысяч, перебор всего города на каждое — часы.
+    CELL = 50
+    seg_grid, house_grid = {}, {}
+
+    def cells(x0, z0, x1, z1):
+        for i in range(int(x0 // CELL), int(x1 // CELL) + 1):
+            for j in range(int(z0 // CELL), int(z1 // CELL) + 1):
+                yield i, j
+    for r in roads:
+        if r.get("br") or r.get("tu"):
+            continue
+        for i in range(1, len(r["n"])):
+            (ax, az), (bx, bz) = road_nodes[r["n"][i - 1]], road_nodes[r["n"][i]]
+            hw = r["w"] / 2 + 1.5
+            for c in cells(min(ax, bx) - hw, min(az, bz) - hw, max(ax, bx) + hw, max(az, bz) + hw):
+                seg_grid.setdefault(c, []).append((ax, az, bx, bz, r["w"] / 2))
+    for b in buildings:
+        xs, zs = [x for x, _ in b["p"]], [z for _, z in b["p"]]
+        for c in cells(min(xs), min(zs), max(xs), max(zs)):
+            house_grid.setdefault(c, []).append(b["p"])
+
+    def on_road(x, z, pad):
+        for ax, az, bx, bz, hw in seg_grid.get((int(x // CELL), int(z // CELL)), ()):
+            dx, dz = bx - ax, bz - az
+            t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz or 1)))
+            if math.hypot(ax + dx * t - x, az + dz * t - z) < hw + pad:
+                return True
+        return False
+
+    def in_house(x, z):
+        return any(point_in(x, z, p) for p in house_grid.get((int(x // CELL), int(z // CELL)), ()))
+
+    out, total = [], 0
+    for wid, (nds, tags) in ways.items():
+        if tags.get("amenity") != "parking" or len(nds) < 4 or nds[0] != nds[-1] or wid in SKIP_AREAS:
+            continue
+        if tags.get("parking", "surface") not in ("surface", "lane", "street_side") or tags.get("building"):
+            continue
+        pts = ring_xy(nds)
+        if len(pts) < 3 or not inside(pts) or poly_area(pts) < 2 * PARK_W * PARK_D:
+            continue
+        # Ось — длинная сторона наименьшего прямоугольника.
+        best = None
+        for i in range(len(pts)):
+            (x1, z1), (x2, z2) = pts[i - 1], pts[i]
+            L = math.hypot(x2 - x1, z2 - z1)
+            if L < 0.3:
+                continue
+            ux, uz = (x2 - x1) / L, (z2 - z1) / L
+            ss = [x * ux + z * uz for x, z in pts]
+            ts = [-x * uz + z * ux for x, z in pts]
+            a, b = max(ss) - min(ss), max(ts) - min(ts)
+            if best is None or a * b < best[0]:
+                best = (a * b, ux, uz, min(ss), max(ss), min(ts), max(ts), a < b)
+        _, ux, uz, s0, s1, t0, t1, flip = best
+        if flip:  # длинная сторона — поперёк ребра: оси местами
+            ux, uz, s0, s1, t0, t1 = -uz, ux, t0, t1, -s1, -s0
+        vx, vz = -uz, ux
+        at = lambda s, t: (s * ux + t * vx, s * uz + t * vz)  # noqa: E731
+        rows, count = [], 0
+        n = int((s1 - s0 - 0.6) // PARK_W)
+        start = s0 + (s1 - s0 - n * PARK_W) / 2
+        # Ряды поперёк: узор — ряд ↑, проезд, ряд ↓ ряд ↑ спиной к нему, проезд…
+        t, face = t0 + 0.3, 1
+        while t + PARK_D <= t1 - 0.3 and count < PARK_MAX:
+            row = [round(t - t0, 2), face]
+            for k in range(n):
+                sa = start + k * PARK_W
+                corners = [at(sa + 0.1, t + 0.1), at(sa + PARK_W - 0.1, t + 0.1), at(sa + PARK_W - 0.1, t + PARK_D - 0.1), at(sa + 0.1, t + PARK_D - 0.1)]
+                cx, cz = at(sa + PARK_W / 2, t + PARK_D / 2)
+                if not all(point_in(x, z, pts) for x, z in corners) or on_road(cx, cz, 1.4) or any(in_house(x, z) for x, z in corners):
+                    continue
+                if len(row) > 2 and row[-2] + row[-1] == k:
+                    row[-1] += 1
+                else:
+                    row += [k, 1]
+                count += 1
+            if len(row) > 2:
+                rows.append(row)
+            t += PARK_D + (PARK_AISLE if face == 1 else 0)
+            face = -face
+        if count < 2:
+            continue
+        total += count
+        ox, oz = at(start, t0)
+        out.append({"p": [[round(x, 2), round(z, 2)] for x, z in pts], "o": [round(ox, 2), round(oz, 2)],
+                    "u": [round(ux, 5), round(uz, 5)], "r": rows})
+    print(f"parkings: {len(out)}, мест {total}")
+    return out
+
+
 def construction_cranes(inside, roads, road_nodes, buildings, landmarks):
     """Башенные краны на стройках: у строящегося дома (building=construction, от 300 м²). Голые площадки
     landuse=construction без дома не берём: в OSM они часто остаются после стройки (у Свято-Троицкого собора — уже
@@ -2296,6 +2398,7 @@ def build_city():
         "buses": bus_routes(road_node_index),
         "trolleys": bus_routes(road_node_index, "trolleybus"),
         "cranes": construction_cranes(inside, roads, road_nodes, buildings, landmark_entries()),
+        "parkings": parking_lots(inside, roads, road_nodes, buildings),
         "stops": transport_stops(inside),
         "billboards": billboards(inside),
         "shops": shop_signs(buildings, roads, road_nodes),

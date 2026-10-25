@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Дописать в готовый public/city.json данные из кеша OSM (data/raw), без пересборки города:
 buses и trolleys — маршруты автобусов и троллейбусов (узлы маршрутов находятся среди roadNodes по координатам),
-cranes — краны на стройках, towers — высокое по точкам (вышки, трубы, опоры ЛЭП).
+cranes — краны на стройках, parkings — места на открытых парковках, towers — высокое по точкам (вышки, трубы, опоры ЛЭП).
 
   python3 tools/patch_city.py            # всё
   python3 tools/patch_city.py cranes     # только краны
+  python3 tools/patch_city.py parkings   # только парковки
 """
 import glob
 import json
@@ -49,6 +50,13 @@ def towers(city):
     xmin, zmin, xmax, zmax = city["bounds"]
     m = 300
     return fetch_city.tall_things(lambda pts: any(xmin - m < x < xmax + m and zmin - m < z < zmax + m for x, z in pts))["towers"]
+
+
+def parkings(city):
+    xmin, zmin, xmax, zmax = city["bounds"]
+    m = 300
+    return fetch_city.parking_lots(lambda pts: any(xmin - m < x < xmax + m and zmin - m < z < zmax + m for x, z in pts),
+                                   city["roads"], city["roadNodes"], city["buildings"])
 
 
 def ruins(city):
@@ -96,7 +104,7 @@ def fences(city):
     return city["fences"]
 
 
-PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes, "towers": towers, "buildings": ruins, "fences": fences}
+PARTS = {"buses": buses, "trolleys": trolleys, "cranes": cranes, "towers": towers, "buildings": ruins, "fences": fences, "parkings": parkings}
 
 
 def main():
