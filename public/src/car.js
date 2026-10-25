@@ -87,6 +87,8 @@ const BUMP_HOP = 9, BUMP_HOP_MAX = 6, BUMP_HIT = [[0.5, 30], [0.45, 35], [0.35, 
 // Крыши: после трюка можно сесть на машину трафика, трамвай или дом (support — main.js) и ехать по ней;
 // съехал с края, а под колёсами пустота выше FALL м — падаешь.
 const FALL = 1.2;
+// Ступенька под колёсами (бордюр, съезд на асфальт) и излом рельефа гасятся критически задемпфированной пружиной, 1/с.
+const STEP_W = 20;
 // Трамплин-ускоритель (ramps.js, хук ramp — main.js): заехал — разгоняет на RAMP_BOOST м/с, но не быстрее RAMP_TOP × верхней
 // скорости, и RAMP_FX с горит нитро (пламя, камера); на земле лишняя скорость сходит за пару секунд, в воздухе держится.
 // Съехал с кромки быстрее RAMP_MIN м/с — улетаешь, скорость вверх — доля
@@ -125,6 +127,7 @@ export class Car {
     this.vel = new THREE.Vector2();
     this.heading = 0;
     this.y = 0;
+    this.yStep = this.yStepV = 0;
     this.steer = 0;
     this.nitro = 1;
     this.pitch = 0;
@@ -185,6 +188,7 @@ export class Car {
     this.onTop = null;
     this.heading = heading;
     this.y = this.world.ground(x, z);
+    this.wantY = null; this.yStep = this.yStepV = 0;
   }
 
   get forward() { return new THREE.Vector2(Math.sin(this.heading), Math.cos(this.heading)); }
@@ -338,6 +342,10 @@ export class Car {
     const g = this.world;
     // От текущей высоты: под мостом настил над головой не считается поверхностью.
     const y0 = this.y;
+    const hf = g.ground(this.pos.x + f2.x * 1.6, this.pos.y + f2.y * 1.6, y0);
+    const hb = g.ground(this.pos.x - f2.x * 1.6, this.pos.y - f2.y * 1.6, y0);
+    const hl = g.ground(this.pos.x - r2.x * 0.9, this.pos.y - r2.y * 0.9, y0);
+    const hr = g.ground(this.pos.x + r2.x * 0.9, this.pos.y + r2.y * 0.9, y0);
     const land = g.ground(this.pos.x, this.pos.y, y0);
     this.#bump(vf, air);
     // Крыша под машиной — только в прыжке и пока на ней стоим (с земли на крышу не заехать).
@@ -403,7 +411,28 @@ export class Car {
         if (this.landedOn) this.onTop = sup;
       }
     } else if (!this.air) {
-      this.y = this.onRamp ? ground : this.y + (ground - this.y) * Math.min(1, dt * 15);
+      // Цель — поверхность под центром, приподнятая так, чтобы ни одна точка под колёсами не была ниже: наклон
+      // догоняет рельеф с запаздыванием (на изломе уклона нос уходил в асфальт), а в ложбине центр ниже линии между осями.
+      const sp = Math.sin(this.pitch), sr = Math.sin(this.roll);
+      const want = this.onRamp ? ground : ground + Math.max(0, hf - ground + 1.6 * sp, hb - ground - 1.6 * sp,
+        hl - ground - 0.9 * sr, hr - ground + 0.9 * sr);
+      // По уклону — точно (сглаживание всей высоты отставало: в гору кузов ниже дороги на v·уклон/15, ~6 см на 70 км/ч
+      // и 5 %). Плавно — ступенька (бордюр, съезд с грунта на асфальт, стык) и изломы рельефа: то, на что цель
+      // изменилась сверх уклона под машиной, копится в yStep и гаснет пружиной с демпфером (STEP_W, ~0,2 с) — скорость
+      // кузова без скачка, иначе на каждом съезде и изломе дёргалась камера.
+      const d = this.wantY == null ? 0 : want - this.wantY;
+      // Уклон — с прошлого кадра: в этом передняя точка могла уже наехать на ступеньку, и та сошла бы за уклон.
+      const jump = d - ((this.gradF ?? 0) * vf + (this.gradR ?? 0) * vr) * dt;
+      this.gradF = (hf - hb) / 3.2; this.gradR = (hr - hl) / 1.8;
+      if (this.onRamp) this.yStep = this.yStepV = 0;
+      else {
+        this.yStep -= jump;
+        // Неявный шаг: устойчив и при dt = 0,1 с (на слабом телефоне).
+        this.yStepV = (this.yStepV - STEP_W * STEP_W * this.yStep * dt) / (1 + 2 * STEP_W * dt + STEP_W * STEP_W * dt * dt);
+        this.yStep += this.yStepV * dt;
+      }
+      this.wantY = want;
+      this.y = want + this.yStep;
       // Подскок на лежачем полицейском: невысоко над поверхностью, без прыжка (струи трюка не нужны).
       if (this.hopV || this.hopH) {
         this.hopV -= FLIP_G * dt;
@@ -415,11 +444,8 @@ export class Car {
         this.y = Math.max(this.y, ground + this.hopH);
       }
     }
+    if (air || this.air) { this.wantY = null; this.yStep = this.yStepV = 0; } // после прыжка — с новой поверхности
     this.alt = this.y - land; // над землёй и дорогой (на крыше — высота крыши): пролетаем ли трафик
-    const hf = g.ground(this.pos.x + f2.x * 1.6, this.pos.y + f2.y * 1.6, y0);
-    const hb = g.ground(this.pos.x - f2.x * 1.6, this.pos.y - f2.y * 1.6, y0);
-    const hl = g.ground(this.pos.x - r2.x * 0.9, this.pos.y - r2.y * 0.9, y0);
-    const hr = g.ground(this.pos.x + r2.x * 0.9, this.pos.y + r2.y * 0.9, y0);
     const k = Math.min(1, dt * 10);
     // В воздухе — ровно, рельеф под колёсами не наклоняет.
     // С трамплина нос идёт по траектории: вверх на взлёте, вниз к посадке.
