@@ -1116,7 +1116,8 @@ function sign(text, w, h, x, y, z, f, bg = '#f2eee4') {
   g.fillStyle = bg;
   g.fillRect(0, 0, 1024, 96);
   g.fillStyle = '#b8892a';
-  g.font = 'bold 64px serif';
+  let px = 64; // длинная надпись — мельче, чтобы влезла в холст целиком
+  do g.font = `bold ${px}px serif`; while (g.measureText(text).width > 984 && (px -= 2) > 24);
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText(text, 512, 52);
@@ -1479,10 +1480,10 @@ function arsenal(pl) {
   return mergeByMaterial(g);
 }
 
-// Русский драматический театр (Ленина; по фото): неоклассика 1950-х, охристые стены. Главный
-// фасад к улице Ленина — восемь колонн большого ордера во всю высоту, между ними высокие окна,
+// Русский драматический театр (Горького, 71; по фото): неоклассика 1950-х, охристые стены. Главный
+// фасад к улице Горького — восемь колонн большого ордера во всю высоту, между ними высокие окна,
 // антаблемент с надписью, аттик с белыми медальонами; по бокам — лопатки и окна в два ряда;
-// над северной частью — сценическая коробка. pl — контур в системе fit(p, 0), +z — юг.
+// в глубине — сценическая коробка. pl — контур в системе fit, фасад — к +z (см. buildLandmarks).
 function drama(pl) {
   const g = new THREE.Group();
   const H = 15, A = 2.2; // карниз и высота аттика
@@ -1491,8 +1492,11 @@ function drama(pl) {
   g.add(prism(pl, H, 0.9, M.cream, 0.45));
   g.add(prism(pl, H + 0.9, A, M.ochre));
   g.add(prism(pl, H + 0.9 + A, 0.4, M.cream, 0.2));
+  // Колоннада — на северном выступе, самом выдвинутом к улице ребре (по фото); длинное южное ребро —
+  // простое крыло с окнами.
   let front = null;
-  contourEdges(pl, (e) => { if (e.oz > 0.7 && (!front || e.len > front.len)) front = e; });
+  const ahead = (e) => e.z + (e.ez * e.len) / 2;
+  contourEdges(pl, (e) => { if (e.oz > 0.7 && e.len > 20 && (!front || ahead(e) > ahead(front))) front = e; });
   const isFront = (e) => e === front;
   contourWindows(g, pl, [[2, 3.2], [8.2, 3.2]], { step: 4.4, w: 1.6, skip: isFront });
   contourEdges(pl, (e) => {
@@ -1500,11 +1504,9 @@ function drama(pl) {
     const n = Math.floor(e.len / 4.4);
     for (let k = 0; k <= n; k++) g.add(onEdge(box(0.9, H - 0.8, 0.3, M.cream, 0, 0.8, 0), e, (k * e.len) / n, 0.1));
   });
-  // Сценическая коробка.
-  const zs = pl.map((q) => q[1]), z0 = Math.min(...zs), z1 = Math.max(...zs);
-  const xs = pl.map((q) => q[0]), xm = (Math.min(...xs) + Math.max(...xs)) / 2;
-  g.add(box((Math.max(...xs) - Math.min(...xs)) * 0.5, 9, (z1 - z0) * 0.28, M.ochre, xm, H, z0 + (z1 - z0) * 0.3));
   if (front) {
+    // Сценическая коробка — сразу за колоннадой: дальше в глубину у контура вырез двора.
+    g.add(onEdge(box(front.len * 0.5, 9, 10, M.ochre, 0, H, -8), front, front.len / 2));
     const q = new THREE.Group(), w = Math.min(front.len - 2, 34), n = 8;
     q.add(box(w + 1, 0.8, 4.4, M.stone, 0, -0.1, 1.8));
     q.add(box(w, H - 1.6, 0.2, M.glass, 0, 1.6, 0.1));
@@ -3142,6 +3144,17 @@ function towerCrane(H, jib, a0) {
   return g;
 }
 
+// Поворот для fit/place: ось контура (длинное ребро ± k·90°), при которой локальная +z ближе всего к (fx, fz).
+function axisToward(p, fx, fz) {
+  const want = Math.atan2(-fx, fz), base = longestEdgeAngle(p);
+  let a = base;
+  for (let k = 1; k < 4; k++) {
+    const c = base + (k * Math.PI) / 2;
+    if (Math.cos(c - want) > Math.cos(a - want)) a = c;
+  }
+  return a;
+}
+
 function toStreet(world, lm, re, fx, fz) {
   let best = null;
   for (const s of world.segmentsNear(lm.x, lm.z, 200)) {
@@ -3211,13 +3224,7 @@ export function buildLandmarks(world) {
           const c = World.closest(s, lm.x, lm.z);
           if (!best || c.d < best.d) best = c;
         }
-        const want = best ? Math.atan2(-(best.px - lm.x), best.pz - lm.z) : longestEdgeAngle(p);
-        const base = longestEdgeAngle(p);
-        let a = base;
-        for (let k = 0; k < 4; k++) {
-          const c = base + (k * Math.PI) / 2;
-          if (Math.cos(c - want) > Math.cos(a - want)) a = c;
-        }
+        const a = best ? axisToward(p, best.px - lm.x, best.pz - lm.z) : longestEdgeAngle(p);
         const f = fit(p, a);
         obj = place(ddn(f, 1), f.cx, baseY(world, p), f.cz, a);
         break;
@@ -3240,10 +3247,16 @@ export function buildLandmarks(world) {
         obj = place(opera(toLocal(p, f).map(([x, z]) => [-x, -z])), f.cx, baseY(world, p), f.cz, Math.PI);
         break;
       }
-      case 'arsenal':
-      case 'drama': {
+      case 'arsenal': {
         const f = fit(p, 0);
-        obj = place({ arsenal, drama }[lm.key](toLocal(p, f)), f.cx, baseY(world, p), f.cz, 0);
+        obj = place(arsenal(toLocal(p, f)), f.cx, baseY(world, p), f.cz, 0);
+        break;
+      }
+      case 'drama': {
+        // Колоннада — к улице Максима Горького (по фото), а не к Ленина.
+        const [fx, fz] = toStreet(world, lm, /Горького/, 1, 0), a = axisToward(p, fx, fz);
+        const f = fit(p, a);
+        obj = place(drama(toLocal(p, f)), f.cx, baseY(world, p), f.cz, a);
         break;
       }
       case 'kalashnikov':
