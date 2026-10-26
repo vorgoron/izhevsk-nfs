@@ -30,12 +30,12 @@ const CARS = {
     // Выброшено: салон (026–037), бокс и его крепления (038, 039), начинка фар и противотуманок (018, 024 — 180 тыс.
     // треугольников).
     roles: {
-      1403: ['paint', '#ffffff', 0.1], // кузов, бамперы, зеркала
+      1403: ['paint', '#ffffff', 0.055], // кузов, бамперы, зеркала
       'Material.040': ['paint', '#ffffff', 0.3], // полоска по кромке лобового
       'Material.006': ['detail', GLASS, 0.6], // лобовое, задние боковые, стекло двери багажника
       'Material.007': ['detail', GLASS, 1], // стёкла дверей
-      'Material.001': ['detail', TRIM, 0.15], // рамки окон, молдинги дверей
-      'Material.020': ['detail', '#111214', 0.1], // уплотнитель лобового, подкрылки, накладка двери багажника
+      'Material.001': ['detail', TRIM, 0.1], // рамки окон, молдинги дверей
+      'Material.020': ['detail', '#111214', 0.05], // уплотнитель лобового, подкрылки, накладка двери багажника
       'Material.003': ['detail', CHROME, 0.2], // хромовая рамка решётки
       'Material.019': ['detail', CHROME, 0.4], // хромовая планка с ладьёй
       'Material.005': ['detail', '#17181b', 1], // соты решётки и нижний воздухозаборник
@@ -49,9 +49,8 @@ const CARS = {
       'Material.022': ['lights', RED, 1], // катафоты в бампере
     },
     wheel: [
-      [['Material.009'], '#151618', 0.6], // шины
-      [['1223'], '#3a3d42', 0.02], // спицы под колпаком
-      [['Material.011', 'Material.012', 'Material.013', 'Material.015'], '#b8bcc0', 0.025], // колпаки
+      [['Material.009'], '#151618', 0.4], // шины
+      [['Material.011', 'Material.012', 'Material.013', 'Material.015'], '#b8bcc0', 0.012], // колпаки
     ],
   },
   elargus: {
@@ -61,7 +60,7 @@ const CARS = {
     // Выброшено: бокс и крепления (001, 005), моторный отсек, днище и выхлоп (040–083 без перечисленных ниже —
     // 170 тыс. треугольников только в 073 и 078).
     roles: {
-      'Material.002': ['paint', '#ffffff', 0.18], // кузов, зеркала
+      'Material.002': ['paint', '#ffffff', 0.1], // кузов, зеркала
       'Material.006': ['paint', '#ffffff', 0.3], // пороги (у Cross — пластик)
       'Material.007': ['paint', '#ffffff', 0.3], // расширители арок
       'Material.008': ['paint', '#ffffff', 0.3],
@@ -80,22 +79,23 @@ const CARS = {
       'Material.013': ['detail', '#17181b', 0.15], // решётка и нижняя часть переднего бампера
       'Material.084': ['detail', '#3a3d42', 0.3], // накладка под задним бампером
       'Material.017': ['detail', '#2e3136', 0.3], // рейлинги
-      'Material.030': ['detail', '#2f7fe0', 0.4], // «иксы» на бампере — синие
-      'Material.035': ['lights', HEAD, 0.25], // фары
-      'Material.028': ['lights', HEAD, 1], // ходовые огни
-      'Material.072': ['lights', FOG, 1], // противотуманки
-      'Material.037': ['lights', RED, 0.5], // фонари в задних стойках
-      1141: ['lights', RED, 0.5],
+      'Material.030': ['detail', '#2f7fe0', 0.25], // «иксы» на бампере — синие
+      'Material.035': ['lights', HEAD, 0.1], // фары
+      'Material.028': ['lights', HEAD, 0.4], // ходовые огни
+      'Material.072': ['lights', FOG, 0.4], // противотуманки
+      'Material.037': ['lights', RED, 0.3], // фонари в задних стойках
+      1141: ['lights', RED, 0.3],
       'Material.036': ['lights', RED, 1],
       'Material.085': ['lights', RED, 1], // катафоты
       'Material.086': ['lights', RED, 1], // верхний стоп-сигнал
       'Material.038': ['lights', FOG, 1], // задний ход
       'Material.039': ['lights', FOG, 1],
     },
-    wheel: [
-      [['Material.023', 'Material.024', 'Material.026', 'Material.027'], '#151618', 0.6], // шины
-      [['Material.031', 'Material.032', 'Material.033', 'Material.034'], '#9a9ea3', 0.01], // литые диски
-    ],
+    // Только шины: литой диск исходника — сотни несвязанных деталей (32 тыс. треугольников), упрощение упирается в ~800
+    // на колесо; диск рисует игра (wheelParts, alloy), как у Весты.
+    hub: false,
+    tireHalf: 0.1, // полуширина шины, м (205 мм): у исходника 11,8 см — боковина закрывала диск игры (он выступает на 11,3 см)
+    wheel: [[['Material.023', 'Material.024', 'Material.026', 'Material.027'], '#151618', 0.6]],
   },
 };
 
@@ -171,7 +171,8 @@ function build(name) {
   const ref = wheels.find((b) => b.mid[0] > 0 && b.mid[2] > 0);
   const near = (p) => { const b = bbox([p]); return Math.abs(b.mid[0] - ref.mid[0]) < 0.2 && Math.abs(b.mid[2] - ref.mid[2]) < 0.2; };
   for (const [mats, color, keep] of car.wheel) {
-    const list = prims.filter((p) => mats.includes(p.mat) && near(p)).map((p) => ({ ...p, pos: Float32Array.from(p.pos, (v, i) => v - ref.mid[i % 3]) }));
+    const sx = car.tireHalf ? car.tireHalf / (ref.size[0] / 2) : 1; // ужать шину по ширине
+    const list = prims.filter((p) => mats.includes(p.mat) && near(p)).map((p) => ({ ...p, pos: Float32Array.from(p.pos, (v, i) => (v - ref.mid[i % 3]) * (i % 3 === 0 ? sx : 1)) }));
     add('wheel', color, list, keep, 'колесо ' + list.map((p) => p.mat).join());
   }
 
@@ -184,7 +185,8 @@ function build(name) {
   console.table(stat);
   console.log('колёса', spec, '| длина', all.size[2].toFixed(2), 'ширина', paint.size[0].toFixed(2), 'высота', all.hi[1].toFixed(2));
   // hub: диск или колпак — в самой модели колеса (игра не дорисовывает свой).
-  writeGlb(`${root}/public/models/${name}.glb`, parts, { copyright: car.credit, extras: { wheels: spec, length: +all.size[2].toFixed(3), width: +paint.size[0].toFixed(3), hub: true } });
+  const hub = car.hub ?? true;
+  writeGlb(`${root}/public/models/${name}.glb`, parts, { copyright: car.credit, extras: { wheels: spec, length: +all.size[2].toFixed(3), width: +paint.size[0].toFixed(3), ...(hub && { hub }) } });
 }
 
 for (const name of process.argv[2] ? [process.argv[2]] : Object.keys(CARS)) build(name);
