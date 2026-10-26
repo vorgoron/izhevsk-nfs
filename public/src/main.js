@@ -1526,7 +1526,46 @@ async function main() {
   window.loadTimes = loadTimes;
   console.log('[load]', loadTimes.map((s) => `${s.name} ${s.ms}${s.note ? ` (${s.note})` : ''}`).join(' · '));
   progress(1);
+  // За экраном «Поехали» уже виден город: камера медленно облетает машину (те же orbit*, что в гараже — гараж
+  // первого запуска продолжит облёт с того же места), заставка полупрозрачная и размыта (#loading.preview).
+  // Мир стоит, только кадр; основной цикл ниже заменит этот (setAnimationLoop).
+  {
+    const f = car.forward, c = new THREE.Vector3(car.pos.x, car.y + 0.7, car.pos.y);
+    orbit = Math.atan2(-f.x, -f.y) + 0.7; // сзади-сбоку
+    camera.fov = 55;
+    camera.far = scene.fog.far;
+    camera.updateProjectionMatrix();
+    chunks.update(car.pos.x, car.pos.y, isTouch ? 1 : 2);
+    landmarks.group.userData.cull(c.x, c.z, camera.far);
+    sun.target.position.copy(c);
+    sun.position.copy(c).addScaledVector(SUN_DIR, 300);
+    const preview = new THREE.Clock();
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(preview.getDelta(), 0.1);
+      orbit += dt * 0.12;
+      car.update(1 / 120, {}); // без шага физики модель машины ещё не стоит на своём месте
+      const flat = Math.cos(orbitPitch) * orbitDist;
+      camera.position.set(c.x + Math.sin(orbit) * flat, c.y + Math.sin(orbitPitch) * orbitDist, c.z + Math.cos(orbit) * flat);
+      camera.lookAt(c);
+      // Машина — ниже середины, под кнопками, а не за логотипом.
+      camera.setViewOffset(innerWidth, innerHeight, 0, -innerHeight * 0.22, innerWidth, innerHeight);
+      skyDome.update(dt, camera);
+      dayNight.update(dt);
+      if (headlight.visible) {
+        const m = car.model, front = (m.userData.length || 4.2) / 2;
+        m.updateMatrixWorld();
+        headlight.position.copy(m.localToWorld(HEAD_POS.set(0, 0.75, front - 0.2)));
+        headlight.target.position.copy(m.localToWorld(HEAD_AIM.set(0, -0.6, front + 22)));
+      }
+      renderer.render(scene, camera);
+    });
+    $('loading').classList.add('preview');
+  }
   await startScreen();
+  // Камера «сзади» не прыгает с облёта, а подлетает к своему месту (updateCamera сглаживает смещение).
+  camPos.copy(camera.position).sub(new THREE.Vector3(car.pos.x, car.y, car.pos.y));
+  camLook.set(0, 0.7, 0);
+  camInit = true;
   starting = false;
   posReady = true;
   setTimeout(() => citymap.prepare(), 3000); // подложку большой карты — заранее, чтобы она открылась сразу

@@ -51,7 +51,10 @@
     canvas { display: block; }
     html.nohud body > :not(canvas:first-child) { display: none !important; }
     #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #15181b; font-size: 20px; z-index: 19; }
-    #loading { transition: opacity .6s; }
+    #loading { transition: opacity .6s, background-color .8s, backdrop-filter .8s; }
+    /* Экран «Поехали»: за ним уже город и машина (main.js), заставка — размытым стеклом поверх. */
+    #loading.preview { background: rgba(21,24,27,.5); backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); }
+    body.boot > :not(canvas:first-child):not(#loading) { visibility: hidden; } /* HUD сквозь стекло не просвечивает */
     /* Заставка прокручивается: на телефоне лёжа с открытой клавиатурой поле имени и «Поехали» не влезают.
        margin: auto вместо одного place-items — у высокого содержимого не обрезается верх. */
     #loading { overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: calc(12px + env(safe-area-inset-top)) 0 12px; box-sizing: border-box; }
