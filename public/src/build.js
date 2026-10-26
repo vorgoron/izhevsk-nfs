@@ -2217,15 +2217,103 @@ const BB_OSM_CLEAR = 120; // м: возле настоящего щита (OSM) 
 const BB_OSM_ROAD = 25;   // м: щит из OSM — поперёк крупной улицы, если она не дальше, иначе поперёк ближайшей
 const BB_MAJOR = /^(trunk|primary|secondary|tertiary)/;
 
+// Щит из OSM (точка ox, oz): поперёк ближайшей крупной улицы, слишком близкий к полотну — отодвинут от него.
+// (dx, dz) — вдоль дороги: лица щита смотрят вдоль неё, края — к дороге и от неё.
+function bbOsmSpot(world, ox, oz) {
+  let near = null, major = null;
+  for (const sg of world.segmentsNear(ox, oz, 50)) {
+    const c = World.closest(sg, ox, oz), d = c.d - sg.w / 2;
+    if (!near || d < near.d) near = { ...c, a: c.d, d, sg };
+    if (BB_MAJOR.test(sg.road.k) && d < BB_OSM_ROAD && (!major || d < major.d)) major = { ...c, a: c.d, d, sg };
+  }
+  const hk = Math.imul(Math.round(ox * 10) ^ Math.round(oz * 10) * 7919, 2654435761) >>> 0;
+  const r = major ?? near;
+  if (!r) return { x: ox, z: oz, dx: 1, dz: 0, hk };
+  const { sg } = r, L = Math.hypot(sg.bx - sg.ax, sg.bz - sg.az) || 1, dx = (sg.bx - sg.ax) / L, dz = (sg.bz - sg.az) / L;
+  // Точка из OSM ближе BB_SET к краю (часто — на тротуаре или на самом полотне) — отодвигаем от дороги.
+  if (r.d >= BB_SET) return { x: ox, z: oz, dx, dz, hk };
+  let nx = -dz, nz = dx;
+  if (r.a > 0.3) { nx = (ox - r.px) / r.a; nz = (oz - r.pz) / r.a; } else if (hk & 1024) { nx = -nx; nz = -nz; }
+  const off = sg.w / 2 + BB_SET;
+  return { x: r.px + nx * off, z: r.pz + nz * off, dx, dz, hk };
+}
+
+// Щиты по шагу на отрезках from+1…to улицы: места с шагом от начала всей улицы (как у столбов), часть мест
+// пустует (по хешу), возле настоящих щитов мест нет.
+function bbStepSpots(world, road, from, to, out) {
+  const step = BB_STEP[road.k];
+  if (!step || road.br || road.tu) return;
+  const osm = world.city.billboards || [];
+  const pre = prefixOf(world, road);
+  const total = pre[pre.length - 1], h = (road.n[0] * 2246822519) >>> 0;
+  const phase = (h % 997) / 997 * step;
+  for (let i = from + 1; i <= to; i++) {
+    const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
+    const s0 = pre[i - 1], L = pre[i] - s0;
+    if (L < 0.5) continue;
+    const dx = (bx - ax) / L, dz = (bz - az) / L;
+    for (let s = phase + Math.ceil((s0 - phase) / step) * step; s < s0 + L; s += step) {
+      if (s < BB_END || s > total - BB_END) continue;
+      const k = Math.round((s - phase) / step), hk = Math.imul(h ^ k, 2654435761) >>> 0;
+      if ((hk % 1000) / 1000 >= BB_KEEP) continue;
+      const side = hk & 1024 ? 1 : -1, off = road.w / 2 + BB_SET, t = s - s0;
+      const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
+      if (osm.some(([qx, qz]) => (qx - x) ** 2 + (qz - z) ** 2 < BB_OSM_CLEAR ** 2)) continue;
+      out.push({ x, z, dx, dz, hk });
+    }
+  }
+}
+
+const BB_ADV_APART = 250; // м: ближе этого у щитов разные рекламодатели, если хватает рекламодателей
+const bbAdvCache = new WeakMap(); // world → Map(место щита → рекламодатель)
+const bbKey = (x, z) => `${Math.round(x * 10)},${Math.round(z * 10)}`;
+
+// Рекламодатели всех мест под щит в городе — раз на мир, чтобы соседние щиты (в том числе в соседних квадратах)
+// не показывали одно и то же. Каждому месту — рекламодатель по хешу в долях share; если он уже есть на щите ближе
+// BB_ADV_APART — другой из свободных (по тому же хешу в их долях), а если заняты все — тот, чей ближайший щит дальше.
+// Места берутся до проверок place: отсеянное место лишь занимает рекламодателя впустую.
+function bbAdvertisers(world) {
+  let map = bbAdvCache.get(world);
+  if (map) return map;
+  const all = (world.city.billboards || []).map(([ox, oz]) => bbOsmSpot(world, ox, oz));
+  for (const road of world.roads) bbStepSpots(world, road, 0, road.n.length - 1, all);
+  all.sort((a, b) => a.hk - b.hk || a.x - b.x || a.z - b.z);
+  map = new Map();
+  const cell = BB_ADV_APART, grid = new Map(), r2 = BB_ADV_APART ** 2;
+  for (const sp of all) {
+    const ci = Math.floor(sp.x / cell), cj = Math.floor(sp.z / cell);
+    const nearest = ADVERTISERS.map(() => Infinity);
+    for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
+      for (const q of grid.get(`${i},${j}`) ?? []) {
+        const d2 = (q.x - sp.x) ** 2 + (q.z - sp.z) ** 2;
+        if (d2 < nearest[q.adv]) nearest[q.adv] = d2;
+      }
+    }
+    const freeAds = ADVERTISERS.map((_, a) => a).filter((a) => nearest[a] >= r2);
+    let adv;
+    if (freeAds.length) {
+      const sum = freeAds.reduce((m, a) => m + ADVERTISERS[a].share, 0);
+      let u = ((sp.hk >>> 12) % 1000) / 1000 * sum, n = 0;
+      while (n < freeAds.length - 1 && u >= ADVERTISERS[freeAds[n]].share) u -= ADVERTISERS[freeAds[n++]].share;
+      adv = freeAds[n];
+    } else adv = nearest.indexOf(Math.max(...nearest));
+    map.set(bbKey(sp.x, sp.z), adv);
+    const g = `${ci},${cj}`;
+    if (!grid.has(g)) grid.set(g, []);
+    grid.get(g).push({ x: sp.x, z: sp.z, adv });
+  }
+  bbAdvCache.set(world, map);
+  return map;
+}
+
 // Щиты квадрата, поперёк дороги — плакаты видно в обе стороны движения. Настоящие — из OSM (`billboards`, точки,
-// разворот по ближайшей улице); остальные редкие, у крупных улиц: места с шагом от начала всей улицы
-// (как у столбов), часть мест пустует (по хешу), возле настоящих щитов мест нет.
+// разворот по ближайшей улице); остальные редкие, у крупных улиц (bbStepSpots).
 export function buildBillboardChunk(world, info, mats) {
   const { data } = info;
   const { free, inBuilding } = spotChecks(world, data);
+  const advs = bbAdvertisers(world);
   const spots = [];
-  // (dx, dz) — вдоль дороги: лица щита смотрят вдоль неё, края — к дороге и от неё.
-  const place = (x, z, dx, dz, hk) => {
+  const place = ({ x, z, dx, dz }) => {
     // Края щита: стойка — на земле, не у дороги; щит не в доме и не под путепроводом.
     const ex = -dz * (BB.w / 2 + 0.2), ez = dx * (BB.w / 2 + 0.2);
     const nr = world.nearestRoad(x, z, 4);
@@ -2233,52 +2321,12 @@ export function buildBillboardChunk(world, info, mats) {
     const ok = [[x, z], [x + ex, z + ez], [x - ex, z - ez]]
       .every(([px, pz]) => !inBuilding(px, pz) && world.ground(px, pz) < world.terrain(px, pz) + 2);
     if (!ok) return;
-    // Рекламодатель щита — по хешу места, в долях share.
-    let u = ((hk >>> 12) % 1000) / 1000, adv = 0;
-    while (adv < ADVERTISERS.length - 1 && u >= ADVERTISERS[adv].share) u -= ADVERTISERS[adv++].share;
-    spots.push({ x, y: world.terrain(x, z), z, dx, dz, adv });
+    spots.push({ x, y: world.terrain(x, z), z, dx, dz, adv: advs.get(bbKey(x, z)) ?? 0 });
   };
-  for (const [ox, oz] of data.billboards) {
-    let near = null, major = null;
-    for (const sg of world.segmentsNear(ox, oz, 50)) {
-      const c = World.closest(sg, ox, oz), d = c.d - sg.w / 2;
-      if (!near || d < near.d) near = { ...c, a: c.d, d, sg };
-      if (BB_MAJOR.test(sg.road.k) && d < BB_OSM_ROAD && (!major || d < major.d)) major = { ...c, a: c.d, d, sg };
-    }
-    const hk = Math.imul(Math.round(ox * 10) ^ Math.round(oz * 10) * 7919, 2654435761) >>> 0;
-    const r = major ?? near;
-    if (!r) { place(ox, oz, 1, 0, hk); continue; }
-    const { sg } = r, L = Math.hypot(sg.bx - sg.ax, sg.bz - sg.az) || 1, dx = (sg.bx - sg.ax) / L, dz = (sg.bz - sg.az) / L;
-    // Точка из OSM ближе BB_SET к краю (часто — на тротуаре или на самом полотне) — отодвигаем от дороги.
-    if (r.d >= BB_SET) { place(ox, oz, dx, dz, hk); continue; }
-    let nx = -dz, nz = dx;
-    if (r.a > 0.3) { nx = (ox - r.px) / r.a; nz = (oz - r.pz) / r.a; } else if (hk & 1024) { nx = -nx; nz = -nz; }
-    const off = sg.w / 2 + BB_SET;
-    place(r.px + nx * off, r.pz + nz * off, dx, dz, hk);
-  }
-  const osm = world.city.billboards || [];
-  for (const { road, from, to } of data.runs) {
-    const step = BB_STEP[road.k];
-    if (!step || road.br || road.tu) continue;
-    const pre = prefixOf(world, road);
-    const total = pre[pre.length - 1], h = (road.n[0] * 2246822519) >>> 0;
-    const phase = (h % 997) / 997 * step;
-    for (let i = from + 1; i <= to; i++) {
-      const [ax, az] = world.nodes[road.n[i - 1]], [bx, bz] = world.nodes[road.n[i]];
-      const s0 = pre[i - 1], L = pre[i] - s0;
-      if (L < 0.5) continue;
-      const dx = (bx - ax) / L, dz = (bz - az) / L;
-      for (let s = phase + Math.ceil((s0 - phase) / step) * step; s < s0 + L; s += step) {
-        if (s < BB_END || s > total - BB_END) continue;
-        const k = Math.round((s - phase) / step), hk = Math.imul(h ^ k, 2654435761) >>> 0;
-        if ((hk % 1000) / 1000 >= BB_KEEP) continue;
-        const side = hk & 1024 ? 1 : -1, off = road.w / 2 + BB_SET, t = s - s0;
-        const x = ax + dx * t - dz * off * side, z = az + dz * t + dx * off * side;
-        if (osm.some(([qx, qz]) => (qx - x) ** 2 + (qz - z) ** 2 < BB_OSM_CLEAR ** 2)) continue;
-        place(x, z, dx, dz, hk);
-      }
-    }
-  }
+  for (const [ox, oz] of data.billboards) place(bbOsmSpot(world, ox, oz));
+  const steps = [];
+  for (const { road, from, to } of data.runs) bbStepSpots(world, road, from, to, steps);
+  steps.forEach(place);
   if (!spots.length) return null;
   const frames = new THREE.InstancedMesh(mats.geo, mats.frame, spots.length);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
