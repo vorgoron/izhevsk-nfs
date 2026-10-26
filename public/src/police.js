@@ -23,6 +23,40 @@ const PATH_EVERY = 1;             // с: путь к игроку пересчи
 const DIRECT = 50;                // м: ближе — прямо на игрока
 const R = 1.1, AXLE = 1.25, PLAYER_R = 1.15, PLAYER_AXLE = 1.25;
 
+// Белая краска с синей полосой ДПС, нарисованной по координатам кузова (UV у моделей нет): по бортам на уровне ручек
+// дверей от задней двери вперёд, на переднем крыле поднимается к капоту; задний край скошен, как на настоящих.
+// bb — рамка кузова, нос — к +z.
+function liveryMaterial(bb) {
+  const mat = new THREE.MeshLambertMaterial({ color: '#f2f3f0' });
+  const h = bb.max.y - bb.min.y, len = bb.max.z - bb.min.z;
+  const u = {
+    uBelt: { value: bb.min.y + h * 0.5 },    // середина полосы на дверях
+    uHalf: { value: 0.075 },                 // полуширина полосы, м
+    uRear: { value: bb.min.z + len * 0.3 },  // начало полосы (задняя дверь)
+    uRise: { value: bb.min.z + len * 0.68 }, // отсюда к носу полоса поднимается
+    uBlue: { value: new THREE.Color('#1f4fa3') },
+  };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObj, vObjN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vObjN = normal;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObj, vObjN;\nuniform float uBelt, uHalf, uRear, uRise;\nuniform vec3 uBlue;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          float y = uBelt + max(0.0, vObj.z - uRise) * 0.45;
+          float dy = abs(vObj.y - y), e = 0.006;
+          float band = 1.0 - smoothstep(uHalf - e, uHalf + e, dy);
+          band *= smoothstep(uRear - e, uRear + e, vObj.z + (vObj.y - y) * 0.8);
+          band *= smoothstep(0.3, 0.4, abs(normalize(vObjN).x));
+          diffuseColor.rgb = mix(diffuseColor.rgb, uBlue, band);
+        }`);
+  };
+  mat.customProgramCacheKey = () => 'police-livery';
+  return mat;
+}
+
 export class Police {
   constructor(world, cameras, scene) {
     this.world = world;
@@ -46,18 +80,15 @@ export class Police {
       this.posts.push({ x: px, z: pz, heading: Math.atan2((ex / el) * along, (ez / el) * along), lim: c.lim, cam: c });
     });
 
-    // Патрульная: Веста белая, мигалка на крыше.
+    // Патрульная: Веста белая с синей полосой по бортам (liveryMaterial), мигалка на крыше.
     const p = vehicleParts(MODELS.vesta, { wheelsInDetail: true });
     p.paint.computeBoundingBox();
     const bb = p.paint.boundingBox, roof = bb.max.y;
     this.geo = { paint: p.paint, detail: p.detail };
-    this.white = new THREE.MeshLambertMaterial({ color: '#f2f3f0' });
+    this.white = liveryMaterial(bb);
     this.lit = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.barGeo = new THREE.BoxGeometry(0.5, 0.12, 0.22).translate(0, roof + 0.07, 0);
     this.baseGeo = new THREE.BoxGeometry(1.15, 0.05, 0.28).translate(0, roof + 0.01, 0);
-    this.stripeGeo = new THREE.BoxGeometry((bb.max.x - bb.min.x) + 0.01, 0.16, (bb.max.z - bb.min.z) * 0.62)
-      .translate(0, bb.min.y + (roof - bb.min.y) * 0.42, (bb.max.z + bb.min.z) / 2);
-    this.blueStripe = new THREE.MeshLambertMaterial({ color: '#1f4fa3' });
     this.red = new THREE.MeshBasicMaterial({ color: '#ff2a2a' });
     this.blue = new THREE.MeshBasicMaterial({ color: '#2a6bff' });
     this.off = new THREE.MeshLambertMaterial({ color: '#5a5f66' });
@@ -75,12 +106,11 @@ export class Police {
   #makeCar(x, z, heading, post = null) {
     const g = new THREE.Group();
     const paint = new THREE.Mesh(this.geo.paint, this.white), detail = new THREE.Mesh(this.geo.detail, this.lit);
-    const stripe = new THREE.Mesh(this.stripeGeo, this.blueStripe);
     const base = new THREE.Mesh(this.baseGeo, this.grey);
     const left = new THREE.Mesh(this.barGeo, this.off), right = new THREE.Mesh(this.barGeo, this.off);
     left.position.x = -0.28; right.position.x = 0.28;
-    for (const m of [paint, detail, stripe]) m.castShadow = m.receiveShadow = true;
-    g.add(paint, detail, stripe, base, left, right);
+    for (const m of [paint, detail]) m.castShadow = m.receiveShadow = true;
+    g.add(paint, detail, base, left, right);
     g.userData.perf = 'ДПС';
     this.scene.add(g);
     const c = { g, left, right, x, z, heading, v: 0, y: this.world.ground(x, z), post, path: null, pathT: 0, stuck: 0, back: 0, pitch: 0 };
