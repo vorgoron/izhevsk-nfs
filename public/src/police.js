@@ -21,20 +21,41 @@ const FINE = 5000, BOUNTY = 1500; // ₽: штраф за неповиновен
 const ACCEL = 6, BRAKE = 8, LAT = 11; // м/с²: разгон, торможение перед игроком, предел бокового в повороте
 const PATH_EVERY = 1;             // с: путь к игроку пересчитывается
 const DIRECT = 50;                // м: ближе — прямо на игрока
+const POST_HALF = [2.3, 0.95];      // м: полудлина и полуширина кузова патрульной — место поста без столбов
 const R = 1.1, AXLE = 1.25, PLAYER_R = 1.15, PLAYER_AXLE = 1.25;
 
 // Белая краска с синей полосой ДПС, нарисованной по координатам кузова (UV у моделей нет): по бортам на уровне ручек
 // дверей от задней двери вперёд, на переднем крыле поднимается к капоту; задний край скошен, как на настоящих.
-// bb — рамка кузова, нос — к +z.
-function liveryMaterial(bb) {
+// На капоте — «ДПС» (надпись с холста, проекцией сверху; читается спереди). geo — геометрия кузова, нос — к +z.
+function liveryMaterial(geo) {
   const mat = new THREE.MeshLambertMaterial({ color: '#f2f3f0' });
-  const h = bb.max.y - bb.min.y, len = bb.max.z - bb.min.z;
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox, h = bb.max.y - bb.min.y, len = bb.max.z - bb.min.z;
+  // Капот: смотрящие вверх вершины передней трети кузова.
+  const pos = geo.attributes.position, nrm = geo.attributes.normal;
+  let z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    if (nrm.getY(i) > 0.7 && z > bb.max.z - len * 0.36) { z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+  }
+  if (z0 > z1) { z0 = bb.max.z - len * 0.3; z1 = bb.max.z - len * 0.05; }
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 160;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.font = '900 150px Arial, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('ДПС', 256, 86, 500);
+  const text = new THREE.CanvasTexture(cv);
+  const tw = 0.95, td = tw * cv.height / cv.width; // м: ширина надписи и её глубина вдоль капота
   const u = {
     uBelt: { value: bb.min.y + h * 0.5 },    // середина полосы на дверях
     uHalf: { value: 0.075 },                 // полуширина полосы, м
     uRear: { value: bb.min.z + len * 0.3 },  // начало полосы (задняя дверь)
     uRise: { value: bb.min.z + len * 0.68 }, // отсюда к носу полоса поднимается
     uBlue: { value: new THREE.Color('#1f4fa3') },
+    uText: { value: text },
+    uTextBox: { value: new THREE.Vector4(0, (z0 + z1) / 2, tw, td) }, // центр x, z; ширина, глубина
   };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, u);
@@ -42,7 +63,7 @@ function liveryMaterial(bb) {
       .replace('#include <common>', '#include <common>\nvarying vec3 vObj, vObjN;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vObjN = normal;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vObj, vObjN;\nuniform float uBelt, uHalf, uRear, uRise;\nuniform vec3 uBlue;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObj, vObjN;\nuniform float uBelt, uHalf, uRear, uRise;\nuniform vec3 uBlue;\nuniform sampler2D uText;\nuniform vec4 uTextBox;')
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           float y = uBelt + max(0.0, vObj.z - uRise) * 0.45;
@@ -51,6 +72,10 @@ function liveryMaterial(bb) {
           band *= smoothstep(uRear - e, uRear + e, vObj.z + (vObj.y - y) * 0.8);
           band *= smoothstep(0.3, 0.4, abs(normalize(vObjN).x));
           diffuseColor.rgb = mix(diffuseColor.rgb, uBlue, band);
+          // «ДПС»: верх букв — к стеклу (−z), право — к +x, как видно, стоя перед машиной.
+          vec2 tuv = vec2((vObj.x - uTextBox.x) / uTextBox.z + 0.5, (uTextBox.y - vObj.z) / uTextBox.w + 0.5);
+          if (normalize(vObjN).y > 0.5 && all(greaterThan(tuv, vec2(0.0))) && all(lessThan(tuv, vec2(1.0))))
+            diffuseColor.rgb = mix(diffuseColor.rgb, uBlue, texture2D(uText, tuv).a);
         }`);
   };
   mat.customProgramCacheKey = () => 'police-livery';
@@ -85,13 +110,15 @@ export class Police {
     p.paint.computeBoundingBox();
     const bb = p.paint.boundingBox, roof = bb.max.y;
     this.geo = { paint: p.paint, detail: p.detail };
-    this.white = liveryMaterial(bb);
+    this.white = liveryMaterial(p.paint);
     this.lit = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.barGeo = new THREE.BoxGeometry(0.5, 0.12, 0.22).translate(0, roof + 0.07, 0);
     this.baseGeo = new THREE.BoxGeometry(1.15, 0.05, 0.28).translate(0, roof + 0.01, 0);
+    // Мигалка: левая половина красная, правая синяя; выключенная — тёмное цветное стекло, горит — яркий цвет.
     this.red = new THREE.MeshBasicMaterial({ color: '#ff2a2a' });
     this.blue = new THREE.MeshBasicMaterial({ color: '#2a6bff' });
-    this.off = new THREE.MeshLambertMaterial({ color: '#5a5f66' });
+    this.redOff = new THREE.MeshLambertMaterial({ color: '#7a1c22' });
+    this.blueOff = new THREE.MeshLambertMaterial({ color: '#1c3478' });
     this.grey = new THREE.MeshLambertMaterial({ color: '#2b2d31' });
 
     this.cars = [];      // патрульные: на посту и в погоне
@@ -101,13 +128,14 @@ export class Police {
     this.siren = 0;      // громкость сирены для звука, 0..1
     this.events = [];    // [{ kind: 'start' | 'caught' | 'escaped', why }] — забирает main.js
     this.hud = document.getElementById('chase');
+    this.obstacles = null; // выставляет main.js: { ready(x, z), around(x, z, fn) } — столбы и деревья квадратов
   }
 
   #makeCar(x, z, heading, post = null) {
     const g = new THREE.Group();
     const paint = new THREE.Mesh(this.geo.paint, this.white), detail = new THREE.Mesh(this.geo.detail, this.lit);
     const base = new THREE.Mesh(this.baseGeo, this.grey);
-    const left = new THREE.Mesh(this.barGeo, this.off), right = new THREE.Mesh(this.barGeo, this.off);
+    const left = new THREE.Mesh(this.barGeo, this.redOff), right = new THREE.Mesh(this.barGeo, this.blueOff);
     left.position.x = -0.28; right.position.x = 0.28;
     for (const m of [paint, detail]) m.castShadow = m.receiveShadow = true;
     g.add(paint, detail, base, left, right);
@@ -154,6 +182,7 @@ export class Police {
     for (const post of this.posts) {
       const d = Math.hypot(post.x - px, post.z - py);
       if (d < 400 && !post.car) post.car = this.#makeCar(post.x, post.z, post.heading, post);
+      if (post.car && !post.clear && !post.car.chasing && this.obstacles?.ready(post.x, post.z)) this.#clearPost(post);
       else if (d > 500 && post.car && !post.car.chasing) { this.#drop(post.car); post.car = null; }
     }
     if (allowed && !this.chase) {
@@ -168,12 +197,13 @@ export class Police {
     for (const c of [...this.cars]) if (!c.post && !c.chasing && Math.hypot(c.x - px, c.z - py) > 300) this.#drop(c);
     for (const c of this.cars) this.#collidePlayer(c, car);
     if (this.chase) this.#chaseUpdate(dt, car);
-    // Мигалка: красный и синий по очереди, у машин в погоне.
-    this.flash = (this.time * 4) % 2 < 1;
+    // Мигалка у машин в погоне: красный и синий по очереди, каждый — двойной вспышкой.
+    const ph = (this.time * 2) % 1, blink = (a) => (ph >= a && ph < a + 0.1) || (ph >= a + 0.18 && ph < a + 0.28);
+    this.flash = blink(0);
     for (const c of this.cars) {
       const on = c.chasing;
-      c.left.material = on ? (this.flash ? this.red : this.off) : this.off;
-      c.right.material = on ? (this.flash ? this.off : this.blue) : this.off;
+      c.left.material = on && blink(0) ? this.red : this.redOff;
+      c.right.material = on && blink(0.5) ? this.blue : this.blueOff;
     }
     // Сирена: громче ближе ближайшая патрульная в погоне.
     let near = Infinity;
@@ -231,6 +261,29 @@ export class Police {
   }
 
   // Пост: вернуть машину на место.
+  // Пост ставится от камеры, не глядя на столбы и деревья (они строятся с квадратом), — патрульная вставала в столб.
+  // Квадрат построен — сдвигаем пост вдоль дороги на ближайшее место, где кузов ни во что не упирается.
+  #clearPost(post) {
+    post.clear = true;
+    const fx = Math.sin(post.heading), fz = Math.cos(post.heading);
+    const blocked = (x, z) => {
+      let hit = false;
+      this.obstacles.around(x, z, (it) => {
+        const dx = it.x - x, dz = it.z - z, r = (it.r ?? it.kind.r) + 0.3;
+        const along = dx * fx + dz * fz, side = dx * fz - dz * fx;
+        if (Math.abs(along) < POST_HALF[0] + r && Math.abs(side) < POST_HALF[1] + r) hit = true;
+      });
+      return hit || this.world.roofAt(x, z) !== null || this.world.isWater(x, z);
+    };
+    for (let k = 0; k <= 20; k++) {
+      const t = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 1.5; // 0, 1.5, −1.5, 3, −3 … до ±15 м
+      const x = post.x + fx * t, z = post.z + fz * t;
+      if (blocked(x, z)) continue;
+      if (t) { post.x = x; post.z = z; this.#home(post.car); }
+      return;
+    }
+  }
+
   #home(c) {
     Object.assign(c, { x: c.post.x, z: c.post.z, heading: c.post.heading, path: null });
     c.y = this.world.ground(c.x, c.z);

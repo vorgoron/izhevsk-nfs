@@ -96,6 +96,9 @@ export class ChunkManager {
     this.loaded.set(this.#key(ci, cj), group);
   }
 
+  // Квадрат с точкой построен — его столбы и деревья уже в breakables.
+  isBuilt(x, z) { const [ci, cj] = this.world.chunkAt(x, z); return this.loaded.has(this.#key(ci, cj)); }
+
   #unload(key, group) {
     this.scene.remove(group);
     group.traverse((o) => {

@@ -307,6 +307,9 @@ export class Breakables {
     }
   }
 
+  // Целые предметы рядом с точкой (клетки 3×3 вокруг неё): посты ДПС отходят от столбов (police.js).
+  around(x, z, fn) { this.#near(x, z, fn); }
+
   // Каждый шаг физики: машина игрока — прямоугольник кузова против круга стойки.
   collide(car) {
     const hl = (car.model.userData.length ?? 4.2) / 2, hw = (car.model.userData.width ?? 1.8) / 2;

@@ -327,6 +327,7 @@ async function main() {
   const cameras = owned('камеры', () => new Cameras(world, signals, scene));
   breakables.addCameras(cameras);
   const police = owned('ДПС', () => new Police(world, cameras, scene));
+  police.obstacles = { ready: (x, z) => chunks.isBuilt(x, z), around: (x, z, fn) => breakables.around(x, z, fn) };
   traffic.density = dayNight.traffic;
   traffic.reset(car.pos.x, car.pos.y);
   // Сменил машину — гонка с начала (честно); первый запуск — в гараж сразу после «Поехали».
