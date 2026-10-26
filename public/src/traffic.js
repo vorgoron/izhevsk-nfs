@@ -12,7 +12,7 @@ const SPEED = {
   trunk_link: 11, primary_link: 11, secondary_link: 10, tertiary_link: 9,
 };
 // Состав потока: ижевские машины (vehicles.js) и автобусы.
-const MIX = { oda: 10, m412: 7, kombi: 6, kabluk: 5, pickup: 3, vesta: 13 };
+const MIX = { oda: 9, m412: 6, kombi: 5, kabluk: 5, pickup: 3, vesta: 9, largus: 5, elargus: 2 };
 const BUSES = 6, TROLLS = 4; // троллейбусы — только если в city.json есть их маршруты (trolleys)
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
 // Сколько машин на улицах: доля keep (Traffic.density — от часа в Ижевске, в гонке ещё не больше RACE_KEEP);
@@ -148,6 +148,7 @@ export class Traffic {
           len: kind.len, roof: kind.roof, y: 0, half: bus ? 1.25 : 0.85,
           // Выхлопная труба слева сзади; ускорение — для густоты дыма.
           acc: 0, smoke: { carry: Math.random() },
+          electric: kind.key === 'troll' || !!MODELS[kind.key]?.electric, // троллейбус и электромобили не дымят
           pipe: new THREE.Vector3(bus ? -0.9 : -0.45, bus ? 0.45 : 0.33, -kind.len / 2 - 0.1),
           r: bus ? 1.3 : 1.1,
           circles: bus ? [-4.5, -1.5, 1.5, 4.5] : [-1.2, 1.2], // коллайдеры вдоль кузова
@@ -959,7 +960,7 @@ export class Traffic {
       const kind = v.meshes.kind, slot = kind.used++;
       for (const m of v.meshes) m.setMatrixAt(slot, this.mat4);
       v.meshes[kind.paint].setColorAt(slot, v.color);
-      if (d < 60) {
+      if (d < 60 && !v.electric) {
         const throttle = Math.min(1, Math.max(0, v.acc / 2.8));
         this.smoke.emit(dt, v.smoke, this.mat4, v.pipe, v.dx * v.speed, v.dz * v.speed, v.speed, throttle, v.bus ? 1 : 0.7);
       }

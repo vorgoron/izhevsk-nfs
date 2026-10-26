@@ -674,11 +674,12 @@ export class ExhaustFX {
     const e = model.userData.mounts?.exhaust;
     if (e) this.exhaust.set(e.x, e.y, e.z - 0.1);
     else this.exhaust.set(-0.45, 0.33, -(model.userData.length ?? 4.2) / 2 - 0.1);
+    this.electric = !!model.userData.electric; // электромобиль не дымит
   }
 
   // Машина игрока: выпустить и прожить кадр.
   update(dt, car) {
-    const running = car.fuel > 0 && car.sink === 0;
+    const running = car.fuel > 0 && car.sink === 0 && !this.electric;
     const throttle = Math.min(1, Math.max(0, (car.accel_ ?? 0) / 5));
     this.emit(dt, this.src, car.model.matrixWorld, this.exhaust, car.vel.x, car.vel.y, Math.abs(car.speed), running ? throttle : -1);
     this.step(dt);

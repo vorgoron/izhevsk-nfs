@@ -9,7 +9,7 @@ const NEAR = 260;      // м: разметка парковок ближе — �
 const CARS = 40;       // машин на парковках одновременно (ближайшие к игроку)
 const BUSY = 0.55;     // доля занятых мест
 const LINE = 0.12;     // м: ширина линии разметки
-const KINDS = ['oda', 'oda', 'm412', 'kombi', 'kabluk', 'vesta', 'vesta', 'm412', 'pickup'];
+const KINDS = ['oda', 'oda', 'm412', 'kombi', 'kabluk', 'vesta', 'vesta', 'm412', 'pickup', 'largus', 'largus', 'elargus'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25; // как в car.js
 
 // Детерминированное «случайное» число места: у всех игроков одни и те же машины на тех же местах.

@@ -1,6 +1,6 @@
-// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs, moskvich.mjs, pickup.mjs, kabluk.mjs): чтение glTF, упрощение и запись GLB в формате игры.
+// Общее для сборщиков моделей машин (vesta.mjs, oda.mjs, moskvich.mjs, pickup.mjs, kabluk.mjs, largus.mjs): чтение glTF, упрощение и запись GLB в формате игры.
 // Модель — части paint (кузов, под цвет), detail, lights, wheel; у каждой позиции, цвета вершин
-// и индексы, нормали считаются в игре (плоские). Координаты: +z вперёд, y вверх от земли.
+// и индексы, нормали считаются в игре (сглаженные с порогом угла, CREASE в vehicles.js). Координаты: +z вперёд, y вверх от земли.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { MeshoptSimplifier } from 'meshoptimizer';
@@ -41,10 +41,12 @@ function local(n) {
     2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
     2 * (x * z + y * w) * sz, 2 * (y * z - x * w) * sz, (1 - 2 * (x * x + y * y)) * sz, 0, tx, ty, tz, 1];
 }
+const det3 = (m) => m[0] * (m[5] * m[10] - m[6] * m[9]) - m[4] * (m[1] * m[10] - m[2] * m[9]) + m[8] * (m[1] * m[6] - m[2] * m[5]);
 const apply = (m, x, y, z) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
 
 // Все примитивы glTF (scene.gltf + один .bin или встроенный буфер) в мировых координатах: { node, wheel (имя узла-колеса
-// /^wheel/ или null), mat (имя материала), pos, idx }.
+// /^wheel/ или null), mat (имя материала), pos, idx }. У зеркальных узлов (отрицательный масштаб — правая фара или двери как
+// копия левых) обход треугольников разворачивается, как велит glTF: иначе их грани смотрят внутрь и в игре не видны.
 export function readGltf(src) {
   const gltf = JSON.parse(readFileSync(src, 'utf8'));
   const uri = gltf.buffers[0].uri; // файл рядом или встроенный base64 (экспорт Blender «glTF Embedded»)
@@ -58,6 +60,7 @@ export function readGltf(src) {
           const raw = accessor(gltf, bin, p.attributes.POSITION), pos = new Float32Array(raw.length);
           for (let i = 0; i < raw.length; i += 3) pos.set(apply(m, raw[i], raw[i + 1], raw[i + 2]), i);
           const idx = p.indices != null ? accessor(gltf, bin, p.indices) : Uint32Array.from({ length: raw.length / 3 }, (_, i) => i);
+          if (det3(m) < 0) for (let t = 0; t < idx.length; t += 3) [idx[t + 1], idx[t + 2]] = [idx[t + 2], idx[t + 1]];
           prims.push({ node: n.name, wheel: w, mat: gltf.materials[p.material].name, pos, idx });
         }
       }
@@ -115,7 +118,7 @@ export const used = ({ pos, idx }) => ({ pos: Float32Array.from([...idx].flatMap
 
 export const hex = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16) / 255);
 
-// Сварить вершины по положению (UV и нормали исходника не нужны — нормали плоские, считаются в игре).
+// Сварить вершины по положению (UV и нормали исходника не нужны — нормали считает игра).
 function weld(list) {
   const map = new Map(), pos = [], idx = [];
   for (const p of list) {

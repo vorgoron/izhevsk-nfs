@@ -8,7 +8,7 @@ const CARS = 26;              // машин в очереди
 const ACTIVE = 1000;          // м: очереди дальше не рисуем и не двигаем
 const MINOR = new Set(['service', 'living_street']);
 const MOVE_TIME = 2.2;        // с: подтягивание на одно место
-const KINDS = ['oda', 'oda', 'm412', 'kombi', 'kabluk', 'vesta', 'm412', 'pickup'];
+const KINDS = ['oda', 'oda', 'm412', 'kombi', 'kabluk', 'vesta', 'm412', 'pickup', 'largus'];
 const PLAYER_R = 1.15, PLAYER_AXLE = 1.25;
 
 function rnd(seed) {

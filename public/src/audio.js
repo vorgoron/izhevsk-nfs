@@ -5,8 +5,12 @@
 const GEARS = [0, 35, 65, 100, 140, 185, 260]; // км/ч: границы передач
 export const IDLE_RPM = 900, MAX_RPM = 6400;
 
+const EV_RPM = 38; // электромотор: об/мин на км/ч (145 км/ч — 5500, у красной зоны тахометра)
+
 // Обороты мотора к которым он идёт (без сглаживания) и передача — по скорости и газу. Общие для звука и тахометра.
-export function engineTarget(kmh, throttle) {
+// ev — электромотор: передача одна, обороты прямо по скорости, на месте — ноль (тишина).
+export function engineTarget(kmh, throttle, ev = false) {
+  if (ev) return { rpm: Math.min(MAX_RPM, kmh * EV_RPM), gear: 1 };
   let gear = 1;
   while (gear < GEARS.length - 1 && kmh > GEARS[gear]) gear++;
   const lo = GEARS[gear - 1], hi = GEARS[gear];
@@ -17,7 +21,9 @@ export function engineTarget(kmh, throttle) {
 // Голос мотора по модели (vehicles.js): pitch — множитель частоты, mix — громкость пилы, пилы октавой ниже и квадрата,
 // tone — яркость (частота фильтра), q — резонанс, rough — неровность (биение раз в оборот: старый карбюраторный
 // мотор бубнит, у Весты ровно), gain — громкость. Москвич и «Комби» — УЗАМ-412, «Каблучок» и пикап — тот же мотор под
-// нагрузкой, ниже и грубее; «Ода» — мягче; Веста — современный 16-клапанный: выше, чище, тише.
+// нагрузкой, ниже и грубее; «Ода» — мягче; Веста — современный 16-клапанный: выше, чище, тише; Ларгус — 8-клапанный,
+// между «Одой» и Вестой. ev — электромотор (engineTarget): одна пила под низким фильтром — почти чистый тон,
+// высокий (pitch) и тихий, без неровности; растёт со скоростью, как гул e-Largus.
 const VOICES = {
   m412: { pitch: 1, mix: [0.5, 0.6, 0.25], tone: 1, q: 4, rough: 0.3, gain: 1 },
   kombi: { pitch: 1.02, mix: [0.5, 0.6, 0.22], tone: 1, q: 4, rough: 0.25, gain: 1 },
@@ -25,6 +31,8 @@ const VOICES = {
   pickup: { pitch: 0.88, mix: [0.42, 0.78, 0.3], tone: 0.8, q: 5, rough: 0.45, gain: 1.05 },
   oda: { pitch: 0.96, mix: [0.55, 0.5, 0.14], tone: 1.08, q: 3.5, rough: 0.15, gain: 0.95 },
   vesta: { pitch: 1.1, mix: [0.62, 0.32, 0.06], tone: 1.3, q: 2.5, rough: 0.04, gain: 0.85 },
+  largus: { pitch: 1.04, mix: [0.58, 0.42, 0.1], tone: 1.15, q: 3, rough: 0.1, gain: 0.9 },
+  elargus: { pitch: 6, mix: [0.3, 0, 0], tone: 0.45, q: 1, rough: 0, gain: 0.45, ev: true },
 };
 export const voiceOf = (model) => VOICES[model] ?? VOICES.m412;
 const TRAFFIC_VOICES = 4; // столько ближайших машин слышно мотором
@@ -450,15 +458,17 @@ export class Sound {
       if (!v) { set(voice.g.gain, 0, 0.1); continue; }
       const rx = v.x - px, rz = v.z - pz, d = Math.max(Math.hypot(rx, rz), 0.5);
       const throttle = Math.min(1, Math.max(0, v.acc / 2.8));
-      // Легковушка — четвёрка на 2–3 передаче, автобус — дизель пониже.
-      const rpm = v.bus ? 650 + (v.speed / 11) * 1300 + throttle * 300 : 850 + Math.min(1, v.speed / 15) * 2300 + throttle * 500;
+      // Легковушка — четвёрка на 2–3 передаче, автобус — дизель пониже, электромобиль — тихий гул по скорости.
+      const vc = voiceOf(v.kind), ev = vc.ev;
+      const rpm = ev ? engineTarget(v.speed * 3.6, throttle, true).rpm * vc.pitch
+        : v.bus ? 650 + (v.speed / 11) * 1300 + throttle * 300 : 850 + Math.min(1, v.speed / 15) * 2300 + throttle * 500;
       // Доплер: скорость сближения вдоль линии игрок—машина.
       const closing = -((v.dx * v.speed - car.vel.x) * rx + (v.dz * v.speed - car.vel.y) * rz) / d;
       const dop = SOUND_SPEED / (SOUND_SPEED - Math.max(-60, Math.min(60, closing)));
       const freq = (rpm / 60) * (v.bus ? 3 : 2) * dop;
       for (const { o, mul } of voice.osc) set(o.frequency, freq * mul, 0.05);
       set(voice.f.frequency, (v.bus ? 220 : 300) + rpm * 0.12 + throttle * 250);
-      set(voice.g.gain, loud(d) * (v.bus ? 0.32 : 0.22) * (0.6 + throttle * 0.4));
+      set(voice.g.gain, loud(d) * (v.bus ? 0.32 : ev ? 0.07 : 0.22) * (0.6 + throttle * 0.4));
       set(voice.pan.pan, Math.max(-1, Math.min(1, ((rx * r.x + rz * r.y) / d) * 0.8)));
     }
 
@@ -509,10 +519,11 @@ export class Sound {
       const rx = m.position.x - px, rz = m.position.z - pz, d = Math.max(n.d, 0.5);
       const loud = Math.min(1, (12 / d) ** 1.1);
       const kmh = Math.abs(g.speed ?? 0) * 3.6;
-      voice.rpm += (engineTarget(kmh, gas).rpm - voice.rpm) * Math.min(1, dt * 9);
+      const vc = voiceOf(g.model); // голос — по модели его машины
+      voice.rpm += (engineTarget(kmh, gas, vc.ev).rpm - voice.rpm) * Math.min(1, dt * 9);
       const closing = -(((g.vx ?? 0) - car.vel.x) * rx + ((g.vz ?? 0) - car.vel.y) * rz) / d;
       const dop = SOUND_SPEED / (SOUND_SPEED - Math.max(-60, Math.min(60, closing)));
-      const vc = voiceOf(g.model), freq = (voice.rpm / 60) * 2 * dop * vc.pitch; // голос — по модели его машины
+      const freq = (voice.rpm / 60) * 2 * dop * vc.pitch;
       voice.osc.forEach(({ o, mul, gn }, i) => { set(o.frequency, freq * mul, 0.03); gn.gain.value = vc.mix[i]; });
       set(voice.f.frequency, (300 + voice.rpm * (gas ? 0.35 : 0.18)) * vc.tone);
       set(voice.g.gain, loud * (0.1 + gas * 0.06 + (voice.rpm / MAX_RPM) * 0.04) * vc.gain);
@@ -536,7 +547,7 @@ export class Sound {
     // ---- мотор: обороты по передачам, на газу громче и ярче
     const kmh = Math.abs(car.speed) * 3.6;
     const throttle = input.up || input.down ? 1 : 0;
-    const target = engineTarget(kmh, throttle).rpm;
+    const target = engineTarget(kmh, throttle, this.voice.ev).rpm;
     this.rpm += (target - this.rpm) * Math.min(1, dt * 9);
     const vc = this.voice, freq = (this.rpm / 60) * 2 * vc.pitch; // 4 цилиндра: 2 вспышки на оборот
     for (const { o, mul } of this.engineOsc) set(o.frequency, freq * mul, 0.02);

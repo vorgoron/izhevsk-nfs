@@ -4,7 +4,7 @@
 // Размеры — по паспортным, силуэты упрощены.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { carGlows, glowMaterial } from './night.js';
 import { paintMaterial } from './paints.js';
 import { cachedURL } from './cached.js';
@@ -130,6 +130,24 @@ export const MODELS = {
     colors: ['#7c1622', '#e9e9e6', '#1f5e6b', '#2c5aa0', '#8c9196', '#2f6b3a', '#d8641e', '#1e1f22'],
     stats: { kmh: 155, t100: 15, grip: 1.0, eco: 1.0 }, // ВАЗ-2106, 1,6 л
   },
+  largus: {
+    price: 110000,
+    name: 'LADA Largus', years: '2012 — н. в.',
+    about: 'Универсал на пять или семь мест; с 2024 года его собирают в Ижевске.',
+    glb: 'models/largus.glb', // tools/models/largus.mjs; не загрузилась — процедурная по полям ниже
+    credit: 'Модель: «Lada Largus», usolakolya (Sketchfab), CC BY 4.0',
+    // Номеров в модели нет: передний — на бампере над воздухозаборником, задний — в бампере под дверями. z — на 1 см
+    // впереди самой выступающей точки кузова на площади таблички (замер лучами), иначе бампер её перекрывает.
+    meshPlates: [{ x: 0, y: 0.49, z: 2.248, w: 0.52, h: 0.11, n: [0, 0, 1] }, { x: 0, y: 0.36, z: -2.25, w: 0.52, h: 0.11, n: [0, 0, -1] }],
+    width: 1.75, cabinWidth: 1.55,
+    body: [[-2.22, 0.27], [2.2, 0.27], [2.24, 0.5], [2.2, 0.72], [2.0, 0.82], [1.15, 0.97], [-2.15, 1.0], [-2.23, 0.6]],
+    cabin: [[1.15, 0.96], [0.4, 1.52], [-1.9, 1.55], [-2.17, 1.45], [-2.17, 0.99]],
+    windows: [[2, -0.25], [-0.35, -1.15], [-1.25, -2]], frame: '#1a1b1d', doors: [1.15, -0.3, -1.2],
+    wheels: { r: 0.29, front: 1.44, rear: -1.46, track: 0.75, rim: 15 },
+    bumper: 'paint', bumperH: 0.24, grille: '#17181b', grilleBars: '#c8ccd0', trim: '#1a1b1d', lights: 'rect',
+    colors: ['#e9e9e6', '#a7abb0', '#22324f', '#8c1c1c', '#b8a88a', '#1e1f22', '#3b5f4a', '#5a5f66'],
+    stats: { kmh: 155, t100: 15.4, grip: 0.95, eco: 0.95 }, // 1,6 л, 8 клапанов, 87 л. с.
+  },
   vesta: {
     price: 140000,
     name: 'LADA Vesta', years: '2015–2022',
@@ -146,11 +164,33 @@ export const MODELS = {
     cabin: [[1.0, 0.99], [0.0, 1.46], [-0.6, 1.5], [-1.12, 1.44], [-1.72, 1.05]],
     taper: 0.8, corner: 0.13, cornerR: 0.7, // покатая крыша, сильно скруглённые углы
     windows: [[2, -0.3], [-0.42, -1.2], [-1.28, -2]], frame: '#1a1b1d', doors: [1.0, -0.36, -1.4],
-    crease: [[0.8, 0.46], [-1.68, 0.8]], // косая выштамповка на дверях — «икс» сбоку
+    crease: [[0.8, 0.46], [-1.68, 0.8]], // косая выштамповка на дверях — «икс» сбоку (процедурная модель)
+    creaseAngle: 15, // у готовой «икс» — неглубокий перегиб: с общим порогом 30° сглаживание его стирает
     wheels: { r: 0.32, front: 1.38, rear: -1.25, track: 0.76, alloy: true, rim: 15 },
     bumper: 'paint', bumperH: 0.26, grille: '#1b1c1f', trim: '#1a1b1d', lights: 'vesta',
     colors: ['#e9e9e6', '#c63a2a', '#1e1f22', '#8c9196', '#2c5aa0', '#e07a1f', '#5a3a6b', '#3b5f4a'],
     stats: { kmh: 178, t100: 11.8, grip: 1.06, eco: 0.85 }, // ВАЗ-21129, 1,6 л, 106 л. с., механика
+  },
+  elargus: {
+    price: 220000,
+    name: 'LADA e-Largus', years: '2024 — н. в.',
+    about: 'Электрический Ларгус ижевской сборки: ни выхлопа, ни рёва мотора — только гул электромотора.',
+    // electric — без выхлопной трубы и дыма, звук — электромотор (audio.js), заряд — на тех же АЗС, что и бензин.
+    electric: true,
+    // Готовая модель (tools/models/largus.mjs: рестайлинг 2021 г. из Cross, обвес — в цвет, «иксы» — синие);
+    // не загрузилась — процедурная по полям ниже.
+    glb: 'models/elargus.glb',
+    credit: 'Модель: «Lada Largus Cross Rest», usolakolya (Sketchfab), CC BY 4.0',
+    // Номеров в модели нет: передний — на чёрной нижней части бампера, задний — в бампере под дверями (z — как у Ларгуса).
+    meshPlates: [{ x: 0, y: 0.56, z: 2.284, w: 0.52, h: 0.11, n: [0, 0, 1] }, { x: 0, y: 0.4, z: -2.272, w: 0.52, h: 0.11, n: [0, 0, -1] }],
+    width: 1.75, cabinWidth: 1.55,
+    body: [[-2.24, 0.29], [2.24, 0.29], [2.28, 0.5], [2.24, 0.74], [2.0, 0.84], [1.15, 0.98], [-2.15, 1.0], [-2.25, 0.6]],
+    cabin: [[1.15, 0.97], [0.4, 1.53], [-1.9, 1.56], [-2.17, 1.46], [-2.17, 1.0]],
+    windows: [[2, -0.25], [-0.35, -1.15], [-1.25, -2]], frame: '#1a1b1d', doors: [1.15, -0.3, -1.2],
+    wheels: { r: 0.34, front: 1.45, rear: -1.45, track: 0.72, alloy: true, rim: 15 },
+    bumper: 'paint', bumperH: 0.24, grille: '#17181b', trim: '#1a1b1d', lights: 'rect',
+    colors: ['#f0f0ec', '#2c5aa0', '#a7abb0', '#5a5f66', '#1e1f22', '#3d4a5c', '#8c1c1c', '#3b5f4a'],
+    stats: { kmh: 145, t100: 9.9, grip: 1.0, eco: 1.25 }, // 120 кВт пиковой; 145 км/ч — ограничитель, разгон «меньше 10 с»
   },
 };
 export const DEFAULT_MODEL = 'm412';
@@ -356,8 +396,13 @@ export const wheelArches = (r, zs) => zs.map((z) => ({ z, y: r, R: r + ARCH_GAP 
 // lights — фары/фонари (рисуются без освещения). wheels — для вращения у машины игрока.
 // ---------------------------------------------------------------- готовые модели
 
-// Грузит модели с glb до постройки машин: части paint/detail/lights/wheel (вершинные цвета, плоские
-// нормали), размеры колёс и длина — из extras сцены. Ошибка — модель остаётся процедурной.
+// Грузит модели с glb до постройки машин: части paint/detail/lights/wheel (вершинные цвета), размеры колёс и длина —
+// из extras сцены. Ошибка — модель остаётся процедурной. Нормали сглажены между гранями, кроме рёбер круче CREASE:
+// модели ужаты в 10–20 раз, и с плоскими нормалями каждый крупный треугольник на изгибе кузова виден отдельной
+// гранью — кузов как мятая бумага. Неглубокие выштамповки разглаживаются вместе с изгибами — модели с ними задают
+// свой порог (creaseAngle в MODELS, градусы).
+const CREASE = 30;
+
 export async function loadVehicleMeshes() {
   const loader = new GLTFLoader();
   await Promise.all(Object.values(MODELS).filter((m) => m.glb).map(async (spec) => {
@@ -366,8 +411,7 @@ export async function loadVehicleMeshes() {
       const mesh = {}, opts = {}; // opts: слот → вариант → часть → геометрия
       gltf.scene.traverse((o) => {
         if (!o.isMesh) return;
-        const g = o.geometry.toNonIndexed();
-        g.computeVertexNormals();
+        const g = toCreasedNormals(o.geometry, ((spec.creaseAngle ?? CREASE) * Math.PI) / 180);
         const [o_, slot, variant, part] = o.name.split('-');
         if (o_ === 'o' && part) ((opts[slot] ||= {})[variant] ||= {})[part] = g;
         else mesh[o.name] = g;
@@ -381,7 +425,8 @@ export async function loadVehicleMeshes() {
   }));
 }
 
-// Зеркало по x (колесо левого борта): с переворотом обхода треугольников, иначе грани смотрят внутрь.
+// Зеркало по x (колесо левого борта): с переворотом обхода треугольников, иначе грани смотрят внутрь. Нормали отражает
+// scale — заново не считаем, иначе сглаженные стали бы плоскими.
 function mirrorX(geo) {
   const g = geo.clone().scale(-1, 1, 1);
   for (const a of Object.values(g.attributes)) {
@@ -393,7 +438,6 @@ function mirrorX(geo) {
       }
     }
   }
-  g.computeVertexNormals();
   return g;
 }
 
@@ -650,6 +694,7 @@ export function buildPlayerModel(key, color, options) {
   g.userData.paint = paintMat;
   g.userData.length = parts.length;
   g.userData.width = spec.width;
+  g.userData.electric = !!spec.electric; // без выхлопа: ни трубы, ни дыма (setGear, ExhaustFX)
   g.userData.plateHost = meshes[1];
   g.userData.plateSpots = plateSpots(spec, parts.detail);
   g.userData.mounts = gearMounts(spec, g, meshes.slice(0, 2), parts.length, RIDE[style.ride] ?? 0);
@@ -729,7 +774,7 @@ export function setGear(model, { engine = 0, tires = 0, nitro = 0, hopper = 0 } 
     add(ud.body, new THREE.CircleGeometry(r * 0.7, 14).rotateY(Math.PI).translate(x, y, z - out - 0.001), DARK);
   };
   const { side, down, exhaust, nitro: nz } = ud.mounts;
-  if (engine) {
+  if (engine && !ud.electric) {
     const tips = engine === 3 ? [-0.042, 0.042] : [0];
     for (const dx of tips) pipe({ ...exhaust, x: exhaust.x + dx }, engine === 1 ? 0.028 : 0.034, CHROME, 0.005);
   }

@@ -16,9 +16,10 @@ export class Gauges {
 
   update(dt, car, input) {
     const kmh = Math.abs(car.speed) * 3.6;
-    const { rpm, gear } = engineTarget(kmh, car.fuel > 0 && (input.up || input.down) ? 1 : 0);
+    const ev = !!car.model?.userData.electric; // электромобиль: передача одна — «D»
+    const { rpm, gear } = engineTarget(kmh, car.fuel > 0 && (input.up || input.down) ? 1 : 0, ev);
     this.rpm += (rpm - this.rpm) * Math.min(1, dt * 9);
-    this.gear = car.speed < -0.5 ? 'R' : kmh < 2 && !input.up ? 'N' : gear;
+    this.gear = car.speed < -0.5 ? 'R' : kmh < 2 && !input.up ? 'N' : ev ? 'D' : gear;
     this.#draw(car);
   }
 

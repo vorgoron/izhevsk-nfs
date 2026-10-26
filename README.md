@@ -173,9 +173,10 @@ python3 tools/patch_city.py cranes   # только краны
 - `public/src/landmarks.js` — достопримечательности: процедурные модели по контурам
   из OSM (список и OSM id — `LANDMARKS` в `tools/fetch_city.py`).
 - `public/src/vehicles.js` — машины ижевского автопрома: «Ода», Москвич-412, «Комби», «Каблучок»,
-  пикап ИЖ-2715, LADA Vesta (фургон «Ода» отключён — нет хорошей модели, `ODAVAN`). Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
-  «Ода», Москвич-412, «Комби», пикап, «Каблучок» и Веста — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
-  рисуется процедурная). Собираются `tools/models` (`oda.mjs`, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`, `kombi.mjs` — Москвич с новой крышей и пятой дверью; общее — `lib.mjs`).
+  пикап ИЖ-2715, LADA Largus, LADA Vesta, электрический LADA e-Largus (фургон «Ода» отключён — нет хорошей модели, `ODAVAN`). Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
+  У e-Largus (`electric`) нет выхлопной трубы и дыма, звук — электромотор без передач (`ev` в `audio.js`), на тахометре — «D».
+  «Ода», Москвич-412, «Комби», пикап, «Каблучок», Веста и оба Ларгуса — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
+  рисуется процедурная). Собираются `tools/models` (`oda.mjs`, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`, `kombi.mjs` — Москвич с новой крышей и пятой дверью, `largus.mjs` — оба Ларгуса; общее — `lib.mjs`).
   У «Оды» в гараже выбираются детали (бамперы, фары, спойлер, обвес, шашка такси) — `options` в `MODELS.oda`, варианты лежат в
   `oda.glb` отдельными мешами `o-слот-вариант-часть`; другим игрокам выбор уходит числом в строке состояния (`optionsCode`).
 - Место машины помнится (`localStorage.pos`, `savePos` в `main.js`: раз в 5 с и при уходе со страницы): в общем городе игра
@@ -336,6 +337,11 @@ Firebase Hosting (https://izh-car.web.app) — вручную, `firebase deploy 
   (`node pickup.mjs путь/к/IZH-2715.gltf`). Источник и лицензия: _уточняются_.
 - Модель «Каблучка» ИЖ-2715 (`public/models/kabluk.glb`) — перед и кабина от модели пикапа, будка — от SketchUp-модели
   «АЗЛК+Пирожок» (`node kabluk.mjs путь/к/IZH-2715.gltf путь/к/модели.dae`). Источник и лицензия: _уточняются_.
+- Модель LADA Largus (`public/models/largus.glb`) упрощена из «[Lada Largus](https://sketchfab.com/3d-models/lada-largus-ef5fd62d01ca49f1bd70bb596456c144)»,
+  модель LADA e-Largus (`public/models/elargus.glb`) — из «[Lada Largus Cross Rest](https://sketchfab.com/3d-models/lada-largus-cross-rest-fe54b2a96397452fb26af48db4696960)»
+  (обвес Cross — в цвет кузова, решётка глухая, «иксы» на бампере синие); обе — автора [usolakolya](https://sketchfab.com/usolakolya),
+  лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
+  Пересборка: скачать glTF со Sketchfab в `3d-models/lada_largus/` и `3d-models/lada_largus_cross_rest/`, затем `cd tools/models && npm install && node largus.mjs`.
 - Модель ИЖ-2126 «Ода» (`public/models/oda.glb`) упрощена из «[izh2126_oda_rework_dcs](https://sketchfab.com/3d-models/izh2126-oda-rework-dcs-30a9c029e82f4b62bf97d136c58a7d9c)»
   автора [87-Motors](https://sketchfab.com/87-Motors), лицензия [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
   Пересборка: `cd tools/models && npm install && node oda.mjs путь/к/scene.gltf`.
