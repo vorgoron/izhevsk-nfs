@@ -38,6 +38,7 @@ import { Menu } from './menu.js';
 import { createPerf } from './perf.js';
 import { createDebug } from './debug.js';
 import { Net, CITY } from './net.js';
+import { cachedURL } from './cached.js';
 import { track } from './analytics.js';
 import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
 import { Cameras } from './cameras.js';
@@ -125,7 +126,7 @@ async function main() {
   progress(0, 'Загружаю карту…');
   const vehiclesReady = loadVehicleMeshes(); // параллельно с картой
   const MB = 1024 * 1024;
-  const city = await fetchJSON('city.json', (got, total) => {
+  const city = await fetchJSON(await cachedURL('city.json'), (got, total) => {
     // Размер неизвестен — полоса ползёт к концу этапа асимптотически.
     const f = total ? got / total : 1 - Math.exp(-got / (6 * MB));
     const mb = total ? `${(got / MB).toFixed(1)} / ${(total / MB).toFixed(1)} МБ` : `${(got / MB).toFixed(1)} МБ`;

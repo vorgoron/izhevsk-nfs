@@ -7,6 +7,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { carGlows, glowMaterial } from './night.js';
 import { paintMaterial } from './paints.js';
+import { cachedURL } from './cached.js';
 
 // ИЖ-27175 (фургон «Ода») отключён: хорошей 3D-модели нет, процедурная не годится.
 // Вернуть — добавить `odavan: ODAVAN` в MODELS (по году — после «Оды»), в MIX (traffic.js) и KINDS (queues.js).
@@ -361,7 +362,7 @@ export async function loadVehicleMeshes() {
   const loader = new GLTFLoader();
   await Promise.all(Object.values(MODELS).filter((m) => m.glb).map(async (spec) => {
     try {
-      const gltf = await loader.loadAsync(spec.glb);
+      const gltf = await loader.loadAsync(await cachedURL(spec.glb));
       const mesh = {}, opts = {}; // opts: слот → вариант → часть → геометрия
       gltf.scene.traverse((o) => {
         if (!o.isMesh) return;
