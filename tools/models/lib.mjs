@@ -149,6 +149,39 @@ export function simplify(list, keep, { lockBorder = false } = {}) {
   return { pos, idx: res };
 }
 
+// Тёмная подложка под кузов: грубая копия (доля keep), утопленная внутрь на inset, м. Кузов готовых моделей собран из
+// отдельных панелей с зазорами, а салон выброшен — сквозь зазоры видно насквозь. С подложкой в зазоре тёмный шов, как
+// у настоящей машины; где кузов цел, её не видно. «Внутрь» — против нормалей вершин (обход граней — наружу; с гранями
+// в обе стороны или внутрь пробовали — зазоров не меньше, треугольников вдвое больше). Берутся
+// только грани, смотрящие от оси машины (outward(центр, нормаль)): у капота и крышки багажника есть внутренняя обшивка,
+// и «внутрь» от неё — сквозь капот наружу.
+export function innerShell(list, keep, inset, outward) {
+  const facing = list.map((p) => {
+    const idx = [];
+    for (let t = 0; t < p.idx.length; t += 3) {
+      const [a, b, c] = [0, 1, 2].map((j) => [0, 1, 2].map((k) => p.pos[p.idx[t + j] * 3 + k]));
+      const e1 = b.map((v, k) => v - a[k]), e2 = c.map((v, k) => v - a[k]);
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      if (outward(a.map((v, k) => (v + b[k] + c[k]) / 3), n)) idx.push(p.idx[t], p.idx[t + 1], p.idx[t + 2]);
+    }
+    return { pos: p.pos, idx: Uint32Array.from(idx) };
+  });
+  const { pos, idx } = simplify(facing, keep);
+  const nrm = new Float32Array(pos.length);
+  for (let t = 0; t < idx.length; t += 3) {
+    const [a, b, c] = [idx[t], idx[t + 1], idx[t + 2]].map((i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]]);
+    const e1 = b.map((v, k) => v - a[k]), e2 = c.map((v, k) => v - a[k]);
+    const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]; // с площадью
+    for (const i of [idx[t], idx[t + 1], idx[t + 2]]) for (let k = 0; k < 3; k++) nrm[i * 3 + k] += n[k];
+  }
+  const out = Float32Array.from(pos);
+  for (let i = 0; i < pos.length; i += 3) {
+    const l = Math.hypot(nrm[i], nrm[i + 1], nrm[i + 2]) || 1;
+    for (let k = 0; k < 3; k++) out[i + k] -= (nrm[i + k] / l) * inset;
+  }
+  return { pos: out, idx };
+}
+
 // Вершины без общих индексов между группами: группа = свой цвет.
 function pack(groups) {
   const pos = [], col = [], idx = [];
