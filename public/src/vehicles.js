@@ -592,7 +592,7 @@ function rimWheel(spec, seg, style, size, left) {
   const w = 0.22 * (1 + 0.04 * up), rr = Math.min(R - 0.035, size * 0.0127 * (R / 0.29));
   const disc = (rad, width, n = seg * 2) => new THREE.CylinderGeometry(rad, rad, width, n).rotateZ(Math.PI / 2);
   const [barrel, face] = RIM_COLORS[style], DARK = '#2a2c30';
-  const parts = [[disc(R, w), '#151618'], [disc(rr, w + 0.004), barrel]];
+  const parts = [[disc(R, w), TIRE], [disc(rr, w + 0.004), barrel]];
   if (style === 'steel') {
     parts.push([disc(rr * 0.94, w + 0.006), face], [disc(rr * 0.32, w + 0.016, 16), '#c4c8cc']);
     for (let i = 0; i < 6; i++) parts.push([disc(rr * 0.11, w + 0.01, 8).translate(0, Math.cos(i * Math.PI / 3) * rr * 0.62, Math.sin(i * Math.PI / 3) * rr * 0.62), DARK]);
@@ -607,7 +607,7 @@ function rimWheel(spec, seg, style, size, left) {
     const spokeAt = (len, thick, at, angle, tilt = 0) => new THREE.BoxGeometry(SPOKE, len, thick).rotateX(tilt)
       .translate(o * (w / 2 - SPOKE / 2 + 0.004), at, 0).rotateX(angle);
     parts.length = 0;
-    parts.push([tube(R, w), '#151618'], [ring(rr, R, w / 2, 1), '#151618'], [ring(rr, R, -w / 2, -1), '#151618'],
+    parts.push([tube(R, w), TIRE], [ring(rr, R, w / 2, 1), TIRE], [ring(rr, R, -w / 2, -1), TIRE],
       [mirrorX(tube(rr * 0.96, w)), barrel], [ring(rr * 0.96, rr, -o * w / 2, -o), barrel],
       [ring(rr * 0.9, rr, o * (w / 2 + 0.002), o), face],
       [disc(rr * 0.72, 0.022).translate(o * (w / 2 - 0.09), 0, 0), '#5d6066'],
@@ -635,21 +635,28 @@ function rimWheel(spec, seg, style, size, left) {
   return g;
 }
 
+// Граней по окружности у колёс, которые рисует игра: у машины игрока (видна вблизи) и у трафика с парковками (их
+// много — вдвое меньше). При 14 и 12 колёса были заметными многоугольниками.
+const WHEEL_SEG = 32, WHEEL_SEG_STATIC = 24;
+// Цвет шины у колёс игры — как у шин в glb: там #151618 записан как есть (линейный), а здесь цвет переводится из sRGB,
+// и тот же #151618 выходил почти чёрным — у Весты шина была чернее, чем у Ларгуса.
+const TIRE = '#515356';
+
 // Колесо машин, у которых колёса не крутятся (трафик, очереди на заправках): литой диск — сплошной, одним
 // цветом; неподвижные спицы на ходу выглядят плохо. Штампованные и колпаки — как есть.
 function staticWheel(spec, left = false) {
-  return spec.wheels.alloy ? merge(staticWheelParts(spec.wheels)) : wheelGeometry(spec, 12, left);
+  return spec.wheels.alloy ? merge(staticWheelParts(spec.wheels)) : wheelGeometry(spec, WHEEL_SEG_STATIC, left);
 }
 function staticWheelParts({ r, alloy }) {
-  if (!alloy) return wheelParts({ r, alloy }, 12);
-  const disc = (k, w) => new THREE.CylinderGeometry(r * k, r * k, w, 12).rotateZ(Math.PI / 2);
-  return [[disc(1, 0.22), '#151618'], [disc(0.74, 0.226), '#b4b8bd']];
+  if (!alloy) return wheelParts({ r, alloy }, WHEEL_SEG_STATIC);
+  const disc = (k, w) => new THREE.CylinderGeometry(r * k, r * k, w, WHEEL_SEG_STATIC).rotateZ(Math.PI / 2);
+  return [[disc(1, 0.22), TIRE], [disc(0.74, 0.226), '#b4b8bd']];
 }
 
 // Колесо вокруг своего центра: шина и штампованный диск с колпаком; alloy — литой диск со спицами.
 function wheelParts({ r, alloy }, seg) {
-  const disc = (k, w, n = 8) => new THREE.CylinderGeometry(r * k, r * k, w, n).rotateZ(Math.PI / 2);
-  const parts = [[disc(1, 0.22, seg), '#151618']];
+  const disc = (k, w, n = 16) => new THREE.CylinderGeometry(r * k, r * k, w, n).rotateZ(Math.PI / 2);
+  const parts = [[disc(1, 0.22, seg), TIRE]];
   if (!alloy) return [...parts, [disc(0.55, 0.23), '#9ea3a8']];
   parts.push([disc(0.8, 0.225, seg), '#c4c8cc'], [disc(0.68, 0.23, seg), '#2a2c30'], [disc(0.18, 0.24), '#c4c8cc']);
   for (let i = 0; i < 5; i++) parts.push([new THREE.BoxGeometry(0.235, 0.05, r * 1.4).rotateX((i * Math.PI) / 5), '#c4c8cc']);
@@ -678,7 +685,7 @@ export function buildPlayerModel(key, color, options) {
   g.add(body);
   g.userData.body = body;
   g.userData.wheels = [];
-  const wheelGeo = [wheelGeometry(spec, 14, false, options), wheelGeometry(spec, 14, true, options)];
+  const wheelGeo = [wheelGeometry(spec, WHEEL_SEG, false, options), wheelGeometry(spec, WHEEL_SEG, true, options)];
   for (const w of parts.wheels) {
     const pivot = new THREE.Group();
     pivot.position.set(w.x, w.y, w.z);

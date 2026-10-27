@@ -37,9 +37,9 @@ const ROLES = {
   Kover: null, // ковёр салона — не виден
   Material_1529: null,
 };
-// Колесо: только шина. Диск исходника — сотни мелких несвязанных деталей (болты, отверстия), упрощению
-// не поддаётся (28 тыс. → 1,9 тыс.); диск игра рисует сама (wheelParts в vehicles.js).
-const WHEEL = { plastic: ['#151618', 0.04] };
+// Колеса в модели нет — игра рисует его сама (wheelParts в vehicles.js), из исходника — только размеры. Диск исходника —
+// сотни мелких несвязанных деталей (болты, отверстия), упрощению не поддаётся (28 тыс. → 1,9 тыс.); шина — с рисунком
+// протектора, после упрощения он рваный (зубцы по боковине), а без упрощения — 5,9 тыс. треугольников.
 // Зоны кузова плотнее остального (keep — доля треугольников): борта с «иксом» (косая выштамповка на дверях и крыльях) —
 // иначе после упрощения выштамповка — один пологий перегиб, и сглаженное освещение игры его стирает; перед (капот,
 // бампер, обрамление фар), зад (крышка багажника, бампер) и крыша — порог сглаживания Весты низкий (creaseAngle
@@ -144,20 +144,11 @@ for (const [mat, role] of Object.entries(ROLES)) {
   parts.detail.push({ pos: Float32Array.from(v.flat()), idx: Uint32Array.from(idx), color: hex(SHELL.color) });
 }
 
-// Колесо: переднее с +x; ставим центр в 0.
+// Размеры колёс — по колёсам исходника; переднее правое (+x) — для радиуса.
 const wheelNames = [...new Set(prims.filter((p) => p.wheel).map((p) => p.wheel))];
 const wheelBoxes = wheelNames.map((n) => ({ n, b: bbox(prims.filter((p) => p.wheel === n)) }));
 const ref = wheelBoxes.find(({ b }) => b.mid[0] > 0 && b.mid[2] > 0);
-const c = ref.b.mid;
-for (const [mat, [color, keep]] of Object.entries(WHEEL)) {
-  const list = prims.filter((p) => p.wheel === ref.n && p.mat === mat).map((p) => {
-    const pos = Float32Array.from(p.pos, (v, i) => v - c[i % 3]);
-    return { ...p, pos };
-  });
-  const g = simplify(list, keep);
-  parts.wheel.push({ ...g, color: hex(color) });
-  stat['wheel ' + mat] = `${list.reduce((s, p) => s + p.idx.length / 3, 0)} → ${g.idx.length / 3}`;
-}
+delete parts.wheel;
 const front = wheelBoxes.filter(({ b }) => b.mid[2] > 0), rear = wheelBoxes.filter(({ b }) => b.mid[2] < 0);
 const avg = (l, k) => l.reduce((s, { b }) => s + b.mid[k], 0) / l.length;
 const wheels = {

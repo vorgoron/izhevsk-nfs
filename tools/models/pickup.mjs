@@ -35,7 +35,7 @@ const ROLES = {
 const DROP_NODES = new Set(['transmission']);
 const DROP = { body: new Set(['car_black_plastic', 'car_light_2', 'car_white']) };
 // Колесо: шина, обод, колпак.
-const WHEEL = { car_rubber: ['#151618', 0.25], car_disk_metall: ['#aeb2b6', 0.1], car_gray: ['#4a4d52', 0.3] };
+const WHEEL = { car_rubber: ['#151618', 1], car_disk_metall: ['#aeb2b6', 0.4], car_gray: ['#4a4d52', 1] };
 const isWheel = (p) => p.node === 'wheels';
 
 // Исходник в координатах игры: { prims, wheels (центры четырёх колёс), R, ref (переднее правое), length }.
