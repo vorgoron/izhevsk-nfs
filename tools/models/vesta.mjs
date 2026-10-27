@@ -1,22 +1,27 @@
 // Сборка public/models/vesta.glb из модели «Lada Vesta» (tiunov.se, Sketchfab, CC-BY-4.0).
-// Исходник (~200 тыс. треугольников) упрощается до нескольких тысяч и раскладывается на части
+// Исходник (~200 тыс. треугольников) сначала чистится в Blender от невидимых снаружи граней (салон, изнанка панелей —
+// tools/models/blender/clean.py), потом упрощается до нескольких тысяч и раскладывается на части
 // игры: paint (кузов — под цвет), detail (стекло, пластик, хром), lights (фары, фонари), wheel
 // (одно колесо вокруг своего центра, ось — x). Координаты — как у процедурных машин: +z вперёд,
 // y вверх от земли, x — поперёк. Размеры колёс пишутся в extras сцены.
 //
-//   cd tools/models && npm install && node vesta.mjs ~/Downloads/lada_vesta/scene.gltf
+//   Blender -b --factory-startup --python tools/models/blender/clean.py -- 3d-models/lada_vesta/scene.gltf \
+//     3d-models/lada_vesta_clean/scene.gltf --drop '/(Kover|Material_1529)$|^(?!steklo_|door).*/steklo$'
+//   cd tools/models && npm install && node vesta.mjs [исходник] [куда]
+//
+// --drop — то, что сборщик выбрасывает (ковёр, стёкла фар; см. ROLES и glass): оно не загораживает остальное.
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bbox, hex, innerShell, pick, readGltf, simplify, writeGlb } from './lib.mjs';
 
-const src = resolve(process.argv[2] || join(process.env.HOME, 'Downloads/lada_vesta/scene.gltf'));
-const out = resolve(dirname(fileURLToPath(import.meta.url)), '../../public/models/vesta.glb');
+const src = resolve(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), '../../3d-models/lada_vesta_clean/scene.gltf'));
+const out = resolve(process.argv[3] || join(dirname(fileURLToPath(import.meta.url)), '../../public/models/vesta.glb'));
 
 // Материал исходника → [часть, цвет, доля треугольников, которую оставить]. null — выбросить.
 const ROLES = {
   kuzov: ['paint', '#ffffff', 0.2],
   stekloton: ['detail', '#26333f', 1], // не упрощать: стекло стягивалось от стоек, в щель было видно насквозь
-  plastic: ['detail', '#1b1c1f', 0.08],
+  plastic: ['detail', '#1b1c1f', 0.3], // после чистки — только видимый (решётка, бамперы, дворники): при 0,08 дворники — чёрточки
   hrom: ['detail', '#c8ccd0', 0.3], // решётка, «скобки» вокруг противотуманок
   chern: ['detail', '#111214', 1],
   SvetPlas: ['detail', '#2e3136', 0.3],
