@@ -106,5 +106,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const body = bbox(model.prims.filter((p) => p.mat === 'car_kuzov'));
   console.log('колёса', wheels, '| длина', model.length.toFixed(2), 'ширина кузова', body.size[0].toFixed(2), 'высота', body.hi[1].toFixed(2));
   // hub: диск — в самой модели колеса (игра не дорисовывает свой).
-  writeGlb(`${root}/public/models/pickup.glb`, parts, { copyright: 'ИЖ-2715 (пикап) — модель Blender (источник уточняется)', extras: { wheels, length: +model.length.toFixed(3), width: +body.size[0].toFixed(3), hub: true } });
+  writeGlb(`${root}/public/models/pickup.glb`, parts, { cull: true, copyright: 'ИЖ-2715 (пикап) — модель Blender (источник уточняется)', extras: { wheels, length: +model.length.toFixed(3), width: +body.size[0].toFixed(3), hub: true } });
 }

@@ -115,5 +115,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const body = bbox(model.prims.filter((p) => p.mat === 'Carpaint'));
   console.log('колёса', wheels, '| длина', model.length.toFixed(2), 'ширина кузова', body.size[0].toFixed(2), 'высота', body.hi[1].toFixed(2));
   // hub: колпак — в самой модели колеса (игра не дорисовывает свой диск).
-  writeGlb(`${root}/public/models/moskvich.glb`, parts, { copyright: MOSKVICH_CREDIT, extras: { wheels, length: +model.length.toFixed(3), width: +body.size[0].toFixed(3), hub: true } });
+  writeGlb(`${root}/public/models/moskvich.glb`, parts, { cull: true, copyright: MOSKVICH_CREDIT, extras: { wheels, length: +model.length.toFixed(3), width: +body.size[0].toFixed(3), hub: true } });
 }

@@ -160,4 +160,4 @@ console.table(stat);
 console.log('колёса', wheels, '| длина', dims.size[2].toFixed(2), 'ширина', dims.size[0].toFixed(2), 'высота', dims.hi[1].toFixed(2));
 
 const credit = 'This work is based on "Lada Vesta" (https://sketchfab.com/3d-models/lada-vesta-3c333139feb744ae9d36767c0e9cabfd) by tiunov.se (https://sketchfab.com/tiunov.se) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)';
-writeGlb(out, parts, { copyright: credit, extras: { wheels, length: +dims.size[2].toFixed(3), width: +dims.size[0].toFixed(3) } });
+writeGlb(out, parts, { cull: true, copyright: credit, extras: { wheels, length: +dims.size[2].toFixed(3), width: +dims.size[0].toFixed(3) } });

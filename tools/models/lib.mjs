@@ -209,8 +209,125 @@ function pack(groups) {
 // Ошибка — не больше 8 мм: при 4 см проваливались тонкие панели (капот Ларгуса — два слоя, сваренные по краю, верхний
 // ложился на нижний изнанкой наружу; дверь «Оды»).
 const LOD_ERROR = 0.008;
-export function writeGlb(out, parts, { copyright, extras, lod = {} }) {
+// Убрать грани, которых не видно снаружи: из центра грани и точек у её углов пускаем лучи в полусферу перед ней — если ни
+// один не уходит наружу, грань не нужна. Как в игре, машина односторонняя: грань, повёрнутая к лучу изнанкой, его не
+// задерживает. Колёса (wheel — одно колесо в своих координатах) и детали на выбор в гараже (o-… — в машине стоит один
+// вариант из нескольких, все сразу загораживали бы лишнее) не загораживают и не чистятся. Это после упрощения и
+// всех правок сборщика — чистка исходника в Blender (blender/clean.py) не видит, что станет с кузовом потом
+// (у Ларгуса оставалось 22 % невидимых граней: дверные проёмы, моторный отсек, изнанка капота).
+export function cullHidden(parts, rays = 256) {
+  const names = Object.keys(parts).filter((n) => n !== 'wheel' && !n.startsWith('o-'));
+  const tris = [];
+  for (const n of names) for (const g of parts[n]) for (let t = 0; t < g.idx.length; t += 3)
+    tris.push([0, 1, 2].map((j) => [g.pos[g.idx[t + j] * 3], g.pos[g.idx[t + j] * 3 + 1], g.pos[g.idx[t + j] * 3 + 2]]));
+  const bvh = buildBvh(tris);
+  const ga = Math.PI * (3 - Math.sqrt(5)), dirs = [];
+  for (let i = 0; i < rays; i++) {
+    const y = 1 - (2 * (i + 0.5)) / rays, r = Math.sqrt(1 - y * y);
+    dirs.push([Math.cos(ga * i) * r, y, Math.sin(ga * i) * r]);
+  }
+  // Первый шаг — 1 мм: почти совпадающие слои (у «Оды» из STL панель под задним стеклом — два слоя) иначе загораживают
+  // друг друга, и вырезались оба.
+  const escapes = (o, d) => {
+    for (let k = 0; k < 100; k++) {
+      const hit = bvh.cast(o.map((v, i) => v + d[i] * (k ? 2e-4 : 1e-3)), d);
+      if (!hit) return true;
+      if (hit.facing > 0) return false; // лицом к смотрящему снаружи — загораживает
+      o = hit.p; // изнанкой: в игре не рисуется, луч идёт дальше
+    }
+    return false;
+  };
+  let removed = 0, k = 0;
+  for (const n of names) {
+    parts[n] = parts[n].map((g) => {
+      const idx = [];
+      for (let t = 0; t < g.idx.length; t += 3, k++) {
+        const [a, b, c] = tris[k], n3 = triNormal(a, b, c), l = Math.hypot(...n3);
+        if (!l) continue;
+        const nn = n3.map((v) => v / l), mid = [0, 1, 2].map((i) => (a[i] + b[i] + c[i]) / 3);
+        // Точки: центр и сетка по грани с шагом ~4 см (сжатая к центру на 10 %) — у крупной грани закрытыми могут оказаться
+        // центр и углы, а видна середина края (у «Оды» вырезалась так грань отделки под задним стеклом — сквозная щель).
+        const m = Math.min(8, Math.max(1, Math.ceil(Math.max(...[[a, b], [b, c], [c, a]].map(([p, q]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]))) / 0.04)));
+        const pts = [mid];
+        for (let i = 0; i <= m; i++) for (let j = 0; i + j <= m; j++) {
+          const u = i / m, v = j / m, w = 1 - u - v;
+          pts.push([0, 1, 2].map((q) => mid[q] + (a[q] * u + b[q] * v + c[q] * w - mid[q]) * 0.9));
+        }
+        if (pts.some((p) => dirs.some((d) => d[0] * nn[0] + d[1] * nn[1] + d[2] * nn[2] > 0.05 && escapes(p, d)))) idx.push(g.idx[t], g.idx[t + 1], g.idx[t + 2]);
+        else removed++;
+      }
+      return { ...g, idx: Uint32Array.from(idx) };
+    });
+  }
+  console.log('невидимых граней убрано:', removed, 'из', tris.length);
+  return parts;
+}
+const triNormal = (a, b, c) => {
+  const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  return [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+};
+// BVH по треугольникам: cast(o, d) — ближайшее попадание { p, facing: знак нормали по лучу }.
+function buildBvh(tris) {
+  const box = (ids) => {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const i of ids) for (const v of tris[i]) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], v[k]); hi[k] = Math.max(hi[k], v[k]); }
+    return { lo, hi };
+  };
+  const cen = tris.map(([a, b, c]) => [0, 1, 2].map((k) => (a[k] + b[k] + c[k]) / 3));
+  const build = (ids) => {
+    const node = box(ids);
+    if (ids.length <= 4) { node.ids = ids; return node; }
+    const ext = [0, 1, 2].map((k) => node.hi[k] - node.lo[k]), ax = ext.indexOf(Math.max(...ext));
+    ids.sort((i, j) => cen[i][ax] - cen[j][ax]);
+    const h = ids.length >> 1;
+    node.l = build(ids.slice(0, h)); node.r = build(ids.slice(h));
+    return node;
+  };
+  const root = build(tris.map((_, i) => i));
+  const hitBox = (n, o, inv, tmax) => {
+    let t0 = 0, t1 = tmax;
+    for (let k = 0; k < 3; k++) {
+      let a = (n.lo[k] - o[k]) * inv[k], b = (n.hi[k] - o[k]) * inv[k];
+      if (a > b) [a, b] = [b, a];
+      t0 = Math.max(t0, a); t1 = Math.min(t1, b);
+      if (t0 > t1) return false;
+    }
+    return true;
+  };
+  const hitTri = ([a, b, c], o, d) => { // Мёллер — Трумбор, без отсечения изнанки
+    const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const h = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+    const det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2];
+    if (Math.abs(det) < 1e-14) return -1;
+    const s = [o[0] - a[0], o[1] - a[1], o[2] - a[2]], u = (s[0] * h[0] + s[1] * h[1] + s[2] * h[2]) / det;
+    if (u < 0 || u > 1) return -1;
+    const q = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
+    const v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) / det;
+    if (v < 0 || u + v > 1) return -1;
+    return (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det;
+  };
+  return {
+    cast(o, d) {
+      const inv = d.map((v) => 1 / v);
+      let best = 20, bi = -1;
+      const stack = [root];
+      while (stack.length) {
+        const n = stack.pop();
+        if (!hitBox(n, o, inv, best)) continue;
+        if (n.ids) for (const i of n.ids) { const t = hitTri(tris[i], o, d); if (t > 0 && t < best) { best = t; bi = i; } }
+        else stack.push(n.l, n.r);
+      }
+      if (bi < 0) return null;
+      const nrm = triNormal(...tris[bi]);
+      return { p: o.map((v, k) => v + d[k] * best), facing: nrm[0] * d[0] + nrm[1] * d[1] + nrm[2] * d[2] };
+    },
+  };
+}
+
+// cull — убрать невидимые снаружи грани (cullHidden) до облегчённого набора.
+export function writeGlb(out, parts, { copyright, extras, lod = {}, cull = false }) {
   if (typeof lod === 'number') lod = { '': lod };
+  if (cull) parts = cullHidden({ ...parts });
   parts = { ...parts, ...Object.fromEntries(Object.entries(parts).map(([name, groups]) =>
     ['lo-' + name, groups.map((g) => g.idx.length <= 12 ? g : { ...simplify([g], lod[name] ?? lod[''] ?? 0.5, { lockBorder: true, absError: LOD_ERROR }), color: g.color })])) };
   const chunks = [], views = [], accessors = [], meshes = [], nodes = [];

@@ -201,5 +201,5 @@ const width = bbox(body('Carpaint')).size[0];
 console.log('колёса', wheels, '| длина', model.length.toFixed(2), 'ширина', width.toFixed(2));
 const credit = `${MOSKVICH_CREDIT}; rear body after "Izh-2715 Kombi" (https://sketchfab.com/3d-models/izh-2715-kombi-e2d950ee7b3d43949b9957a7cc49f407) by trolleway (https://sketchfab.com/trolleway), CC-BY-4.0`;
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  writeGlb(`${root}/public/models/kombi.glb`, parts, { copyright: credit, extras: { wheels, length: +model.length.toFixed(3), width: +width.toFixed(3), hub: true } });
+  writeGlb(`${root}/public/models/kombi.glb`, parts, { cull: true, copyright: credit, extras: { wheels, length: +model.length.toFixed(3), width: +width.toFixed(3), hub: true } });
 }

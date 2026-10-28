@@ -11,9 +11,16 @@
 # и не считаем препятствиями — у сборщика они отдельно.
 #
 #   Blender -b --factory-startup --python tools/models/blender/clean.py -- src.gltf out.gltf [--drop 'регэксп']
+#       [--wheels 'регэксп'] [--pick 'x < 0'] [--orient]
 #
 # --drop — регэксп по «узел/материал» (узел — объект Blender, как в исходнике). Вывод — glTF с отдельным .bin,
 # имена узлов и материалов как в исходнике: сборщик читает его так же (readGltf в lib.mjs).
+# --wheels — регэксп по «узел/материал» для колёс, если узлы не названы wheel*.
+# --pick — условие на центр объекта (x, y, z — координаты Blender: x вбок, y назад, z вверх); что не подходит, удаляется
+# (в исходниках Ларгусов рядом стоит вторая машина с открытыми дверями — иначе она загораживает борт).
+# --orient — обход граней каждого объекта по геометрии: площадь граней, смотрящих от продольной оси машины, должна
+# перевешивать. У Ларгусов зеркальные узлы непоследовательны (одним обход по glTF разворачивать, другим нет), и без
+# этого проверка видимости смотрела бы внутрь кузова (как в largus.mjs, где после чистки обход правится так же).
 import argparse, collections, math, re, sys
 import bmesh, bpy
 from mathutils import Vector
@@ -21,24 +28,50 @@ from mathutils.bvhtree import BVHTree
 
 ap = argparse.ArgumentParser()
 ap.add_argument('src'); ap.add_argument('out'); ap.add_argument('--drop', default='$^')
+ap.add_argument('--wheels', default='$^'); ap.add_argument('--pick'); ap.add_argument('--orient', action='store_true')
 args = ap.parse_args(sys.argv[sys.argv.index('--') + 1:])
-drop = re.compile(args.drop)
+drop, wheels = re.compile(args.drop), re.compile(args.wheels)
 
 for c in (bpy.data.objects, bpy.data.meshes, bpy.data.materials):  # с чистого листа: иначе имена получат «.001»
     for x in list(c): c.remove(x)
 bpy.ops.import_scene.gltf(filepath=args.src)
 
+mat = lambda o: o.data.materials[0].name if o.data.materials else ''
+
 def wheel(o):
+    if wheels.search(f'{o.name}/{mat(o)}'): return True
     while o:
         if o.name.startswith('wheel'): return True
         o = o.parent
     return False
 
-mat = lambda o: o.data.materials[0].name if o.data.materials else ''
+if args.pick:
+    for o in [o for o in bpy.data.objects if o.type == 'MESH']:
+        x, y, z = sum((o.matrix_world @ Vector(c) for c in o.bound_box), Vector()) / 8
+        if not eval(args.pick): bpy.data.objects.remove(o)
 meshes = [o for o in bpy.data.objects if o.type == 'MESH' and not wheel(o)]
 for o in meshes:
     assert len(o.data.materials) <= 1, f'{o.name}: несколько материалов — --drop по материалу неточен'
 kept = [o for o in meshes if not drop.search(f'{o.name}/{mat(o)}')]
+
+def inward(o):  # обход объекта смотрит внутрь машины (с учётом зеркальности узла)
+    mw, out = o.matrix_world, 0.0
+    for p in o.data.polygons:
+        c = mw @ p.center; n = (mw.to_3x3().inverted().transposed() @ p.normal) * p.area
+        a = Vector((0, max(ax[0], min(ax[1], c.y)), axz))  # ближайшая точка продольной оси
+        out += n.dot(c - a)
+    return out < 0
+
+if args.orient:  # ось: вдоль y по середине машины, на 0,45 высоты, концы — на 0,6 полудлины
+    lo = Vector([min((o.matrix_world @ Vector(c))[k] for o in meshes for c in o.bound_box) for k in range(3)])
+    hi = Vector([max((o.matrix_world @ Vector(c))[k] for o in meshes for c in o.bound_box) for k in range(3)])
+    my, hy, axz = (lo.y + hi.y) / 2, (hi.y - lo.y) / 2 * 0.6, lo.z + (hi.z - lo.z) * 0.45
+    ax = (my - hy, my + hy)
+    flipped = [o for o in meshes if inward(o)]
+    for o in flipped:
+        if o.data.users > 1: o.data = o.data.copy()
+        o.data.flip_normals()
+    print('развёрнуты:', ' '.join(sorted({mat(o) for o in flipped})))
 
 verts, polys, owner = [], [], []
 for o in kept:

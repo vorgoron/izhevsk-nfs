@@ -118,4 +118,4 @@ console.log('шов', SEAM.toFixed(3), '| масштаб', K.toFixed(2), 'шир
   '| колёса', wheels, '| длина', length.toFixed(2), 'ширина', body.size[0].toFixed(2), 'высота', body.hi[1].toFixed(2));
 
 const credit = 'ИЖ-2715: перед — модель пикапа (Blender), будка — «АЗЛК+Пирожок» (SketchUp); источники уточняются';
-writeGlb(`${root}/public/models/kabluk.glb`, parts, { copyright: credit, extras: { wheels, length: +length.toFixed(3), width: +body.size[0].toFixed(3), hub: true } });
+writeGlb(`${root}/public/models/kabluk.glb`, parts, { cull: true, copyright: credit, extras: { wheels, length: +length.toFixed(3), width: +body.size[0].toFixed(3), hub: true } });
