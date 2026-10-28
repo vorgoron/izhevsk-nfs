@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { MODELS, vehicleParts } from './vehicles.js';
 
 const SLOT = 5.6;             // м между машинами в очереди
-const CARS = 26;              // машин в очереди
+const CARS = 4, MIN_CARS = 3;  // машин в очереди: у каждой заправки 3 или 4
 const ACTIVE = 1000;          // м: очереди дальше не рисуем и не двигаем
 const MINOR = new Set(['service', 'living_street']);
 const MOVE_TIME = 2.2;        // с: подтягивание на одно место
@@ -28,8 +28,9 @@ export class Queues {
       const len = pathLength(path);
       // Хвост обрывается там, где упёрся бы в проезжую часть улицы (перекрёсток, узкая обочина).
       let n = 0;
-      while (n < Math.min(CARS, Math.floor(len / SLOT)) && !this.#onStreet(pointAt(path, n * SLOT))) n++;
-      if (n < 3) continue;
+      const want = MIN_CARS + Math.floor(r() * (CARS - MIN_CARS + 1));
+      while (n < Math.min(want, Math.floor(len / SLOT)) && !this.#onStreet(pointAt(path, n * SLOT))) n++;
+      if (n < MIN_CARS) continue;
       const cars = [];
       for (let i = 0; i < n; i++) cars.push(this.#newCar(r));
       this.queues.push({ st, path, len, cars, timer: 6 + r() * 10, shift: 0, r });

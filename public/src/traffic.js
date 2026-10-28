@@ -12,7 +12,7 @@ const SPEED = {
   trunk_link: 11, primary_link: 11, secondary_link: 10, tertiary_link: 9,
 };
 // Состав потока: ижевские машины (vehicles.js) и автобусы.
-const MIX = { oda: 9, m412: 6, kombi: 5, kabluk: 5, pickup: 3, vesta: 9, largus: 5, elargus: 2 };
+const MIX = { oda: 13, m412: 9, kombi: 7, kabluk: 7, pickup: 5, vesta: 13, largus: 7, elargus: 3 };
 const BUSES = 6, TROLLS = 4; // троллейбусы — только если в city.json есть их маршруты (trolleys)
 const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
 // Сколько машин на улицах: доля keep (Traffic.density — от часа в Ижевске, в гонке ещё не больше RACE_KEEP);
@@ -21,7 +21,7 @@ const SPAWN_MIN = 140, SPAWN_MAX = 420, DESPAWN = 480;
 // (±40 %) со скоростью LINE_V, место — только от общего времени гонки и её старта, у всех одно и то же. Ближе
 // LINE_END м к старту и финишу их нет (там стартовая сетка и перескок с конца маршрута в начало).
 const RACE_KEEP = 0.35, LINE_GAP = 160, LINE_V = 10, LINE_END = 60;
-const LINE_MIX = { ...MIX, bus: 2 };
+const LINE_MIX = { ...MIX, bus: 3 };
 const GRID = 100; // м: клетка сетки рёбер
 const CORNER = 9; // м: столько до узла и после него поворот идёт по кривой, а не углом
 const TURN = 0.3; // рад: излом маршрута круче — поворот, его кривая берёт прямую и через короткие рёбра
