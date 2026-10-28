@@ -3,26 +3,20 @@
 // нет вовсе — без пятна машина будто висит над дорогой. В прыжке пятно растёт и бледнеет.
 import * as THREE from 'three';
 
-const OPACITY = 0.6, FADE = 5; // м над поверхностью — пятна уже нет
-const PAD = [0.9, 0.7];        // м: пятно длиннее и шире кузова (край размыт, под кузовом его не видно)
+const OPACITY = 0.55, FADE = 5; // м над поверхностью — пятна уже нет
+const PAD = [0.4, 0.5];        // м: пятно шире и длиннее кузова — на размытый край, середина целиком под машиной
 
-// Прямоугольник со скруглёнными углами и размытым краем: стопка всё меньших полупрозрачных прямоугольников.
+// Мягкий прямоугольник: прозрачность — произведение плавных спадов поперёк и вдоль (край — внешние 30 %).
 function shadowTexture() {
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 128;
-  const g = c.getContext('2d');
-  const N = 16;
-  for (let i = 0; i < N; i++) {
-    const k = i / N, x = 2 + k * 10, y = 3 + k * 14, r = 20 - k * 10;
-    g.fillStyle = `rgba(0,0,0,${0.14 + k * 0.04})`;
-    g.beginPath();
-    if (g.roundRect) g.roundRect(x, y, 64 - 2 * x, 128 - 2 * y, Math.max(2, r));
-    else g.rect(x, y, 64 - 2 * x, 128 - 2 * y);
-    g.fill();
+  const W = 32, H = 64, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H);
+  const fall = (t) => { const k = Math.min(1, Math.max(0, (1 - Math.abs(t)) / 0.3)); return k * k * (3 - 2 * k); };
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    img.data[(j * W + i) * 4 + 3] = 255 * fall((i + 0.5) / W * 2 - 1) * fall((j + 0.5) / H * 2 - 1);
   }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+  g.putImageData(img, 0, 0);
+  return new THREE.CanvasTexture(c);
 }
 
 export class CarShadow {
@@ -40,16 +34,9 @@ export class CarShadow {
     this.yaw = new THREE.Quaternion();
   }
 
-  // Размер — по кузову модели (в её осях, без поворота и крена); фары и их лучи (MeshBasic, прозрачное) не в счёт.
+  // Размер — из габаритов модели (vehicles.js), без зеркал.
   fit(model) {
-    const box = new THREE.Box3(), inv = new THREE.Matrix4().copy(model.matrixWorld).invert(), b = new THREE.Box3();
-    model.updateMatrixWorld(true);
-    model.traverse((o) => {
-      if (!o.isMesh || !o.geometry || o.material.isMeshBasicMaterial || o.material.transparent) return;
-      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
-      box.union(b.copy(o.geometry.boundingBox).applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld)));
-    });
-    if (!box.isEmpty()) this.size = [box.max.x - box.min.x, box.max.z - box.min.z];
+    this.size = [model.userData.width ?? 1.7, model.userData.length ?? 4.2];
   }
 
   update(car, world) {
@@ -66,7 +53,7 @@ export class CarShadow {
     this.q.setFromUnitVectors(this.up, this.n);
     m.quaternion.copy(this.q).multiply(this.yaw.setFromAxisAngle(this.up, car.heading));
     const grow = 1 + alt * 0.12;
-    m.scale.set((this.size[0] + PAD[1]) * grow, 1, (this.size[1] + PAD[0]) * grow);
+    m.scale.set((this.size[0] + PAD[0]) * grow, 1, (this.size[1] + PAD[1]) * grow);
     m.position.set(x, y + 0.03, z);
     m.material.opacity = OPACITY * k;
   }
