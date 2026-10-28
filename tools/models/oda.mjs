@@ -172,4 +172,5 @@ console.log('колёса', wheels, '| длина', length, 'ширина', widt
 
 const credit = 'This work is based on "izh2126_oda_rework_dcs" (https://sketchfab.com/3d-models/izh2126-oda-rework-dcs-30a9c029e82f4b62bf97d136c58a7d9c) by 87-Motors (https://sketchfab.com/87-Motors) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)';
 // hub: колпак — в самой модели колеса (игра не дорисовывает свой диск).
-writeGlb(out, parts, { copyright: credit, extras: { wheels, length, width, hub: true } });
+// Кузов в облегчённом наборе — полный: упрощение даже на 5 % рвёт порог и заднюю дверь (тонкие стенки, сваренные по краю).
+writeGlb(out, parts, { copyright: credit, extras: { wheels, length, width, hub: true }, lod: { paint: 1 } });

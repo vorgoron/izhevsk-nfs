@@ -136,12 +136,15 @@ function weld(list) {
 // Список примитивов { pos, idx } → одна сваренная геометрия, в которой оставлена доля keep треугольников.
 // lockBorder — не трогать открытые края: у цветных кусков одной сплошной поверхности (STL) это стыки
 // между цветами, без него они расходятся зубцами и щелями.
-export function simplify(list, keep, { lockBorder = false } = {}) {
+// absError — вместо подъёма ошибки (в долях размера куска) — одна попытка с ошибкой не больше absError, м: чего не
+// упростить без порчи формы, то остаётся.
+export function simplify(list, keep, { lockBorder = false, absError } = {}) {
   const { pos, idx } = weld(list);
   if (keep >= 1) return { pos, idx };
   const target = Math.max(12, Math.floor((idx.length / 3) * keep) * 3);
   // Допустимую ошибку поднимаем, пока не дойдём до цели (мелкие детали упираются в порог раньше).
   let res = idx;
+  if (absError) return { pos, idx: MeshoptSimplifier.simplify(idx, pos, 3, target, absError, [...(lockBorder ? ['LockBorder'] : []), 'ErrorAbsolute'])[0] };
   for (const err of [0.01, 0.03, 0.08, 0.2, 0.5]) {
     [res] = MeshoptSimplifier.simplify(idx, pos, 3, target, err, lockBorder ? ['LockBorder'] : []);
     if (res.length <= target * 1.3) break;
@@ -200,7 +203,16 @@ function pack(groups) {
 }
 
 // parts: { имя части: [{ pos, idx, color: [r, g, b] }, …] } → GLB; extras — в extras сцены.
-export function writeGlb(out, parts, { copyright, extras }) {
+// К каждой части — облегчённая «lo-часть» для трафика, парковок и очередей (машин много, вблизи их видно редко; машина
+// игрока — полная): каждая цветная группа упрощена до доли lod (число или { часть: доля }, по умолчанию 0,5), края групп
+// не трогаем — иначе щели на стыках панелей.
+// Ошибка — не больше 8 мм: при 4 см проваливались тонкие панели (капот Ларгуса — два слоя, сваренные по краю, верхний
+// ложился на нижний изнанкой наружу; дверь «Оды»).
+const LOD_ERROR = 0.008;
+export function writeGlb(out, parts, { copyright, extras, lod = {} }) {
+  if (typeof lod === 'number') lod = { '': lod };
+  parts = { ...parts, ...Object.fromEntries(Object.entries(parts).map(([name, groups]) =>
+    ['lo-' + name, groups.map((g) => g.idx.length <= 12 ? g : { ...simplify([g], lod[name] ?? lod[''] ?? 0.5, { lockBorder: true, absError: LOD_ERROR }), color: g.color })])) };
   const chunks = [], views = [], accessors = [], meshes = [], nodes = [];
   let offset = 0;
   const view = (arr, target) => {
@@ -221,7 +233,7 @@ export function writeGlb(out, parts, { copyright, extras }) {
     const a = accessors.length - 3;
     meshes.push({ name, primitives: [{ attributes: { POSITION: a, COLOR_0: a + 1 }, indices: a + 2 }] });
     nodes.push({ name, mesh: meshes.length - 1 });
-    console.log(name.padEnd(7), (idx.length / 3).toString().padStart(6), 'треуг.');
+    if (!name.startsWith('lo-o-')) console.log(name.padEnd(10), (idx.length / 3).toString().padStart(6), 'треуг.');
   }
   const doc = {
     asset: { version: '2.0', generator: 'tools/models', copyright },

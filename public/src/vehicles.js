@@ -410,17 +410,21 @@ export async function loadVehicleMeshes() {
   await Promise.all(Object.values(MODELS).filter((m) => m.glb).map(async (spec) => {
     try {
       const gltf = await loader.loadAsync(await cachedURL(spec.glb));
-      const mesh = {}, opts = {}; // opts: слот → вариант → часть → геометрия
+      // Полный набор — машине игрока, облегчённый (меши «lo-…», tools/models/lib.mjs) — трафику, парковкам, очередям.
+      const sets = { full: { opts: {} }, lo: { opts: {} } }; // opts: слот → вариант → часть → геометрия
       gltf.scene.traverse((o) => {
         if (!o.isMesh) return;
         const g = toCreasedNormals(o.geometry, ((spec.creaseAngle ?? CREASE) * Math.PI) / 180);
-        const [o_, slot, variant, part] = o.name.split('-');
-        if (o_ === 'o' && part) ((opts[slot] ||= {})[variant] ||= {})[part] = g;
-        else mesh[o.name] = g;
+        const lo = o.name.startsWith('lo-'), set = sets[lo ? 'lo' : 'full'], name = lo ? o.name.slice(3) : o.name;
+        const [o_, slot, variant, part] = name.split('-');
+        if (o_ === 'o' && part) ((set.opts[slot] ||= {})[variant] ||= {})[part] = g;
+        else set[name] = g;
       });
       const { wheels, length, hub } = gltf.scene.userData;
       Object.assign(spec.wheels, wheels);
-      spec.mesh = { ...mesh, opts, length, hub, wheelL: hub && mirrorX(mesh.wheel) };
+      const { full, lo } = sets;
+      spec.mesh = { ...full, length, hub, wheelL: hub && mirrorX(full.wheel) };
+      if (lo.paint) spec.mesh.lo = { ...spec.mesh, ...lo, wheelL: hub && mirrorX(lo.wheel) };
     } catch (e) {
       console.warn(`Модель ${spec.name} не загрузилась, рисую процедурную`, e);
     }
@@ -455,6 +459,8 @@ function wheelGeometry(spec, seg, left = false, options) {
 }
 
 function meshParts(spec, wheelsInDetail, options) {
+  // Колёса в детали — машины трафика, парковок и очередей: им облегчённый набор.
+  if (wheelsInDetail && spec.mesh.lo) spec = { ...spec, mesh: spec.mesh.lo };
   const { r, front: wf, rear: wr, track } = spec.wheels, m = spec.mesh;
   const wheels = [];
   for (const z of [wf, wr]) for (const x of [-track, track]) wheels.push({ x, y: r, z, r, front: z > 0 });
