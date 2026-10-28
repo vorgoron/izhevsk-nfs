@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- Стенд модели машины в движке игры: 9 ракурсов на одном кадре. Копируется в public/_cmp/ скриптом stand.sh.
+     ?m=ключ MODELS  &glb=путь от public/ (другой файл, напр. _cmp/old-vesta.glb)  &lo=1 (облегчённый набор трафика)
+     &d=дистанция (6 — издалека, 4 — вблизи)  &c=цвет кузова -->
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+ "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+<style>body{margin:0;background:#000}</style></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { MODELS, loadVehicleMeshes, vehicleParts } from '../src/vehicles.js';
+const q = new URLSearchParams(location.search), k = q.get('m') || 'vesta', col = q.get('c') || '#e8e8e8', d = +(q.get('d') || 6);
+for (const s of Object.values(MODELS)) if (s.glb) s.glb = '../' + s.glb;
+if (q.get('glb')) MODELS[k].glb = '../' + q.get('glb');
+await loadVehicleMeshes();
+// спереди справа, спереди слева, сзади справа, сзади слева, борта, перед, зад, сверху
+const views = [[1, .35, 1.3], [-1, .35, 1.3], [1, .35, -1.3], [-1, .35, -1.3], [1.6, .15, 0], [-1.6, .15, 0], [0, .3, 1.6], [0, .3, -1.6], [0.3, 1.6, 0.1]];
+const W = 600, H = 340, cols = 3, rows = Math.ceil(views.length / cols);
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(W * cols, H * rows); document.body.append(r.domElement); r.setScissorTest(true);
+const spec = MODELS[k];
+if (q.get('lo') !== '1') spec.mesh = { ...spec.mesh, lo: undefined }; // vehicleParts с wheelsInDetail берёт lo, если он есть
+const p = vehicleParts(spec, { wheelsInDetail: true });
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#5a8a5a');
+scene.add(new THREE.HemisphereLight('#dfe8ff', '#4a4a40', 1.6)); const sun = new THREE.DirectionalLight('#fff4e0', 2.2); sun.position.set(4, 8, 3); scene.add(sun);
+scene.add(new THREE.Mesh(p.paint, new THREE.MeshLambertMaterial({ vertexColors: true, color: col })),
+  new THREE.Mesh(p.detail, new THREE.MeshLambertMaterial({ vertexColors: true })), new THREE.Mesh(p.lights, new THREE.MeshLambertMaterial({ vertexColors: true })));
+views.forEach(([x, y, z], i) => {
+  const cam = new THREE.PerspectiveCamera(32, W / H, 0.1, 100); const v = new THREE.Vector3(x, y, z).normalize().multiplyScalar(d);
+  cam.position.set(v.x, v.y + 0.6, v.z); cam.lookAt(0, 0.65, 0);
+  const cx = (i % cols) * W, cy = (rows - 1 - Math.floor(i / cols)) * H;
+  r.setViewport(cx, cy, W, H); r.setScissor(cx, cy, W, H); r.render(scene, cam);
+});
+document.title = 'done';
+</script></body></html>
