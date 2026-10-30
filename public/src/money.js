@@ -32,11 +32,15 @@ export class Wallet {
     this.balance = START_MONEY;
     this.owned = new Set();
     this.fresh = true; // кошелька ещё не было (первый запуск с деньгами)
+    // Когда кошелёк последний раз менялся, мс по часам браузера (0 — неизвестно): аккаунт сравнивает с временем
+    // своей записи, чей прогресс новее (account.js).
+    this.changedAt = 0;
     try {
       const v = localStorage.getItem('money');
       if (v !== null && Number.isFinite(+v)) this.balance = +v;
       const owned = localStorage.getItem('owned');
       this.fresh = owned === null;
+      this.changedAt = +localStorage.getItem('moneyT') || 0;
       this.owned = new Set(JSON.parse(owned || '[]'));
     } catch {}
     this.onChange = () => {};
@@ -96,7 +100,9 @@ export class Wallet {
   }
 
   #save() {
+    this.changedAt = Date.now();
     try {
+      localStorage.setItem('moneyT', String(this.changedAt));
       localStorage.setItem('money', String(Math.round(this.balance)));
       localStorage.setItem('owned', JSON.stringify([...this.owned]));
     } catch {}

@@ -40,6 +40,7 @@ import { createDebug } from './debug.js';
 import { Net, CITY } from './net.js';
 import { cachedURL } from './cached.js';
 import { track } from './analytics.js';
+import { reportError, guard } from './errors.js';
 import { Wallet, PRICES, raceReward, speedingFine, formatMoney } from './money.js';
 import { Cameras } from './cameras.js';
 import { StopSigns } from './yields.js';
@@ -146,6 +147,19 @@ async function main() {
   renderer.shadowMap.enabled = Q.shadow > 0;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.body.prepend(renderer.domElement);
+  // Телефон отобрал у вкладки видеокарту (фон, нехватка памяти) — без этого остаётся чёрный экран. Перезапуск
+  // надёжнее восстановления: место машины и прогресс пишутся при уходе со страницы (pagehide).
+  renderer.domElement.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    track('webgl_lost', { touch: isTouch });
+    if ($('gl-lost')) return;
+    const box = document.createElement('div');
+    box.id = 'gl-lost';
+    box.style.cssText = 'position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(21,24,27,.92);color:#fff;font:18px system-ui,sans-serif;text-align:center;padding:16px';
+    box.innerHTML = '<div>Графика сбросилась<br><button style="margin-top:14px;font:inherit;padding:10px 22px;border-radius:10px;border:0;background:#ffd23f;color:#15181b;cursor:pointer">Перезапустить</button></div>';
+    box.querySelector('button').addEventListener('click', () => location.reload());
+    document.body.append(box);
+  });
 
   const scene = new THREE.Scene();
   const sky = new THREE.Color(HORIZON); // туман = цвет горизонта неба (sky.js)
@@ -1542,7 +1556,7 @@ async function main() {
     sun.target.position.copy(c);
     sun.position.copy(c).addScaledVector(SUN_DIR, 300);
     const preview = new THREE.Clock();
-    renderer.setAnimationLoop(() => {
+    renderer.setAnimationLoop(guard(() => {
       const dt = Math.min(preview.getDelta(), 0.1);
       orbit += dt * 0.12;
       car.update(1 / 120, {}); // без шага физики модель машины ещё не стоит на своём месте
@@ -1560,7 +1574,7 @@ async function main() {
         headlight.target.position.copy(m.localToWorld(HEAD_AIM.set(0, -0.6, front + 22)));
       }
       renderer.render(scene, camera);
-    });
+    }, 'заставка'));
     $('loading').classList.add('preview');
   }
   await startScreen();
@@ -1598,7 +1612,15 @@ async function main() {
   let acc = 0;
   const perf = flags.has('perf') ? createPerf(renderer, scene, camera, sun, loadTimes) : null;
   let nextFrame = 0;
+  // Исключение в кадре не должно останавливать цикл (three.js после него следующий кадр не просит): сообщаем
+  // и всё же рисуем, чтобы картинка не застыла.
   renderer.setAnimationLoop((now) => {
+    try { tick(now); } catch (e) {
+      reportError(e, 'кадр');
+      try { renderer.render(scene, camera); } catch {}
+    }
+  });
+  function tick(now) {
     // Предел кадров: пропускаем вызовы раньше срока (запас 1 мс на дрожание таймера).
     // Срок двигается шагом интервала — на 144 Гц в среднем выходит ровно предел.
     if (fpsCap) {
@@ -1720,11 +1742,11 @@ async function main() {
     renderer.render(scene, camera);
     perf?.mark('отрисовка');
     perf?.end();
-  });
+  }
 }
 
 main().catch((e) => {
-  console.error(e);
+  reportError(e, 'загрузка');
   $('loading')?.classList.add('error');
   status(`Ошибка: ${e.message}`);
 });

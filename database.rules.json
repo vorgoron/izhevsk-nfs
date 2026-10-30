@@ -16,11 +16,11 @@
           }
         },
         "race": {
-          ".write": "auth != null && $room.matches(/^[a-z0-9-]{1,24}$/)",
+          ".write": "auth != null && $room.matches(/^[a-z0-9-]{1,24}$/) && !newData.child('r').exists()",
           ".validate": "newData.hasChildren(['a', 'b', 't', 'o'])",
           "a": { ".validate": "newData.isNumber()" },
           "b": { ".validate": "newData.isNumber()" },
-          "t": { ".validate": "newData.isNumber()" },
+          "t": { ".validate": "newData.isNumber() && (newData.val() === data.val() || (newData.val() > now - 60000 && newData.val() < now + 60000))" },
           "o": { ".validate": "newData.isString() && newData.val().length <= 2000" },
           "w": { ".validate": "newData.isString() && newData.val().length <= 200" },
           "l": { ".validate": "newData.isString() && newData.val().length <= 8" },
