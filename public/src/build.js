@@ -1940,12 +1940,13 @@ export function buildPoleChunk(world, info, mats) {
 // щит. Нажатие на плакат — ссылка рекламодателя (url), приложение по диплинку (app; не открылось — сообщение с
 // запасной ссылкой fallback) или действие игры (act, main.js). share — доля щитов.
 export const ADVERTISERS = [
-  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.3 },
-  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.2 },
-  { key: 'tg', name: 'Telegram-канал', app: 'tg://resolve?domain=izh_car', fallback: 'https://t.me/izh_car', posters: [tgNewsAd, tgChannelAd], share: 0.2 },
-  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.18 },
+  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.26 },
+  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.17 },
+  { key: 'tg', name: 'Telegram-канал', app: 'tg://resolve?domain=izh_car', fallback: 'https://t.me/izh_car', posters: [tgNewsAd, tgChannelAd], share: 0.17 },
+  { key: 'lyuk', name: 'Ижевский люк', app: 'tg://resolve?domain=izh_lyuk', fallback: 'https://t.me/izh_lyuk', posters: [lyukAd, lyukColumnAd], share: 0.15 },
+  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.15 },
   // «Место свободно» — заявка на рекламу (меню → «Реклама на щитах», adrequest.js).
-  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.12 },
+  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.1 },
 ];
 const AD_W = 1024, AD_H = 512;
 const AD_SHOW = 8, AD_ROLL = 0.9; // с: плакат стоит, затем прокрутка
@@ -2056,6 +2057,109 @@ function tgChannelAd(g, logo) {
   adText(g, 'обновления · скриншоты · гонки', 70, 375, 52, 700);
   g.fillStyle = '#fff';
   adText(g, 'нажми на щит, чтобы открыть канал', 70, AD_H - 30, 46, 800);
+}
+
+// Telegram-канал «Ижевский люк» (@izh_lyuk): логотип — красный люк с белыми волнами, в середине «ЛЮК» и «ИЖЕВСКИЙ».
+const LYUK_RED = '#ee4524';
+
+function lyukLid(g, cx, cy, r) {
+  g.save();
+  g.fillStyle = LYUK_RED;
+  for (let k = 0; k < 8; k++) { // выступы по краю крышки
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(k * Math.PI / 4 + Math.PI / 8);
+    g.fillRect(-0.09 * r, -1.06 * r, 0.18 * r, 0.2 * r);
+    g.restore();
+  }
+  g.beginPath();
+  g.arc(cx, cy, r, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = '#fff';
+  g.lineWidth = 0.025 * r;
+  g.beginPath();
+  g.arc(cx, cy, 0.9 * r, 0, Math.PI * 2);
+  g.stroke();
+  g.save();
+  g.clip();
+  for (let x = cx - r; x <= cx + r; x += 0.17 * r) { // волны
+    g.beginPath();
+    for (let y = cy - r; y <= cy + r; y += 0.02 * r) {
+      const wx = x + Math.sin((y - cy) / r * 9) * 0.04 * r;
+      if (y === cy - r) g.moveTo(wx, y); else g.lineTo(wx, y);
+    }
+    g.stroke();
+  }
+  g.restore();
+  g.fillStyle = LYUK_RED;
+  g.beginPath();
+  g.arc(cx, cy, 0.44 * r, 0, Math.PI * 2);
+  g.fill();
+  g.stroke();
+  g.fillStyle = '#fff';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = adFont(Math.round(0.42 * r));
+  g.fillText('К', cx + 0.06 * r, cy - 0.02 * r);
+  g.font = adFont(Math.round(0.13 * r), 700);
+  g.fillText('ЛЮ', cx - 0.22 * r, cy - 0.02 * r);
+  g.font = adFont(Math.round(0.09 * r), 700);
+  const word = 'ИЖЕВСКИЙ', step = 0.28; // по дуге внизу середины, рад на букву
+  [...word].forEach((ch, i) => {
+    const a = Math.PI / 2 + (word.length / 2 - i - 0.5) * step;
+    g.save();
+    g.translate(cx + Math.cos(a) * 0.34 * r, cy + Math.sin(a) * 0.34 * r);
+    g.rotate(a - Math.PI / 2);
+    g.fillText(ch, 0, 0);
+    g.restore();
+  });
+  g.restore();
+}
+
+function lyukAd(g) {
+  g.fillStyle = '#141414';
+  g.fillRect(0, 0, AD_W, AD_H);
+  lyukLid(g, 250, AD_H / 2, 195);
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  const x = 500, w = AD_W - x - 50;
+  g.fillStyle = '#fff';
+  adText(g, 'ИЖЕВСКИЙ', x, 165, 92, 800, w);
+  g.fillStyle = LYUK_RED;
+  adText(g, 'ЛЮК', x, 270, 110, 800, w);
+  g.fillStyle = '#c9c4bc';
+  adText(g, 'культурные инсайдеры', x, 345, 44, 700, w);
+  g.fillStyle = '#fff';
+  adText(g, '@izh_lyuk', x, 435, 64, 800, w);
+}
+
+function lyukColumnAd(g) {
+  g.fillStyle = LYUK_RED;
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.strokeStyle = 'rgba(255,255,255,0.22)';
+  g.lineWidth = 6;
+  for (let x = 30; x < AD_W; x += 90) { // волны крышки фоном
+    g.beginPath();
+    for (let y = 0; y <= AD_H; y += 8) {
+      const wx = x + Math.sin(y / AD_H * 9) * 18;
+      if (!y) g.moveTo(wx, y); else g.lineTo(wx, y);
+    }
+    g.stroke();
+  }
+  g.fillStyle = '#141414';
+  g.fillRect(0, AD_H - 90, AD_W, 90);
+  lyukLid(g, AD_W - 150, 150, 95);
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  const w = AD_W - 2 * AD_PAD - 230;
+  g.fillStyle = '#fff';
+  adText(g, 'КУЛЬТУРНЫЙ ПОРТАЛ', 70, 140, 76, 800, w);
+  adText(g, 'между граундом', 70, 225, 58, 700, w);
+  adText(g, 'и андеграундом', 70, 295, 58, 700, w);
+  g.fillStyle = '#141414';
+  adText(g, 'читай · выражай мнение · веди колонку', 70, 375, 44, 700);
+  g.fillStyle = '#fff';
+  adText(g, 'Ижевский люк в Telegram: @izh_lyuk', 70, AD_H - 30, 46, 800);
 }
 
 // Даур — в цветах удмуртского флага: чёрный, белый, красный.
@@ -2179,14 +2283,18 @@ export function billboardMaterials(renderer) {
   logo.onload = () => sheets.forEach((sh) => sh.draw(logo));
   logo.src = 'logo.svg';
 
-  const bottom = BB.y - BB.h / 2 - 0.15;
+  const bottom = BB.y - BB.h / 2 - 0.15, top = BB.y + BB.h / 2 + 0.15; // низ и верх короба
   const geo = mergeGeos([
     part(new THREE.CylinderGeometry(0.45, 0.55, 0.5, 10), '#8f8c85'), // фундамент
     part(new THREE.CylinderGeometry(0.26, 0.3, bottom + 0.6, 10).translate(0, (bottom + 0.6) / 2 - 0.3, 0), '#6b7075'),
     part(new THREE.BoxGeometry(BB.w + 0.3, BB.h + 0.3, BB.t).translate(0, BB.y, 0), '#3f4448'),     // короб
     part(new THREE.BoxGeometry(BB.w + 0.3, 0.06, 1.6).translate(0, bottom - 0.05, 0), '#55595d'),   // мостки
-    ...[-2, 0, 2].flatMap((x) => [-1, 1].map((s) => // светильники над плакатом
-      part(new THREE.BoxGeometry(0.3, 0.12, 0.5).translate(x, BB.y + BB.h / 2 + 0.3, s * 0.55), '#2d3135'))),
+    // Светильники над плакатом — на консолях: стойка на крыше короба, кронштейн вперёд, светильник под его концом.
+    ...[-2, 0, 2].flatMap((x) => [-1, 1].flatMap((s) => [
+      part(new THREE.BoxGeometry(0.06, 0.35, 0.06).translate(x, top + 0.175, s * 0.15), '#2d3135'),
+      part(new THREE.BoxGeometry(0.06, 0.06, 0.95).translate(x, top + 0.32, s * 0.625), '#2d3135'),
+      part(new THREE.BoxGeometry(0.3, 0.12, 0.4).translate(x, top + 0.23, s * 1.0), '#2d3135'),
+    ])),
   ], ['color']);
   const faces = sheets.map(({ tex }) => new THREE.MeshLambertMaterial({ map: tex, emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 0.35 }));
   let t0 = null;
