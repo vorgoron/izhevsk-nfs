@@ -11,6 +11,8 @@ export const STATIONS = [
   // Федеральные потоки: местной вставки Ижевска в интернет-эфире нет.
   { name: 'Наше Радио', url: 'https://nashe1.hostingradio.ru/nashe-128.mp3' },
   { name: 'Радио Максимум', url: 'https://maximum.hostingradio.ru/maximum128.mp3' },
+  // AAC 96 кбит/с — у Record это и «128», и «320» в API (www.radiorecord.ru/api/stations/).
+  { name: 'Record Liquid Funk', url: 'https://radiorecord.hostingradio.ru/liquidfunk96.aacp' },
 ];
 
 export class Radio {
