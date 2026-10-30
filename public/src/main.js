@@ -670,6 +670,7 @@ async function main() {
   game.taxi = taxi;
   game.citymap = citymap;
   $('menu-btn').addEventListener('click', actions.menu);
+  $('garage-btn').addEventListener('click', actions.garage);
   $('race-btn').addEventListener('click', actions.race);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
     KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night', KeyI: 'debug', KeyJ: 'taxi' }; // Y — «Н» в русской раскладке, J — «О»

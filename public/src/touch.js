@@ -1,5 +1,5 @@
 // Сенсорное управление: слева — руль (тянуть влево/вправо от точки касания),
-// справа — педали, сверху — меню (все настройки там, menu.js), «на дорогу», камера и полный экран. Включается только на сенсорных устройствах.
+// справа — педали, сверху — меню (все настройки там, menu.js), «на дорогу», гараж, камера и полный экран. Включается только на сенсорных устройствах.
 
 export const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
@@ -25,6 +25,7 @@ export function setupTouch({ keys, analog, actions, press }) {
     </div>
     <div id="tbar">
       <button data-act="respawn" title="На дорогу">↺</button>
+      <button data-act="garage" title="Гараж">🚗</button>
       <button data-act="camera" title="Камера">🎥</button>
       <button data-act="fullscreen" title="Во весь экран">⛶</button>
       <button data-act="menu" title="Меню">☰</button>
