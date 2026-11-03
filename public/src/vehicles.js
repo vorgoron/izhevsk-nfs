@@ -195,6 +195,14 @@ export const MODELS = {
     stats: { kmh: 145, t100: 9.9, grip: 1.0, eco: 1.25 }, // 120 кВт пиковой; 145 км/ч — ограничитель, разгон «меньше 10 с»
   },
 };
+
+// Исторические названия: каталог AVE https://ave-vk.ru/wp-content/uploads/2020/09/каталог_А5_2020_new2-1.pdf
+// RGB — игровое приближение эмали, не колориметрический эталон.
+export const FACTORY_COLORS = { '#7caec3': 'Сенеж 410', '#ea6b24': 'Апельсин ИЖ-28' };
+for (const key of ['m412', 'kabluk', 'pickup', 'kombi']) {
+  MODELS[key].colors.push(...Object.keys(FACTORY_COLORS));
+}
+
 export const DEFAULT_MODEL = 'm412';
 
 // Диски — у всех машин: два слота в конце options (стиль и диаметр покупаются отдельно, как детали; wheel — показывать

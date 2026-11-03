@@ -5,7 +5,7 @@
 // а оплачиваются вместе кнопкой «Купить» в корзине. Цвета бесплатные. Улучшения — для своей машины или той, что
 // в корзине. Не купил и уехал — возвращаешься на ту машину, на которой заехал, с купленными деталями; корзина
 // с машинами и улучшениями остаётся до следующего захода (пока открыта игра).
-import { MODELS, DEFAULT_MODEL, pickOptions, shownOptions, RIDE_HANDLING } from './vehicles.js';
+import { MODELS, DEFAULT_MODEL, pickOptions, shownOptions, RIDE_HANDLING, FACTORY_COLORS } from './vehicles.js';
 import { formatMoney } from './money.js';
 import { upgradesFor, carKey, carPrice, ownsCar, upKey, upLevel, tuned } from './shop.js';
 import { PAINTS, paintOf, paintKey } from './paints.js';
@@ -230,6 +230,8 @@ export class Garage {
     for (const color of spec.colors) {
       const b = document.createElement('button');
       b.style.background = color;
+      b.title = FACTORY_COLORS[color] || color;
+      b.setAttribute('aria-label', b.title);
       b.classList.toggle('on', color === this.choice.color);
       b.addEventListener('click', () => this.#pick(model, color));
       box.append(b);

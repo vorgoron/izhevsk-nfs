@@ -128,6 +128,7 @@ export class Police {
     this.siren = 0;      // громкость сирены для звука, 0..1
     this.events = [];    // [{ kind: 'start' | 'caught' | 'escaped', why }] — забирает main.js
     this.hud = document.getElementById('chase');
+    this.traffic = null; // main.js: машины трафика, включая автобусы
     this.obstacles = null; // выставляет main.js: { ready(x, z), around(x, z, fn) } — столбы и деревья квадратов
   }
 
@@ -363,8 +364,13 @@ export class Police {
     c.heading += Math.max(-yaw, Math.min(yaw, diff)) * Math.sign(c.v || 1);
     const fx = Math.sin(c.heading), fz = Math.cos(c.heading);
     const ox = c.x, oz = c.z;
-    c.x += fx * c.v * dt;
-    c.z += fz * c.v * dt;
+    // Малые шаги не дают проскочить кузов при редких кадрах.
+    const steps = Math.max(1, Math.ceil(Math.abs(c.v) * dt / 0.7));
+    for (let i = 0; i < steps; i++) {
+      c.x += fx * c.v * dt / steps;
+      c.z += fz * c.v * dt / steps;
+      this.#trafficContact(c);
+    }
     // Стены и дома: как у машины игрока — два круга по осям.
     for (const s of [AXLE, -AXLE]) {
       const p = new THREE.Vector2(c.x + fx * s, c.z + fz * s), before = p.clone();
@@ -384,6 +390,36 @@ export class Police {
     }
     if (moved > 5) c.stuckN = 0;
     this.#pose(c);
+  }
+
+  // Трафик на полосе держит свой маршрут: уступает и отодвигается патрульная.
+  // Повтор после traffic.update ловит и въехавшую в стоящий пост машину.
+  resolveTraffic() {
+    for (const c of this.cars) { this.#trafficContact(c); this.#pose(c); }
+  }
+
+  #trafficContact(c) {
+    const fx = Math.sin(c.heading), fz = Math.cos(c.heading);
+    for (let pass = 0; pass < 3; pass++) {
+      for (const v of this.traffic?.vehicles || []) {
+        if (!v.active || Math.abs(c.y - v.y) > 2.5 || Math.hypot(c.x - v.x, c.z - v.z) > v.len / 2 + 4) continue;
+        // SAT по четырём осям кузовов: единое расталкивание не зажимает
+        // автобус между передним и задним кругами патрульной.
+        const dx = c.x - v.x, dz = c.z - v.z;
+        const length = Math.max(...v.circles.map(Math.abs)) + v.r;
+        let depth = Infinity, nx = 0, nz = 0;
+        for (const [ax, az] of [[fx, fz], [fz, -fx], [v.dx, v.dz], [v.dz, -v.dx]]) {
+          const reach = (AXLE + R) * Math.abs(fx * ax + fz * az) + R * Math.abs(fz * ax - fx * az)
+            + length * Math.abs(v.dx * ax + v.dz * az) + v.r * Math.abs(v.dz * ax - v.dx * az);
+          const center = dx * ax + dz * az, overlap = reach - Math.abs(center);
+          if (overlap <= 0) { depth = 0; break; }
+          if (overlap < depth) { depth = overlap; nx = ax * (center < 0 ? -1 : 1); nz = az * (center < 0 ? -1 : 1); }
+        }
+        if (!depth) continue;
+        c.x += nx * (depth + 0.001); c.z += nz * (depth + 0.001);
+        if (c.v * (fx * nx + fz * nz) < 0) c.v = 0;
+      }
+    }
   }
 
   #pose(c) {

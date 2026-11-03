@@ -7,7 +7,8 @@ import { address, short, routeLen } from './citymap.js';
 
 const PICK_MIN = 200, PICK_MAX = 900, DROP_MIN = 1000, DROP_MAX = 3000; // м по прямой
 const PICK_R = 14, STOP_V = 2;
-const FARE_BASE = 1000, FARE_KM = 1800;   // ₽: посадка и за км маршрута
+const FARE_BASE = 300, FARE_KM = 350;   // ₽: посадка и за км маршрута
+const FARE_MIN = 500, FARE_MAX = 2000; // итог с учётом надбавки и штрафов
 const FAST_KMH = 45, FAST_BONUS = 0.3;  // средняя быстрее — надбавка
 const HIT = 0.4, HIT_CUT = 0.15, MIN_SHARE = 0.3; // удар сильнее — минус доля платы, но не меньше MIN_SHARE
 
@@ -111,7 +112,7 @@ export class Taxi {
       if (d < PICK_R && slow) {
         const fast = o.km / (o.t / 3600) >= FAST_KMH;
         const share = Math.max(MIN_SHARE, 1 - HIT_CUT * o.hits) * (fast ? 1 + FAST_BONUS : 1);
-        const pay = Math.round(((FARE_BASE + FARE_KM * o.km) * share) / 50) * 50;
+        const pay = Math.max(FARE_MIN, Math.min(FARE_MAX, Math.round(((FARE_BASE + FARE_KM * o.km) * share) / 50) * 50));
         const why = [fast ? 'быстро' : '', o.hits ? `ударов: ${o.hits}` : ''].filter(Boolean).join(', ');
         this.cancel();
         return { kind: 'drop', pay, text: `такси${why ? ` (${why})` : ''}` };

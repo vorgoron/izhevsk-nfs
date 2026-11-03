@@ -327,6 +327,7 @@ async function main() {
   const cameras = owned('камеры', () => new Cameras(world, signals, scene));
   breakables.addCameras(cameras);
   const police = owned('ДПС', () => new Police(world, cameras, scene));
+  police.traffic = traffic;
   police.obstacles = { ready: (x, z) => chunks.isBuilt(x, z), around: (x, z, fn) => breakables.around(x, z, fn) };
   traffic.density = dayNight.traffic;
   traffic.reset(car.pos.x, car.pos.y);
@@ -547,6 +548,7 @@ async function main() {
     camera: () => { camMode = (camMode + 1) % 4; cine.shot = null; cine.left = 0; },
     night: () => dayNight.toggle(),
     quality: (q) => {
+      qChosen = q;
       setQuality(q);
       try { localStorage.setItem('quality', q); } catch {}
     },
@@ -1573,18 +1575,22 @@ async function main() {
   setTimeout(() => citymap.prepare(), 3000); // подложку большой карты — заранее, чтобы она открылась сразу
   track('game_start', { model: garage.choice.model, touch: isTouch, room: net.room !== CITY });
   if (!choice.saved) garage.open();
-  // Телефон не тянет (меньше 20 кадров в секунду за 8 с после старта) — один раз ступенью ниже, если
-  // игрок уровень сам не выбирал. Выбор запоминается — дальше не проверяем.
-  if (isTouch && !QUALITY[qChosen] && qName !== 'low') {
-    let n = 0;
-    const from = performance.now() + 3000; // первые секунды — достройка квадратов, кадры неровные
+  // На любом устройстве без ручного выбора снижаем качество при устойчивых <20 fps.
+  // Скрытую вкладку не измеряем: браузер ограничивает её rAF сам.
+  if (!QUALITY[qChosen] && qName !== 'low') {
+    let n = 0, from = performance.now() + 3000;
     const probe = (now) => {
+      if (QUALITY[qChosen] || qName === 'low') return;
+      if (document.hidden) { n = 0; from = now + 3000; }
       if (now > from) n++;
       if (now < from + 8000) { requestAnimationFrame(probe); return; }
-      if (n / 8 >= 20) return;
+      if (n / ((now - from) / 1000) >= 20) return;
       const next = qName === 'high' ? 'medium' : 'low';
-      actions.quality(next);
+      setQuality(next);
       notice(`Графика понижена: ${QUALITY[next].label} — для плавности (меню → Графика)`);
+      // Следующая ступень — только после новой полной выборки; ручной выбор остановит проверку.
+      n = 0; from = now + 3000;
+      requestAnimationFrame(probe);
     };
     requestAnimationFrame(probe);
   }
@@ -1666,6 +1672,7 @@ async function main() {
     net.update(dt, car);
     traffic.density = dayNight.traffic;
     traffic.update(dt, car);
+    police.resolveTraffic();
     perf?.mark('трафик');
     breakables.update(dt, car, traffic);
     nitroFx.update(dt, car);
