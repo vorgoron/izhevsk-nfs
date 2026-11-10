@@ -11,7 +11,7 @@ const PARENT = { name: 'net', volume: 'settings', radio: 'settings', quality: 's
 const VOLUME_LABELS = { master: 'Общая', car: 'Своя машина', traffic: 'Трафик', radio: 'Радио' };
 
 export class Menu {
-  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, fps, quality, qName, fullscreen, debug };
+  // actions — общие действия main.js; state() — { sound, radio, traffic, camera, night, season, fps, quality, qName, fullscreen, debug };
   // volume — ползунки громкости { get(key), set(key, 0..1) }; setName — имя игрока для сети.
   // radio — станции для барабана { names, get() — номер или -1, select(i) }.
   // В state() для сети: name, room, city (в общем городе), online, players, netStatus, copied,
@@ -65,6 +65,7 @@ export class Menu {
       <h3>Город</h3>
       <button data-act="traffic">Трафик <b data-v="traffic"></b><kbd>T</kbd></button>
       <button data-act="night">Время суток <b data-v="night"></b><kbd>Y</kbd></button>
+      <button data-act="season">Сезон <b data-v="season"></b><kbd>Z</kbd></button>
       <h3>Экран</h3>
       <button data-act="camera">Камера <b data-v="camera"></b><kbd>C</kbd></button>
       <button data-page="quality">Графика <b data-v="quality"></b><i>›</i></button>
@@ -198,6 +199,7 @@ export class Menu {
       traffic: s.traffic ? 'вкл' : 'выкл',
       camera: CAMERAS[s.camera],
       night: s.night,
+      season: s.season,
       fps: s.fps ? `до ${s.fps}` : 'без предела',
       quality: s.quality,
       nav: s.nav ?? '',
@@ -222,7 +224,7 @@ export class Menu {
     s.volume = s.sound && this.volume.get('master') > 0;
     for (const b of this.el.querySelectorAll('[data-v]')) {
       b.textContent = v[b.dataset.v];
-      b.classList.toggle('off', !['camera', 'night', 'nav', 'fps', 'quality', 'net', 'netShort', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account', 'ads', 'taxi'].includes(b.dataset.v) && !s[b.dataset.v]);
+      b.classList.toggle('off', !['camera', 'night', 'season', 'nav', 'fps', 'quality', 'net', 'netShort', 'name', 'room', 'race', 'tricks', 'money', 'nitro', 'account', 'ads', 'taxi'].includes(b.dataset.v) && !s[b.dataset.v]);
     }
     this.el.querySelector('[data-show="room"]').hidden = s.city;
     for (const b of this.el.querySelectorAll('[data-q]')) b.classList.toggle('off', b.dataset.q !== s.qName);

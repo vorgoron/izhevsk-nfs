@@ -1,6 +1,7 @@
 // Аркадная машинка: своя простая физика в плоскости + высота по поверхности.
 import * as THREE from 'three';
 import { RIDE_HANDLING } from './vehicles.js';
+import { SNOW } from './snow.js';
 
 // Скорость, разгон и сцепление — от модели (vehicles.js), здесь базовые величины.
 const NITRO_K = 1.3;      // нитро: верхняя скорость ×1.3
@@ -36,6 +37,10 @@ const SLIDE_MIN = 8 * DEG;
 // Угол заноса: руль прямо — DRIFT_BASE, в поворот до упора — DRIFT_MAX, против до упора — DRIFT_EXIT.
 const DRIFT_BASE = 25 * DEG, DRIFT_MAX = 45 * DEG, DRIFT_EXIT = 5 * DEG, DIRT_ANGLE = 10 * DEG;
 const DRIFT_K = 3, DRIFT_KEEP = [0.6, 0.5], DRIFT_ACCEL = 0.4;
+// Зима (snow.js): на снегу шины держат хуже и тормозной путь длиннее, занос — на SNOW_SLICK пути от асфальта к грунту
+// (шире, дольше гаснет), скорость и разгон не теряются. Вода замерзает: по льду пруда едут, как по площади,
+// но он совсем скользкий — занос как на грунте, срывается одним газом с рулём до упора.
+const SNOW_SLICK = 0.4, SNOW_GRIP = 0.8, SNOW_BRAKE = 0.8, ICE_GRIP = 0.45, ICE_BRAKE = 0.5;
 // Значение для покрытия: off — 0 асфальт … 1 грунт.
 const bySurface = ([road, dirt], off) => road + (dirt - road) * off;
 const STEER_RATE = 2.3;   // рад/с на средней скорости
@@ -223,7 +228,8 @@ export class Car {
   update(dt, input) {
     // В воде: мотор заглох, руль не слушается, машина тонет. drowned — пора начинать сначала.
     // Над водой в прыжке — ещё не в воде.
-    const wet = this.sink > 0 || (!this.air && this.world.isWater(this.pos.x, this.pos.y));
+    const winter = SNOW.value > 0.5;
+    const wet = this.sink > 0 || (!winter && !this.air && this.world.isWater(this.pos.x, this.pos.y));
     if (wet) {
       this.sink += dt;
       this.drowned = this.sink > SINK_TIME;
@@ -233,10 +239,19 @@ export class Car {
     }
     // Покрытие под машиной — 20 раз в секунду; offroad плавно 0..1 (дорога → грунт, грунтовка — наполовину).
     this.surfT = (this.surfT ?? 0) - dt;
-    if (this.surfT <= 0) { this.surface = this.world.surfaceAt(this.pos.x, this.pos.y); this.surfT = 0.05; }
+    if (this.surfT <= 0) {
+      this.surface = this.world.surfaceAt(this.pos.x, this.pos.y);
+      if (winter && this.surface === 'ground' && this.world.isWater(this.pos.x, this.pos.y)) this.surface = 'ice';
+      this.surfT = 0.05;
+    }
     const offT = this.surface === 'ground' ? 1 : this.surface === 'dirt' ? DIRT_OFF : 0;
     this.offroad = (this.offroad ?? 0) + (offT - (this.offroad ?? 0)) * Math.min(1, dt * 5);
     const off = this.offroad;
+    this.ice = (this.ice ?? 0) + ((this.surface === 'ice' ? 1 : 0) - (this.ice ?? 0)) * Math.min(1, dt * 5);
+    const ice = this.ice;
+    // slick — насколько скользко для заноса: летом — как off, зимой — не меньше снежного, на льду — как грунт.
+    const slick = winter ? Math.max(off, SNOW_SLICK + (1 - SNOW_SLICK) * ice) : off;
+    const brakeK = winter ? SNOW_BRAKE + (ICE_BRAKE - SNOW_BRAKE) * ice : 1;
     const f = this.forward, r = this.right;
     let vf = this.vel.dot(f), vr = this.vel.dot(r);
 
@@ -266,7 +281,7 @@ export class Car {
       // В заносе задние колёса буксуют — разгон слабее (DRIFT_ACCEL).
       vf += (nitroOn ? accel * 1.8 : accel) * (1 - DRIFT_ACCEL * this.slide) * Math.max(0, 1 - vf / top) * dt;
     } else if (input.down) {
-      if (vf > 0.5) vf -= BRAKE * dt;
+      if (vf > 0.5) vf -= BRAKE * brakeK * dt;
       else vf -= accel * 0.7 * Math.max(0, 1 + vf / REVERSE_MAX) * dt;
     } else {
       vf -= Math.sign(vf) * Math.min(Math.abs(vf), 2.5 * dt); // накат
@@ -294,8 +309,8 @@ export class Car {
     if (air) this.slide = 0;
     else if (input.brake && vf > 3) this.slide = Math.min(1, this.slide + SLIDE_ON * dt);
     else if (input.down && vf > 12 && Math.abs(this.steer) > 0.7) this.slide = Math.min(Math.max(this.slide, 0.5), this.slide + SLIDE_BRAKE * dt);
-    else if (input.up && off > 0.5 && vf > 8 && into > 0.7) this.slide = Math.min(Math.max(this.slide, 0.8), this.slide + SLIDE_DIRT * dt);
-    else if (!(input.up && vf > 5 && Math.abs(beta) > SLIDE_MIN)) this.slide = Math.max(0, this.slide - bySurface(SLIDE_OFF, off) * dt);
+    else if (input.up && slick > 0.5 && vf > 8 && into > 0.7) this.slide = Math.min(Math.max(this.slide, 0.8), this.slide + SLIDE_DIRT * dt);
+    else if (!(input.up && vf > 5 && Math.abs(beta) > SLIDE_MIN)) this.slide = Math.max(0, this.slide - bySurface(SLIDE_OFF, slick) * dt);
     this.handbrake = !air && input.brake && vf > 3; // для следов колёс
     this.gas = !!(input.up || input.down); // газ — для звука мотора у других игроков (net.js)
     const s = this.slide;
@@ -303,11 +318,11 @@ export class Car {
     // Боковое сцепление — в старых осях кузова: гасит скольжение, этим и гнёт траекторию к курсу.
     this.skid = Math.max(0, this.skid - dt);
     const skidGrip = 1 - SKID_GRIP * this.skid;
-    const grip = this.grip * (1 - (1 - OFF_GRIP) * lose);
+    const grip = this.grip * (1 - (1 - OFF_GRIP) * lose) * (winter ? SNOW_GRIP + (ICE_GRIP - SNOW_GRIP) * ice : 1);
     if (!air) {
       const vr0 = vr;
-      vr *= Math.exp(-(grip + (bySurface(DRIFT_GRIP, off) - grip) * s) * skidGrip * dt);
-      if (vf > 0) vf += Math.abs(vr0 - vr) * bySurface(DRIFT_KEEP, off) * s;
+      vr *= Math.exp(-(grip + (bySurface(DRIFT_GRIP, slick) - grip) * s) * skidGrip * dt);
+      if (vf > 0) vf += Math.abs(vr0 - vr) * bySurface(DRIFT_KEEP, slick) * s;
     }
     const phi0 = Math.atan2(this.vel.x, this.vel.y);
     this.vel.set(f.x * vf + r.x * vr, f.y * vf + r.y * vr);
@@ -316,7 +331,7 @@ export class Car {
     // держит угол к движению, скорость не поворачивается (её гнёт только сцепление выше).
     let turn = -steerYaw * dt;
     if (s > 0) {
-      const mid = DRIFT_BASE + DIRT_ANGLE * off;
+      const mid = DRIFT_BASE + DIRT_ANGLE * slick;
       const want = side * (into > 0 ? mid + (DRIFT_MAX - mid) * into : mid + (mid - DRIFT_EXIT) * into);
       const dphi = Math.atan2(this.vel.x, this.vel.y) - phi0;
       const drift = (dphi - Math.round(dphi / (2 * Math.PI)) * 2 * Math.PI) + DRIFT_K * (want - beta) * dt;

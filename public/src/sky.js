@@ -9,6 +9,8 @@ export const HORIZON = '#b4cbe0'; // цвет горизонта = цвет ту
 const ZENITH = '#5f93cf';
 // Ночью: тёмно-синий зенит, у горизонта — рыжеватая засветка города.
 const NIGHT_HORIZON = '#1d2133', NIGHT_ZENITH = '#03060f';
+// Зимой небо белёсое, облаков больше.
+const WINTER_HORIZON = '#cfd8e1', WINTER_ZENITH = '#86a3c4';
 const STARS = 900;
 // Облака днём и ночью: освещённая сторона, тень, низ, тёплый отсвет к солнцу.
 const CLOUD = { lit: '#fffaf0', shade: '#d6deee', base: '#b0bfd9', glow: '#ffd9a8' };
@@ -132,7 +134,7 @@ export class Sky {
     scene.add(dome);
     this.dome = dome;
     this.horizon = new THREE.Color(HORIZON);
-    this.colors = [HORIZON, ZENITH, NIGHT_HORIZON, NIGHT_ZENITH].map((c) => new THREE.Color(c));
+    this.colors = [HORIZON, ZENITH, NIGHT_HORIZON, NIGHT_ZENITH, WINTER_HORIZON, WINTER_ZENITH].map((c) => new THREE.Color(c));
     this.cloud = [CLOUD, NIGHT_CLOUD].map((o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, C(v)])));
     this.time = 0;
 
@@ -177,10 +179,12 @@ export class Sky {
 
   // Ночь 0…1: цвета купола (горизонт — он же цвет тумана, this.horizon), звёзды, луна, тёмные облака.
   // dir — направление на луну (откуда светит directional-свет).
-  setNight(s, dir) {
-    const [h, z, nh, nz] = this.colors, u = this.uniforms;
-    u.horizon.value.copy(h).lerp(nh, s);
-    u.zenith.value.copy(z).lerp(nz, s);
+  // winter — зимнее небо (snow.js).
+  setNight(s, dir, winter = false) {
+    const [h, z, nh, nz, wh, wz] = this.colors, u = this.uniforms;
+    u.horizon.value.copy(winter ? wh : h).lerp(nh, s);
+    u.zenith.value.copy(winter ? wz : z).lerp(nz, s);
+    u.uCumulus.value = winter ? 0.62 : 0.5;
     this.horizon.copy(u.horizon.value);
     this.stars.visible = this.moon.visible = s > 0.01;
     this.stars.material.opacity = s;

@@ -20,7 +20,8 @@ import { Traffic } from './traffic.js';
 import { Signals } from './signals.js';
 import { Breakables } from './breakables.js';
 import { Sky, HORIZON } from './sky.js';
-import { DayNight } from './night.js';
+import { DayNight, NIGHT } from './night.js';
+import { Season, Snowfall } from './snow.js';
 import { Fuel } from './fuel.js';
 import { Queues } from './queues.js';
 import { Parkings } from './parkings.js';
@@ -305,6 +306,9 @@ async function main() {
   const headlight = new THREE.SpotLight('#ffeccc', 0, 90, 0.62, 0.55, 1.1);
   scene.add(headlight, headlight.target);
   const dayNight = new DayNight({ scene, hemi, sun, dir: SUN_DIR, sky: skyDome, ads: chunks.mats.ads, headlight, fogScale: Q.fog });
+  // Сезон (snow.js): зимой — снег на всём городе, снегопад и лёд на воде.
+  const season = new Season();
+  const snowfall = new Snowfall(scene, { count: qName === 'high' ? 3200 : qName === 'medium' ? 2000 : 1100, night: NIGHT });
   const HEAD_POS = new THREE.Vector3(), HEAD_AIM = new THREE.Vector3();
   const fuel = owned('заправки', () => new Fuel(world, scene));
   const queues = owned('очереди', () => new Queues(world, fuel, scene));
@@ -422,7 +426,7 @@ async function main() {
     const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
     return rows.map(({ u, t }, k) => `${t != null ? `${k + 1}.` : '·'} ${esc(net.nameOf(u))} — ${t != null ? formatTime(t) : 'едет'}`).join('<br>');
   };
-  window.game = { world, car, race, ramps, pickups, boundary, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, parkings, police, chunks, net, dayNight, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
+  window.game = { world, car, race, ramps, pickups, boundary, respawnAt, landmarks, traffic, signals, breakables, garage, fuel, queues, parkings, police, chunks, net, dayNight, season, wallet, cameras, skids: skidFx, tireSmoke: tireSmokeFx, ghostFx }; // для отладки из консоли
 
   // ---------------------------------------------------------------- ввод
 
@@ -561,6 +565,7 @@ async function main() {
     },
     camera: () => { camMode = (camMode + 1) % 4; cine.shot = null; cine.left = 0; },
     night: () => dayNight.toggle(),
+    season: () => season.toggle(),
     quality: (q) => {
       qChosen = q;
       setQuality(q);
@@ -637,7 +642,7 @@ async function main() {
       set: (k, v) => { sound.setVolume(k, v); radioVolume(); },
     },
     radio: { names: STATIONS.map((s) => s.name), get: () => radio.station, select: (i) => radio.select(i) },
-    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, quality: Q.label, qName, night: dayNight.label, debug: debug.on, lang: LANGS[getLang()], nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
+    state: () => ({ sound: !sound.muted, radio: radio.name, traffic: traffic.enabled, camera: camMode, fps: fpsCap, quality: Q.label, qName, night: dayNight.label, season: season.label, debug: debug.on, lang: LANGS[getLang()], nav: citymap?.target ? `→ ${citymap.target.name || 'точка'}` : '',
       fullscreen: !!document.fullscreenElement, name: net.name, room: net.room, city: net.room === CITY, online: net.status === 'online',
       players: net.count, netStatus: net.status, copied: !!copied, shared: net.shared,
       money: formatMoney(wallet.balance), hopper: car.hopper > 0, taxi: taxi?.active ? 'отменить заказ' : 'найти пассажира',
@@ -689,7 +694,7 @@ async function main() {
   $('garage-btn').addEventListener('click', actions.garage);
   $('race-btn').addEventListener('click', actions.race);
   const KEY_ACTIONS = { Escape: 'menu', KeyG: 'garage', KeyV: 'sound', KeyT: 'traffic', KeyR: 'respawn', KeyN: 'race', KeyC: 'camera', KeyL: 'fps',
-    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night', KeyI: 'debug', KeyJ: 'taxi' }; // Y — «Н» в русской раскладке, J — «О»
+    KeyB: 'radio', KeyM: 'map', KeyF: 'fullscreen', KeyY: 'night', KeyZ: 'season', KeyI: 'debug', KeyJ: 'taxi' }; // Y — «Н» в русской раскладке, J — «О»
 
   let starting = true;
   const keys = new Set();
@@ -1568,6 +1573,7 @@ async function main() {
       // Машина — ниже середины, под кнопками, а не за логотипом.
       camera.setViewOffset(innerWidth, innerHeight, 0, -innerHeight * 0.22, innerWidth, innerHeight);
       skyDome.update(dt, camera);
+      snowfall.update(dt, camera, renderer);
       dayNight.update(dt);
       if (headlight.visible) {
         const m = car.model, front = (m.userData.length || 4.2) / 2;
@@ -1734,6 +1740,7 @@ async function main() {
       wires.cull(cp.x, cp.z, Math.min(camera.far, Q.carsFar + 100)); // провода троллейбусов — так же
     }
     skyDome.update(dt, camera);
+    snowfall.update(dt, camera, renderer);
     dayNight.update(dt);
     if (headlight.visible) {
       const m = car.model, front = (m.userData.length || 4.2) / 2;

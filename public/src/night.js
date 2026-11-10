@@ -2,6 +2,7 @@
 // столбов) и свечение — ореолы фар и фонарей, пятна света на дороге. Свечение — один аддитивный
 // материал: billboard-ореол, круглое пятно на земле или луч фар (в aGlow.w). Днём материал невидим.
 import * as THREE from 'three';
+import { SNOW, onSeason } from './snow.js';
 
 export const NIGHT = { value: 0 };
 const FOG = { value: new THREE.Vector2(250, 1600) }; // свечение гаснет в тумане, а не красится в него
@@ -129,15 +130,26 @@ export function poleGlowGeometry() {
 
 // ---------------------------------------------------------------- переключение дня и ночи
 
-const DAY = {
+const SUMMER_DAY = {
   hemiSky: '#dfe9f5', hemiGround: '#5a5444', hemi: 1.4,
   sun: '#fff3dc', sunI: 2.2,
   fogNear: 250, fogFar: 1600,
 };
-const NIGHT_SET = {
+const SUMMER_NIGHT = {
   hemiSky: '#5a6f9c', hemiGround: '#2a2a33', hemi: 0.55,
   sun: '#9fb4e6', sunI: 0.45, // луна — с той же стороны, что солнце: тени те же
   fogNear: 150, fogFar: 1300,
+};
+// Зима (snow.js): пасмурнее и белее — солнце слабее, снег подсвечивает снизу (hemiGround), дымка ближе.
+const WINTER_DAY = {
+  hemiSky: '#e4ebf4', hemiGround: '#aab3c0', hemi: 1.5,
+  sun: '#fff1e2', sunI: 1.7,
+  fogNear: 200, fogFar: 1350,
+};
+const WINTER_NIGHT = {
+  hemiSky: '#6578a4', hemiGround: '#4a5064', hemi: 0.7,
+  sun: '#9fb4e6', sunI: 0.5,
+  fogNear: 140, fogFar: 1150,
 };
 const FADE = 1.5; // с: смена дня и ночи вручную
 
@@ -187,6 +199,7 @@ export class DayNight {
     this.c1 = new THREE.Color();
     this.c2 = new THREE.Color();
     this.#apply();
+    onSeason(() => this.#apply());
   }
 
   get night() { return this.t > 0.5; }
@@ -230,6 +243,7 @@ export class DayNight {
   #apply() {
     const t = this.t, s = t * t * (3 - 2 * t), lerp = (a, b) => a + (b - a) * s;
     const col = (out, a, b) => out.set(a).lerp(this.c2.set(b), s);
+    const winter = SNOW.value > 0.5, DAY = winter ? WINTER_DAY : SUMMER_DAY, NIGHT_SET = winter ? WINTER_NIGHT : SUMMER_NIGHT;
     NIGHT.value = s;
     glowMaterial().visible = s > 0.01;
     col(this.hemi.color, DAY.hemiSky, NIGHT_SET.hemiSky);
@@ -241,7 +255,7 @@ export class DayNight {
     fog.near = lerp(DAY.fogNear, NIGHT_SET.fogNear) * this.fogScale;
     fog.far = lerp(DAY.fogFar, NIGHT_SET.fogFar) * this.fogScale;
     FOG.value.set(fog.near, fog.far);
-    this.sky.setNight(s, this.dir);
+    this.sky.setNight(s, this.dir, winter);
     fog.color.copy(this.sky.horizon);
     this.scene.background.copy(this.sky.horizon);
     if (this.ads) for (const f of this.ads.faces) f.emissiveIntensity = lerp(0.35, 0.9);

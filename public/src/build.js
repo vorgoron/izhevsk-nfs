@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MARKED_CLASSES, SIDEWALK, SOFT_FENCES, TRAM_BED, TRAM_DROP, TRAM_GRASS, TRAM_TUCK, World } from './world.js';
 import { RECOLOR } from './landmarks.js';
 import { NIGHT, glowMaterial, poleGlowGeometry, POLE_POOL_X } from './night.js';
+import { SNOW, SNOW_RGB, snowy, onSeason } from './snow.js';
 import { SPECIES, LEAF, treeGeometry, LEAF_GLSL } from './trees.js';
 import { shopColors, shopLine } from './shops.js';
 import { CURB_H, CURB_W } from './walks.js';
@@ -115,7 +116,7 @@ export function buildTerrainChunk(world, info, texSize, renderer) {
   geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   geo.setIndex(idx);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
+  const mesh = new THREE.Mesh(geo, snowy(new THREE.MeshLambertMaterial({ map: tex }), { mode: 'ground' }));
   mesh.receiveShadow = true;
   return mesh;
 }
@@ -135,12 +136,70 @@ export function roadMarking(road) {
   return `${left}/${right}/0`;
 }
 
-function asphaltTexture(key, renderer) {
+// winter — зимняя дорога: укатанный снег, по полосам — тёмные колеи до асфальта (на грунтовке — бурые),
+// у краёв — белее; разметки под снегом не видно. Рисунок готовится заранее — в кадре это та же одна выборка.
+function asphaltTexture(key, renderer, winter = false) {
   const W = 256, H = 256;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
   const dirt = key === 'dirt';
+  if (winter) {
+    let seed = 1234567;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    g.fillStyle = '#c3c7cc';
+    g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 4000; i++) {
+      const v = 150 + rnd() * 90;
+      g.fillStyle = `rgba(${v},${v + 3},${v + 8},0.35)`;
+      g.fillRect(rnd() * W, rnd() * H, 2, 2);
+    }
+    const [left, right] = dirt || key === 'plain' ? [1, 0] : key.split('/').map(Number);
+    const n = left + right, lane = (0.96 * W) / n;
+    // Колея: размытая серая полоса снежной каши и рваная тёмная сердцевина; на крупных улицах накатано сильнее.
+    const core = dirt ? '86,70,52' : '52,53,56', slush = dirt ? '150,138,120' : '128,129,131';
+    const bare = dirt ? 0.5 : key === 'plain' ? 0.45 : Math.min(0.95, 0.55 + 0.1 * n);
+    for (let i = 0; i < n; i++) {
+      for (const t of [0.27, 0.73]) {
+        const x = 0.02 * W + (i + t) * lane, w = Math.min(lane * 0.26, 26);
+        const grad = g.createLinearGradient(x - w, 0, x + w, 0);
+        grad.addColorStop(0, `rgba(${slush},0)`);
+        grad.addColorStop(0.35, `rgba(${slush},0.85)`);
+        grad.addColorStop(0.65, `rgba(${slush},0.85)`);
+        grad.addColorStop(1, `rgba(${slush},0)`);
+        g.fillStyle = grad;
+        g.fillRect(x - w, 0, 2 * w, H);
+        const cw = w * 0.42, cg = g.createLinearGradient(x - cw, 0, x + cw, 0);
+        cg.addColorStop(0, `rgba(${core},0)`);
+        cg.addColorStop(0.4, `rgba(${core},${bare})`);
+        cg.addColorStop(0.6, `rgba(${core},${bare})`);
+        cg.addColorStop(1, `rgba(${core},0)`);
+        g.fillStyle = cg;
+        g.fillRect(x - cw, 0, 2 * cw, H);
+        // Поверх колеи — пятна снежной каши; рисуются трижды со сдвигом на высоту: по v текстура повторяется без шва.
+        for (let k = 0; k < 7; k++) {
+          const px = x + (rnd() - 0.5) * w, py = rnd() * H, rx = w * (0.25 + 0.3 * rnd()), ry = 10 + rnd() * 26;
+          for (const dy of [-H, 0, H]) {
+            const blob = g.createRadialGradient(px, py + dy, 0, px, py + dy, 1);
+            g.save();
+            g.translate(px, py + dy); g.scale(rx, ry); g.translate(-px, -(py + dy));
+            blob.addColorStop(0, `rgba(${slush},0.8)`);
+            blob.addColorStop(1, `rgba(${slush},0)`);
+            g.fillStyle = blob;
+            g.beginPath(); g.arc(px, py + dy, 1, 0, Math.PI * 2); g.fill();
+            g.restore();
+          }
+        }
+      }
+    }
+    for (const [x0, x1] of [[0, 0.07 * W], [W, 0.93 * W]]) { // у бордюров — свежий снег
+      const grad = g.createLinearGradient(x0, 0, x1, 0);
+      grad.addColorStop(0, 'rgba(236,240,246,0.95)');
+      grad.addColorStop(1, 'rgba(236,240,246,0)');
+      g.fillStyle = grad;
+      g.fillRect(Math.min(x0, x1), 0, Math.abs(x1 - x0), H);
+    }
+  } else {
   g.fillStyle = dirt ? '#7a6a52' : '#3a3b3d';
   g.fillRect(0, 0, W, H);
   for (let i = 0; i < 5000; i++) {
@@ -167,6 +226,7 @@ function asphaltTexture(key, renderer) {
       } else dash(u, 3);
     }
   }
+  }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = THREE.ClampToEdgeWrapping;
   t.wrapT = THREE.RepeatWrapping;
@@ -178,25 +238,34 @@ function asphaltTexture(key, renderer) {
 // Материалы асфальта общие на все квадраты.
 export function roadMaterials(renderer) {
   const cache = new Map();
+  // Зима — другая карта того же материала (летняя и зимняя рисуются по первой надобности): шейдер тот же.
+  let winter = false;
+  const seasonMap = (m, w) => (m.userData[w ? 'winterMap' : 'summerMap'] ??= asphaltTexture(m.userData.key, renderer, w));
+  onSeason((w) => {
+    winter = w;
+    for (const m of cache.values()) m.map = seasonMap(m, w);
+  });
   return {
     // Материал асфальта под вид разметки (roadMarking), создаётся при первой надобности.
     asphalt(key) {
       if (!cache.has(key)) {
-        cache.set(key, new THREE.MeshLambertMaterial({
-          map: asphaltTexture(key, renderer),
+        const m = new THREE.MeshLambertMaterial({
           side: THREE.DoubleSide,
           polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-        }));
+        });
+        m.userData.key = key;
+        m.map = seasonMap(m, winter);
+        cache.set(key, m);
       }
       return cache.get(key);
     },
     owns: (m) => [...cache.values()].includes(m),
     // Мосты: плита, парапеты, опоры.
-    concrete: new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }),
-    embank: new THREE.MeshLambertMaterial({ color: '#6f7d4f', side: THREE.DoubleSide }),
-    trackbed: new THREE.MeshLambertMaterial({ map: trackbedTexture(renderer), side: THREE.DoubleSide }),
+    concrete: snowy(new THREE.MeshLambertMaterial({ color: '#b7b3aa', side: THREE.DoubleSide }), { lo: 0.6, hi: 0.9 }),
+    embank: snowy(new THREE.MeshLambertMaterial({ color: '#6f7d4f', side: THREE.DoubleSide }), { mode: 'flat' }),
+    trackbed: snowy(new THREE.MeshLambertMaterial({ map: trackbedTexture(renderer), side: THREE.DoubleSide }), { mode: 'flat', amount: 0.8 }),
     // Асфальт переезда под рельсами: отодвинут от камеры, чтобы настоящая лента дороги, где она есть, была поверх.
-    crossing: new THREE.MeshLambertMaterial({ color: '#3d3e41', side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }),
+    crossing: snowy(new THREE.MeshLambertMaterial({ color: '#3d3e41', side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }), { mode: 'flat', amount: 0.6 }),
     // Рельсы лежат на 6 см выше расчётной высоты дороги, а лента асфальта между краями идёт по
     // прямой, а не по рельефу, и сама сдвинута к камере: без сдвига сильнее асфальта рельсы на
     // перекрёстке местами уходили под него.
@@ -1229,7 +1298,7 @@ const ONION = [[0, 0], [0.62, 0], [0.86, 0.1], [1, 0.28], [0.98, 0.42], [0.82, 0
 export function buildingMaterials(renderer) {
   return {
     walls: facadeMaterial(renderer),
-    roofs: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    roofs: snowy(new THREE.MeshLambertMaterial({ vertexColors: true }), { lo: 0.3, hi: 0.6, amount: 0.95 }),
     // Главки храмов: барабан, луковица, крест (единичного размера, масштаб — в матрице).
     drumGeo: new THREE.CylinderGeometry(0.5, 0.5, 1.6, 12).translate(0, 0.8, 0),
     onionGeo: new THREE.LatheGeometry(ONION.map(([a, b]) => new THREE.Vector2(a * 0.62, b * 1.3)), 16).translate(0, 1.6, 0),
@@ -1622,12 +1691,21 @@ const TREE_WIND = { value: 0 };
 
 // Деревья — trees.js. Один материал на все породы: цвет вершин × цвет экземпляра (только там, где aTint = 1 —
 // листва и хвоя), ветер, на листве — блики и тени гроздей листьев (LEAF_GLSL).
+// Зимой (SNOW): хвойные — со снегом на лапах сверху; лиственные — в инее: крона сверху белая, снизу серо-бурая
+// (выбрасывать часть клеток «кружевом» пробовали — выходит шахматка из кубиков). Блики листвы (fl_tone — самое
+// дорогое в шейдере) зимой не считаются, так что зимние деревья кадру дешевле летних.
 export function treeMaterials() {
+  const make = (conifer) => {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  if (conifer) mat.defines = { CONIFER: 1 };
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uWind = TREE_WIND;
+    sh.uniforms.uSnow = SNOW;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aTint;\nuniform float uWind;\nvarying float vTint;\nvarying vec3 vLeafW;')
+      .replace('#include <common>', '#include <common>\nattribute float aTint;\nuniform float uWind;\nvarying float vTint;\nvarying vec3 vLeafW;\nvarying float vSnowUp;')
+      .replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
+        vec3 snowN = mat3(modelMatrix) * (mat3(instanceMatrix) * objectNormal);
+        vSnowUp = snowN.y / max(length(snowN), 1e-4);`)
       .replace('#include <color_vertex>', `vColor = color;
         vTint = aTint;
         #ifdef USE_INSTANCING_COLOR
@@ -1641,13 +1719,24 @@ export function treeMaterials() {
       .replace('#include <project_vertex>', `#include <project_vertex>
         vLeafW = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vTint;\nvarying vec3 vLeafW;\n' + LEAF_GLSL)
+      .replace('#include <common>', '#include <common>\nuniform float uSnow;\nvarying float vTint;\nvarying vec3 vLeafW;\nvarying float vSnowUp;\n' + LEAF_GLSL)
       .replace('#include <color_fragment>', `#include <color_fragment>
-        if (vTint > 0.5) diffuseColor.rgb *= fl_tone(vLeafW, 0.3, 1.0);`);
+        if (vTint > 0.5) {
+          if (uSnow > 0.5) {
+            #ifdef CONIFER
+              diffuseColor.rgb = mix(diffuseColor.rgb * 0.8, ${SNOW_RGB}, 0.9 * smoothstep(0.1, 0.55, vSnowUp));
+            #else
+              float shade = clamp(dot(diffuseColor.rgb, vec3(2.2)), 0.6, 1.0);
+              diffuseColor.rgb = mix(vec3(0.30, 0.27, 0.26), ${SNOW_RGB}, smoothstep(-0.35, 0.45, vSnowUp)) * shade;
+            #endif
+          } else diffuseColor.rgb *= fl_tone(vLeafW, 0.3, 1.0);
+        }`);
+  };
+  return mat;
   };
   const geos = {};
   for (const k of Object.keys(SPECIES)) geos[k] = [treeGeometry(k, 0), treeGeometry(k, 1)];
-  return { mat, geos, tick: (now) => { TREE_WIND.value = now / 1000; } };
+  return { mat: make(false), conifer: make(true), geos, tick: (now) => { TREE_WIND.value = now / 1000; } };
 }
 
 function mergeGeos(geos, extra = []) {
@@ -1794,7 +1883,7 @@ export function buildTreeChunk(world, info, mats) {
   for (const [kind, list] of Object.entries(spots)) {
     if (!list.length) continue;
     const [near, far] = mats.geos[kind];
-    const mesh = new THREE.InstancedMesh(near, mats.mat, list.length);
+    const mesh = new THREE.InstancedMesh(near, kind === 'pine' || kind === 'spruce' ? mats.conifer : mats.mat, list.length);
     const solid = []; // для breakables.js: ствол — препятствие [x, y, z, масштаб]
     list.forEach(([x, z, forest], i) => {
       // В лесу деревья выше и стройнее: ели 13–19 м, сосны 14–21 м; крону лиственных не вытягиваем сильно.
@@ -2603,7 +2692,7 @@ export function stopMaterials(renderer) {
     ], ['color']),
     faces: [[Math.PI / 2, 0.077], [-Math.PI / 2, 0.043]].map(([r, x]) =>
       new THREE.PlaneGeometry(SIGN.s - 0.02, SIGN.s - 0.02).rotateY(r).translate(x, SIGN.y, 0)),
-    frameMat: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    frameMat: snowy(new THREE.MeshLambertMaterial({ vertexColors: true }), { lo: 0.7, hi: 0.95 }),
     glassMat: new THREE.MeshLambertMaterial({ color: '#a9cfdc', transparent: true, opacity: 0.3, depthWrite: false }),
     sign: new THREE.MeshLambertMaterial({ map: stopSignTexture(renderer) }),
   };
@@ -3156,10 +3245,10 @@ function cycleTexture(renderer) {
 
 export function walkMaterials(renderer) {
   return [
-    new THREE.MeshLambertMaterial({ map: walkTileTexture(renderer, false) }),
-    new THREE.MeshLambertMaterial({ map: walkTileTexture(renderer, true) }),
-    new THREE.MeshLambertMaterial({ color: '#c4c0b8', side: THREE.DoubleSide }), // бордюр, бока, торцы
-    new THREE.MeshLambertMaterial({ map: cycleTexture(renderer) }),
+    snowy(new THREE.MeshLambertMaterial({ map: walkTileTexture(renderer, false) }), { mode: 'flat', amount: 0.82 }),
+    snowy(new THREE.MeshLambertMaterial({ map: walkTileTexture(renderer, true) }), { mode: 'flat', amount: 0.7 }),
+    snowy(new THREE.MeshLambertMaterial({ color: '#c4c0b8', side: THREE.DoubleSide }), { mode: 'flat', amount: 0.8 }), // бордюр, бока, торцы
+    snowy(new THREE.MeshLambertMaterial({ map: cycleTexture(renderer) }), { mode: 'flat', amount: 0.8 }),
   ];
 }
 

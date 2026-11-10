@@ -1,6 +1,7 @@
 // Нитро: пламя из выхлопной трубы, искры (летят назад, падают, гаснут) и «линии скорости»
 // по краям экрана. Пыль из-под колёс вне дороги, следы колёс и дым шин от заноса.
 import * as THREE from 'three';
+import { SNOW } from './snow.js';
 
 const SPARKS = 400, SPARK_LIFE = 0.45, SPARK_RATE = 260; // шт, с, шт/с
 
@@ -400,7 +401,9 @@ export class DustFX {
       this.pos[j + 1] += this.vel[j + 1] * dt;
       this.pos[j + 2] += this.vel[j + 2] * dt;
       const t = Math.max(0, this.life[i] / DUST_LIFE);
-      this.col.set([0.62, 0.55, 0.42, 0.45 * t * (1 - t) * 4 * 0.6], c);
+      // Зимой из-под колёс летит не пыль, а снег.
+      if (SNOW.value > 0.5) this.col.set([0.93, 0.95, 0.98, 0.5 * t * (1 - t) * 4 * 0.6], c);
+      else this.col.set([0.62, 0.55, 0.42, 0.45 * t * (1 - t) * 4 * 0.6], c);
     }
     this.points.geometry.attributes.position.needsUpdate = true;
     this.points.geometry.attributes.color.needsUpdate = true;
@@ -412,7 +415,8 @@ export class DustFX {
 // самые старые; за четверть буфера до того, как затереться, кусок тускнеет вдвое. Лежат на 4 см над поверхностью и
 // сдвинуты к камере, чтобы не мерцать с асфальтом.
 const SKIDS = 3000, SKID_STEP = 0.4, SKID_W = 0.3, SKID_LIFT = 0.04;
-const SKID_COLOR = { road: [0.02, 0.02, 0.025, 0.75], ground: [0.24, 0.18, 0.11, 0.6] };
+// Зимой — серые борозды в снегу, на льду — светлые царапины.
+const SKID_COLOR = { road: [0.02, 0.02, 0.025, 0.75], ground: [0.24, 0.18, 0.11, 0.6], snow: [0.3, 0.32, 0.36, 0.45], ice: [0.9, 0.94, 0.98, 0.5] };
 
 // Насколько скользят задние колёса, 0..1: занос, ручник на ходу, срыв после удара; на грунте — уже при
 // слабом скольжении. Общее для следов и дыма.
@@ -451,7 +455,7 @@ export class SkidMarksFX {
     const f = car.forward, r = car.right;
     const k = slipAmount(car);
     // Цвет — по покрытию прямо под машиной (offroad сглажен и отстаёт на съезде с дороги).
-    const color = SKID_COLOR[car.surface === 'ground' || car.surface === 'dirt' ? 'ground' : 'road'];
+    const color = SKID_COLOR[car.surface === 'ice' ? 'ice' : SNOW.value > 0.5 ? 'snow' : car.surface === 'ground' || car.surface === 'dirt' ? 'ground' : 'road'];
     for (let w = 0; w < 2; w++) {
       const side = w ? 0.75 : -0.75;
       const x = car.pos.x - f.x * 1.3 + r.x * side, z = car.pos.y - f.y * 1.3 + r.y * side;

@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { World } from './world.js';
 import { grandLayout } from './walks.js';
 import { NIGHT, GlowBuilder, glowMaterial } from './night.js';
+import { snowyObject } from './snow.js';
 
 const lambert = (color, extra = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
 // Стекло фонаря: днём чуть светится, ночью — в полную (NIGHT — общий uniform, смена дня и ночи без перекомпиляции).
@@ -3474,6 +3475,7 @@ export function buildLandmarks(world) {
   group.userData.cull = (x, z, dist) => {
     for (const f of far) f.obj.visible = Math.hypot(f.x - x, f.z - z) - f.r < dist;
   };
+  snowyObject(group); // зимой — снег на крышах, карнизах и площадках
   return { group, markers };
 }
 

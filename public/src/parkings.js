@@ -2,6 +2,7 @@
 // Разметка строится для парковок рядом с игроком и выгружается, когда отъехал; машины — общие InstancedMesh по моделям,
 // ставятся на ближайшие занятые места. Стоят намертво — машина игрока упирается в них, как в очередь на АЗС.
 import * as THREE from 'three';
+import { snowy } from './snow.js';
 import { MODELS, vehicleParts } from './vehicles.js';
 
 export const PARK_W = 2.6, PARK_D = 5; // м: как в fetch_city.py
@@ -47,12 +48,14 @@ export class Parkings {
       return { lot, li, stalls, cx, cz, R, mesh: null, ready: false };
     });
 
-    this.paint = new THREE.MeshLambertMaterial({ color: '#e9e9e2', polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    // Зимой разметку почти заметает, на крышах, капотах и багажниках стоящих машин — шапки снега.
+    this.paint = snowy(new THREE.MeshLambertMaterial({ color: '#e9e9e2', polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), { mode: 'flat', amount: 0.7 });
     const lit = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const body = snowy(new THREE.MeshLambertMaterial({ vertexColors: true }), { lo: 0.8, hi: 0.96 });
     this.kinds = {};
     for (const key of new Set(KINDS)) {
       const p = vehicleParts(MODELS[key], { wheelsInDetail: true });
-      const meshes = [new THREE.InstancedMesh(p.paint, lit, CARS), new THREE.InstancedMesh(p.detail, lit, CARS)];
+      const meshes = [new THREE.InstancedMesh(p.paint, body, CARS), new THREE.InstancedMesh(p.detail, lit, CARS)];
       for (const m of meshes) {
         m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         m.frustumCulled = false;
