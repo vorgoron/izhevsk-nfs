@@ -1940,13 +1940,15 @@ export function buildPoleChunk(world, info, mats) {
 // щит. Нажатие на плакат — ссылка рекламодателя (url), приложение по диплинку (app; не открылось — сообщение с
 // запасной ссылкой fallback) или действие игры (act, main.js). share — доля щитов.
 export const ADVERTISERS = [
-  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.26 },
-  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.17 },
-  { key: 'tg', name: 'Telegram-канал', app: 'tg://resolve?domain=izh_car', fallback: 'https://t.me/izh_car', posters: [tgNewsAd, tgChannelAd], share: 0.17 },
-  { key: 'lyuk', name: 'Ижевский люк', app: 'tg://resolve?domain=izh_lyuk', fallback: 'https://t.me/izh_lyuk', posters: [lyukAd, lyukColumnAd], share: 0.15 },
-  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.15 },
+  { key: 'daur', name: 'Даур', url: 'https://daur.media', posters: [daurAd, daurFmAd], share: 0.12 },
+  { key: 'izhcar', name: 'Izh Car', act: 'invite', posters: [izhCarAd, izhCarFriendsAd], share: 0.15 },
+  { key: 'tg', name: 'Telegram-канал', app: 'tg://resolve?domain=izh_car', fallback: 'https://t.me/izh_car', posters: [tgNewsAd, tgChannelAd], share: 0.15 },
+  { key: 'lyuk', name: 'Ижевский люк', app: 'tg://resolve?domain=izh_lyuk', fallback: 'https://t.me/izh_lyuk', posters: [lyukAd, lyukColumnAd], share: 0.13 },
+  // Эрико Вотэс — Telegram-бот, start=izh_car: +50 ₽ на баланс пришедшим из игры. Про VPN на плакатах не пишем.
+  { key: 'eriko', name: 'Эрико Вотэс', app: 'tg://resolve?domain=eriko_vpn_bot&start=izh_car', fallback: 'https://t.me/eriko_vpn_bot?start=izh_car', posters: [erikoAd, erikoBonusAd], share: 0.25 },
+  { key: 'tips', name: 'подсказки', act: 'tricks', posters: [tipsTricksAd, tipsDriftAd], share: 0.12 },
   // «Место свободно» — заявка на рекламу (меню → «Реклама на щитах», adrequest.js).
-  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.1 },
+  { key: 'free', name: 'место свободно', act: 'ads', posters: [freeAd, freeYoursAd], share: 0.08 },
 ];
 const AD_W = 1024, AD_H = 512;
 const AD_SHOW = 8, AD_ROLL = 0.9; // с: плакат стоит, затем прокрутка
@@ -2178,6 +2180,66 @@ function daurAd(g) {
   g.fillStyle = '#fff';
   adText(g, 'ТВ + FM', AD_W / 2, 352, 78, 800, 400);
   adText(g, 'daur.media', AD_W / 2, AD_H - 17, 50, 700);
+}
+
+// Эрико Вотэс (бот @eriko_vpn_bot): тёмно-фиолетовый с мятным, значок — глобус. Про VPN не пишем —
+// «свободный интернет», «любимые сайты», бонус +50 ₽ на баланс по ссылке с щита.
+const ERIKO_BG = '#1d1442', ERIKO_MINT = '#3ee6b0';
+
+function erikoGlobe(g, cx, cy, r, color) {
+  g.save();
+  g.strokeStyle = color;
+  g.lineWidth = 0.075 * r;
+  g.beginPath();
+  g.arc(cx, cy, r, 0, Math.PI * 2);
+  g.stroke();
+  g.beginPath();
+  g.ellipse(cx, cy, 0.45 * r, r, 0, 0, Math.PI * 2); // меридиан
+  g.moveTo(cx, cy - r); g.lineTo(cx, cy + r);
+  g.moveTo(cx - r, cy); g.lineTo(cx + r, cy); // экватор
+  for (const k of [-1, 1]) { // параллели
+    const y = cy + k * 0.5 * r, w = Math.sqrt(1 - 0.25) * r;
+    g.moveTo(cx - w, y); g.lineTo(cx + w, y);
+  }
+  g.stroke();
+  g.restore();
+}
+
+function erikoAd(g) {
+  g.fillStyle = ERIKO_BG;
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = ERIKO_MINT;
+  g.fillRect(0, AD_H - 90, AD_W, 90);
+  erikoGlobe(g, AD_W - 165, 150, 100, ERIKO_MINT);
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  const w = AD_W - 2 * AD_PAD - 250;
+  g.fillStyle = '#fff';
+  adText(g, 'ЭРИКО ВОТЭС', 70, 150, 100, 800, w);
+  g.fillStyle = ERIKO_MINT;
+  adText(g, 'СВОБОДНЫЙ ИНТЕРНЕТ', 70, 245, 70, 800, w);
+  g.fillStyle = '#c9c2ee';
+  adText(g, 'любимые сайты, видео и соцсети —', 70, 320, 44, 700);
+  adText(g, 'открываются, как раньше', 70, 375, 44, 700);
+  g.fillStyle = ERIKO_BG;
+  adText(g, '+50 ₽ на баланс — нажми на щит', 70, AD_H - 28, 50, 800);
+}
+
+function erikoBonusAd(g) {
+  g.fillStyle = ERIKO_MINT;
+  g.fillRect(0, 0, AD_W, AD_H);
+  g.fillStyle = ERIKO_BG;
+  g.fillRect(0, AD_H - 90, AD_W, 90);
+  erikoGlobe(g, AD_W - 150, 150, 95, ERIKO_BG);
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  const w = AD_W - 2 * AD_PAD - 230;
+  g.fillStyle = ERIKO_BG;
+  adText(g, 'ИНТЕРНЕТ', 70, 150, 112, 800, w);
+  adText(g, 'БЕЗ ГРАНИЦ', 70, 260, 112, 800, w);
+  adText(g, '+50 ₽ на баланс по ссылке с щита', 70, 355, 52, 700);
+  g.fillStyle = '#fff';
+  adText(g, 'Эрико Вотэс в Telegram — нажми на щит', 70, AD_H - 30, 46, 800);
 }
 
 // Подсказки игры: трюки и дрифт — тёмно-синие с жёлтым.
