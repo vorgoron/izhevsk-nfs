@@ -22,6 +22,7 @@ description: Сборка и правка готовых моделей маши
 | `pickup` | `pickup.glb` | `node pickup.mjs` | секунды |
 | `kabluk` | `kabluk.glb` | `node kabluk.mjs` (исходники пикапа и «Пирожка») | секунды |
 | `vesta` | `vesta.glb` | `node vesta.mjs` (берёт очищенный `3d-models/lada_vesta_clean/`) | ~10 с |
+| `cv1` | `cv1.glb` | Blender: `blender/cv1.py` (строит модель с нуля, пишет `3d-models/cv1/`) → `node cv1.mjs` | секунды |
 | `largus`, `elargus` | `largus.glb`, `elargus.glb` | `node largus.mjs [largus\|elargus]` | ~1,5 мин |
 
 Лог сборки писать в файл (`> $S/build_<m>.log 2>&1`) и смотреть хвост: там число треугольников по частям и

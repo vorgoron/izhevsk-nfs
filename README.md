@@ -182,8 +182,8 @@ python3 tools/patch_city.py cranes   # только краны
 - `public/src/landmarks.js` — достопримечательности: процедурные модели по контурам
   из OSM (список и OSM id — `LANDMARKS` в `tools/fetch_city.py`).
 - `public/src/vehicles.js` — машины ижевского автопрома: «Ода», Москвич-412, «Комби», «Каблучок»,
-  пикап ИЖ-2715, LADA Largus, LADA Vesta, электрический LADA e-Largus (фургон «Ода» отключён — нет хорошей модели, `ODAVAN`). Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
-  У e-Largus (`electric`) нет выхлопной трубы и дыма, звук — электромотор без передач (`ev` в `audio.js`), на тахометре — «D».
+  пикап ИЖ-2715, LADA Largus, LADA Vesta, электрический LADA e-Largus, концепт «Калашников CV-1» (только в гараже; фургон «Ода» отключён — нет хорошей модели, `ODAVAN`). Модель по профилю сбоку, характеристики (скорость, разгон, сцепление).
+  У e-Largus и CV-1 (`electric`) нет выхлопной трубы и дыма, звук — электромотор без передач (`ev` в `audio.js`), на тахометре — «D».
   «Ода», Москвич-412, «Комби», пикап, «Каблучок», Веста и оба Ларгуса — готовые модели `public/models/*.glb` (`loadVehicleMeshes` грузит их на старте; не загрузилась —
   рисуется процедурная). Собираются `tools/models` (`oda.mjs`, `moskvich.mjs`, `pickup.mjs` и `vesta.mjs` из glTF, `kabluk.mjs` — перед пикапа и будка из COLLADA через `dae2gltf.py`, `kombi.mjs` — Москвич с новой крышей и пятой дверью, `largus.mjs` — оба Ларгуса; общее — `lib.mjs`).
   У «Оды» в гараже выбираются детали (бамперы, фары, спойлер, обвес, шашка такси) — `options` в `MODELS.oda`, варианты лежат в
@@ -354,6 +354,9 @@ Firebase Hosting (https://izh-car.web.app) — вручную, `firebase deploy 
   (`node pickup.mjs путь/к/IZH-2715.gltf`). Источник и лицензия: _уточняются_.
 - Модель «Каблучка» ИЖ-2715 (`public/models/kabluk.glb`) — перед и кабина от модели пикапа, будка — от SketchUp-модели
   «АЗЛК+Пирожок» (`node kabluk.mjs путь/к/IZH-2715.gltf путь/к/модели.dae`). Источник и лицензия: _уточняются_.
+- Модель концепта «Калашников CV-1» (`public/models/cv1.glb`) — своя, по фото с показа 2018 г.: скрипт Blender
+  `tools/models/blender/cv1.py` строит её целиком (кузов задан формулами, чужих исходников нет), `node cv1.mjs`
+  раскладывает результат по частям игры. Порядок: `cv1.py` → `cv1.mjs`.
 - Модель LADA Largus (`public/models/largus.glb`) упрощена из «[Lada Largus](https://sketchfab.com/3d-models/lada-largus-ef5fd62d01ca49f1bd70bb596456c144)»,
   модель LADA e-Largus (`public/models/elargus.glb`) — из «[Lada Largus Cross Rest](https://sketchfab.com/3d-models/lada-largus-cross-rest-fe54b2a96397452fb26af48db4696960)»
   (обвес Cross — в цвет кузова, решётка глухая, «иксы» на бампере синие); обе — автора [usolakolya](https://sketchfab.com/usolakolya),

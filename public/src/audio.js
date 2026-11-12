@@ -33,6 +33,7 @@ const VOICES = {
   vesta: { pitch: 1.1, mix: [0.62, 0.32, 0.06], tone: 1.3, q: 2.5, rough: 0.04, gain: 0.85 },
   largus: { pitch: 1.04, mix: [0.58, 0.42, 0.1], tone: 1.15, q: 3, rough: 0.1, gain: 0.9 },
   elargus: { pitch: 6, mix: [0.3, 0, 0], tone: 0.45, q: 1, rough: 0, gain: 0.45, ev: true },
+  cv1: { pitch: 7, mix: [0.34, 0, 0], tone: 0.55, q: 1.2, rough: 0, gain: 0.5, ev: true },
 };
 export const voiceOf = (model) => VOICES[model] ?? VOICES.m412;
 const TRAFFIC_VOICES = 4; // столько ближайших машин слышно мотором

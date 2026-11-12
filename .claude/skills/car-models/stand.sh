@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Снимки моделей в движке игры (headless Chrome, swiftshader), 9 ракурсов на кадр.
 #   stand.sh <папка> <модель>[@ref] ...
-# модель — ключ MODELS: m412 kabluk pickup kombi oda largus vesta elargus;
+# модель — ключ MODELS: m412 kabluk pickup kombi oda largus vesta elargus cv1;
 # @ref — glb из git (HEAD, 2259191…), иначе — из рабочей копии.
 # Окружение: LO=1 — облегчённый набор трафика; D=4 — вблизи (по умолчанию 6); C='#c63a2a' — цвет кузова; PORT (8790).
 # Файл: <папка>/<модель>[@ref][-lo]-d<D>.png. Сервер и public/_cmp/ скрипт поднимает и убирает сам.
